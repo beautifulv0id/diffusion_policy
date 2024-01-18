@@ -8,7 +8,7 @@ from diffusion_policy.common.sampler import (
     SequenceSampler, get_val_mask, downsample_mask)
 from diffusion_policy.model.common.normalizer import LinearNormalizer
 from diffusion_policy.dataset.base_dataset import BaseImageDataset
-from diffusion_policy.common.normalize_util import get_image_range_normalizer
+from diffusion_policy.common.normalize_util import get_image_range_normalizer, get_range_normalizer_from_stat
 
 class PushTImageDataset(BaseImageDataset):
     def __init__(self,
@@ -57,14 +57,18 @@ class PushTImageDataset(BaseImageDataset):
         val_set.train_mask = ~self.train_mask
         return val_set
 
-    def get_normalizer(self, mode='limits', **kwargs):
-        data = {
-            'action': self.replay_buffer['action'],
-            'agent_pos': self.replay_buffer['state'][...,:2]
-        }
+    def get_normalizer(self, mode='limits', stats: dict = None, **kwargs):
         normalizer = LinearNormalizer()
-        normalizer.fit(data=data, last_n_dims=1, mode=mode, **kwargs)
-        normalizer['image'] = get_image_range_normalizer()
+        if stats is not None:
+            for key, stat in stats.items():
+                normalizer[key] = get_range_normalizer_from_stat(stat)
+        else:
+            data = {
+                'action': self.replay_buffer['action'],
+                'agent_pos': self.replay_buffer['state'][...,:2]
+            }
+            normalizer.fit(data=data, last_n_dims=1, mode=mode, **kwargs)
+            normalizer['image'] = get_image_range_normalizer()
         return normalizer
 
     def __len__(self) -> int:

@@ -7,6 +7,10 @@ def get_range_normalizer_from_stat(stat, output_max=1, output_min=-1, range_eps=
     # -1, 1 normalization
     input_max = stat['max']
     input_min = stat['min']
+    if not isinstance(input_max, np.ndarray):
+        input_max = np.array(input_max)
+    if not isinstance(input_min, np.ndarray):
+        input_min = np.array(input_min)
     input_range = input_max - input_min
     ignore_dim = input_range < range_eps
     input_range[ignore_dim] = output_max - output_min

@@ -1,7 +1,7 @@
 """
 Usage:
 Training:
-python train.py --config-name=train_diffusion_lowdim_workspace
+python transformer_hybrid_obs_relative_encoder.py --config-name=transformer_hybrid_obs_relative_encoder
 """
 
 import sys
@@ -12,7 +12,7 @@ sys.stderr = open(sys.stderr.fileno(), mode='w', buffering=1)
 import hydra
 from omegaconf import OmegaConf
 import pathlib
-from diffusion_policy.workspace.base_workspace import BaseWorkspace
+from diffusion_policy.model.vision.transformer_hybrid_obs_relative_encoder import TransformerHybridObsRelativeEncoder
 
 # allows arbitrary python code execution in configs using the ${eval:''} resolver
 OmegaConf.register_new_resolver("eval", eval, replace=True)
@@ -20,17 +20,18 @@ OmegaConf.register_new_resolver("eval", eval, replace=True)
 @hydra.main(
     version_base=None,
     config_path=str(pathlib.Path(__file__).parent.joinpath(
-        'diffusion_policy','config')),
-    config_name='train_diffusion_unet_image_pusht_relative_workspace.yaml'
+        'config')),
+    config_name='transformer_hybrid_obs_relative_encoder.yaml'
 )
 def main(cfg: OmegaConf):
     # resolve immediately so all the ${now:} resolvers
     # will use the same time.
     OmegaConf.resolve(cfg)
 
-    cls = hydra.utils.get_class(cfg._target_)
-    workspace: BaseWorkspace = cls(cfg)
-    workspace.run()
+    obs_encoder: TransformerHybridObsRelativeEncoder
+    obs_encoder = hydra.utils.instantiate(cfg)
+    print("Output_shape: ", obs_encoder.output_shape())
+    print("Visual output shape: ", obs_encoder.visual_output_shape())
 
 if __name__ == "__main__":
     main()

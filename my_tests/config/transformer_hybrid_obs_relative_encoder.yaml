@@ -1,0 +1,28 @@
+
+_target_: diffusion_policy.model.vision.transformer_hybrid_obs_relative_encoder.TransformerHybridObsRelativeEncoder
+shape_meta:
+  action:
+    shape:
+    - 2
+  obs:
+    agent_pos:
+      shape:
+      - 2
+      type: low_dim
+    image:
+      shape:
+      - 3
+      - 96
+      - 96
+      type: rgb
+rgb_model:
+  _target_: diffusion_policy.model.vision.model_getter.get_clip
+  features: "res1"
+obs_horizon: 2
+resize_shape: null
+# crop_shape: [76, 76]
+# constant center crop
+random_crop: False
+use_group_norm: False
+share_rgb_model: True
+clip_norm: True
