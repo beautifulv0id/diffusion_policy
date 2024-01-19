@@ -18,147 +18,15 @@ import robomimic.utils.obs_utils as ObsUtils
 import robomimic.models.base_nets as rmbn
 import diffusion_policy.model.vision.crop_randomizer as dmvc
 from diffusion_policy.common.pytorch_util import dict_apply, replace_submodules
-from diffusion_policy.model.vision.clip import load_clip
-from diffusion_policy.model.common.layer import RelativeCrossAttentionModule
-from diffusion_policy.model.common.position_encodings import RotaryPositionEncoding2D, SinusoidalPosEmb
-import einops
-
-class MultiImagePositinalObsEncoder(nn.Module):
-    def __init__(self,
-                 vision_backbone = "clip",
-                 vis_out_dim = 512,
-                 embedding_dim = 512,
-                 re_cross_attn_num_heads_within = 8,
-                 re_cross_attn_layer_within = 4,
-                 re_cross_attn_num_heads_across = 8,
-                 re_cross_attn_layer_across = 4,
-                 device = "gpu"):
-        super().__init__()
-        
-        if vision_backbone == "clip":
-            self.backbone, self.normalize = load_clip()
-
-        self.vis_out_proj = nn.Linear(vis_out_dim, embedding_dim).to(device)
-        self.query_emb = nn.Embedding(1, embedding_dim).to(device)
-        self.rotary_embedder = RotaryPositionEncoding2D(embedding_dim).to(device)
-
-        self.re_cross_attn_within = RelativeCrossAttentionModule(embedding_dim,
-                                                                re_cross_attn_num_heads_within,
-                                                                re_cross_attn_layer_within).to(device)
-        self.re_cross_attn_across = RelativeCrossAttentionModule(embedding_dim,
-                                                                re_cross_attn_num_heads_across,
-                                                                re_cross_attn_layer_across).to(device)
-    def compute_visual_features(self, rgb):
-        with torch.no_grad():
-            out = self.vis_backbone(rgb)[self.vbl]
-        h, w = out.shape[-2:]
-        out = einops.rearrange(out, 'b c h w -> b (h w) c')
-        out = self.vis_out_proj(out)
-        out = einops.rearrange(out, 'b (h w) c -> b c h w', h=h, w=w)
-        return out
-    
-    def get_img_positions(self, shape):
-        yx = torch.meshgrid([torch.linspace(-1, 1, shape[0]), torch.linspace(-1, 1, shape[1])], indexing='ij')
-        yx = torch.stack(yx, dim=0).float().to(self.device)
-        return yx
-    
-    def rotary_embed(self, x):
-        """
-        Args:
-            x (torch.Tensor): (B, N, Da)
-        Returns:
-            torch.Tensor: (B, N, 2, D//2)
-        """
-        return self.rotary_embedder(x)
-    
-    def compute_context_features(self, rgb):
-        """
-        Args:
-            rgb (torch.Tensor): (B, C, H, W)
-        Returns:
-            torch.Tensor: (B, N, C)
-            torch.Tensor: (B, N, 2, D//2)
-        """
-        rgb_features = self.compute_visual_features(rgb)
-        rgb_pos = self.get_img_positions(rgb_features.shape[-2:])
-        rgb_pos = einops.repeat(rgb_pos, 'xy h w -> b (h w) xy', b=rgb.shape[0])
-        context_features = einops.repeat(rgb_features, 'b c h w -> (h w) b c')
-        context_pos = self.rotary_embed(rgb_pos)
-        return context_features, context_pos
-    
-    def compute_query_features(self, agent_pos):
-        query = einops.repeat(self.query_emb.weight, '1 c -> 1 b c', b=agent_pos.shape[0])
-        query_pos = einops.repeat(agent_pos, 'b c -> b 1 c')
-        query_pos = self.rotary_embed(query_pos)
-        return query, query_pos
-    
-    def compute_local_obs_representation(self, context_features, context_pos, query, query_pos):
-        obs_embs = self.re_cross_attn_within(query=query, value=context_features, query_pos=query_pos, value_pos=context_pos)
-        obs_embs = obs_embs[-1].squeeze(0)
-        return obs_embs
-    
-    def attend_across_obs(self, obs_embs):
-        """
-        Args:
-            obs_embs (torch.Tensor): (oh, B, C)
-        Returns:
-            torch.Tensor: (B, C)
-        """
-        # add time embedding
-        time_emb = self.time_embedder(torch.arange(self.obs_horizon).to(self.device)).unsqueeze(1)
-        obs_embs = obs_embs + time_emb
-
-        # cross attent (temporally) across observations
-        obs_emb = self.re_cross_attn_across(value=obs_embs[:-1], query=obs_embs[-1:])
-        obs_emb = obs_emb[-1].squeeze(0)
-        return obs_emb
-
-    def compute_obs_embedding(self, images, agent_hist):
-        """
-        Args:
-            images (torch.Tensor): (B, To, C, H, W)
-            agent_hist (torch.Tensor): (B, To, Da)
-
-        Returns:
-            torch.Tensor: (B, *)
-        """
-        # rearrange data s.t. each observation is encoded separately
-        images = einops.rearrange(images, 'b oh c h w -> (b oh) c h w')
-        agent_hist = einops.rearrange(agent_hist, 'b oh c -> (b oh) c')
-        
-        # normalize data
-        nimages = self.normalize_rgb_fn(images)
-
-        # compute scene embedding
-        context_features, context_pos = self.compute_context_features(nimages)
-        query, query_pos = self.compute_query_features(agent_hist)
-
-        obs_embs = self.compute_local_obs_representation(context_features, context_pos, query, query_pos)
-        obs_embs = einops.rearrange(obs_embs, '(b oh) c -> oh b c', oh=self.obs_horizon)
-
-        obs_emb = self.attend_across_obs(obs_embs)
-
-        return obs_emb
-    
-    def forward(self, obs_dict):
-        images = obs_dict["image"].to(self.device)
-        agent_hist = obs_dict["agent_pos"].to(self.device)
-
-        nagent_hist = agent_hist
-
-        obs_emb = self.compute_obs_embedding(images, nagent_hist)
-        
-        return obs_emb
-
 
 class DiffusionUnetHybridImageRelativePolicy(BaseImagePolicy):
     def __init__(self, 
             shape_meta: dict,
             noise_scheduler: DDPMScheduler,
             obs_encoder: TransformerHybridObsRelativeEncoder,
-            horizon, 
-            n_action_steps, 
-            n_obs_steps,
+            horizon : int, 
+            n_action_steps : int, 
+            n_obs_steps : int,
             num_inference_steps=None,
             obs_as_global_cond=True,
             crop_shape=(76, 76),
@@ -255,7 +123,7 @@ class DiffusionUnetHybridImageRelativePolicy(BaseImagePolicy):
         global_cond_dim = None
         if obs_as_global_cond:
             input_dim = action_dim
-            global_cond_dim = obs_feature_dim * n_obs_steps
+            global_cond_dim = obs_feature_dim
 
         model = ConditionalUnet1D(
             input_dim=input_dim,
@@ -293,6 +161,30 @@ class DiffusionUnetHybridImageRelativePolicy(BaseImagePolicy):
 
         print("Diffusion params: %e" % sum(p.numel() for p in self.model.parameters()))
         print("Vision params: %e" % sum(p.numel() for p in self.obs_encoder.parameters()))
+
+    def to_rel_trajectory(self, traj, agent_pos):
+        """
+        Args:
+            traj (torch.Tensor): (B, t, Da)
+            agent_pos (torch.Tensor): (B, Da)
+
+        Returns:
+            torch.Tensor: (B, t, Da)
+        """
+        traj = traj - agent_pos[:, None, :]
+        return traj
+
+    def to_abs_trajectory(self, traj, agent_pos):
+        """
+        Args:
+            traj (torch.Tensor): (B, t, Da)
+            agent_pos (torch.Tensor): (B, Da)
+
+        Returns:    
+            torch.Tensor: (B, t, Da)
+        """
+        traj = traj + agent_pos[:, None, :]
+        return traj
     
     # ========= inference  ============
     def conditional_sample(self, 
@@ -353,13 +245,14 @@ class DiffusionUnetHybridImageRelativePolicy(BaseImagePolicy):
         # build input
         device = self.device
         dtype = self.dtype
+        nobs = dict_apply(nobs, lambda x: x.type(dtype).to(device))
 
         # handle different ways of passing observation
         local_cond = None
         global_cond = None
         if self.obs_as_global_cond:
             # condition through global feature
-            # this_nobs = dict_apply(nobs, lambda x: x[:,:To,...].reshape(-1,*x.shape[2:])) # We need to keep the observation shape
+            this_nobs = dict_apply(nobs, lambda x: x[:,:To,...]) # We need to keep the observation shape
             nobs_features = self.obs_encoder(this_nobs)
             # reshape back to B, Do
             global_cond = nobs_features.reshape(B, -1)
@@ -387,6 +280,7 @@ class DiffusionUnetHybridImageRelativePolicy(BaseImagePolicy):
         
         # unnormalize prediction
         naction_pred = nsample[...,:Da]
+        naction_pred = self.to_abs_trajectory(naction_pred, nobs['agent_pos'][:, -1])
         action_pred = self.normalizer['action'].unnormalize(naction_pred)
 
         # get action
@@ -412,15 +306,23 @@ class DiffusionUnetHybridImageRelativePolicy(BaseImagePolicy):
         batch_size = nactions.shape[0]
         horizon = nactions.shape[1]
 
+        # build input
+        device = self.device
+        dtype = self.dtype
+        nobs = dict_apply(nobs, lambda x: x.type(dtype).to(device))
+        nactions = nactions.type(dtype).to(device)
+
+
         # handle different ways of passing observation
         local_cond = None
         global_cond = None
         trajectory = nactions
+        trajectory = self.to_rel_trajectory(trajectory, nobs['agent_pos'][:, -1])
         cond_data = trajectory
         if self.obs_as_global_cond:
             # reshape B, T, ... to B*T
             this_nobs = dict_apply(nobs, 
-                lambda x: x[:,:self.n_obs_steps,...].reshape(-1,*x.shape[2:]))
+                lambda x: x[:,:self.n_obs_steps,...])
             nobs_features = self.obs_encoder(this_nobs)
             # reshape back to B, Do
             global_cond = nobs_features.reshape(batch_size, -1)

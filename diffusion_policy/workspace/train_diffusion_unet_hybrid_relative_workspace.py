@@ -290,7 +290,7 @@ class TrainDiffusionUnetHybridRelativeWorkspace(BaseWorkspace):
     config_path=str(pathlib.Path(__file__).parent.parent.joinpath("config")), 
     config_name=pathlib.Path(__file__).stem)
 def main(cfg):
-    workspace = TrainDiffusionUnetHybridWorkspace(cfg)
+    workspace = TrainDiffusionUnetHybridRelativeWorkspace(cfg)
     workspace.run()
 
 if __name__ == "__main__":

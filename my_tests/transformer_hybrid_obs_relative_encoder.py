@@ -29,7 +29,7 @@ def main(cfg: OmegaConf):
     OmegaConf.resolve(cfg)
 
     obs_encoder: TransformerHybridObsRelativeEncoder
-    obs_encoder = hydra.utils.instantiate(cfg)
+    obs_encoder = hydra.utils.instantiate(cfg.obs_encoder)
     print("Output_shape: ", obs_encoder.output_shape())
     print("Visual output shape: ", obs_encoder.visual_output_shape())
 

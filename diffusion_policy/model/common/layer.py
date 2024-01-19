@@ -1,7 +1,7 @@
 from torch import nn
 from torch.nn import functional as F
 
-from diffusion_policy.model.common.layer import MultiheadCustomAttention
+from diffusion_policy.model.common.multihead_costum_attention import MultiheadCustomAttention
 
 
 class ParallelAttentionLayer(nn.Module):

@@ -1,28 +1,58 @@
 
-_target_: diffusion_policy.model.vision.transformer_hybrid_obs_relative_encoder.TransformerHybridObsRelativeEncoder
-shape_meta:
-  action:
-    shape:
-    - 2
-  obs:
-    agent_pos:
+embedding_dim: 64
+n_obs_steps: 2
+
+obs_encoder:
+  _target_: diffusion_policy.model.vision.transformer_hybrid_obs_relative_encoder.TransformerHybridObsRelativeEncoder
+  shape_meta:
+    action:
       shape:
       - 2
-      type: low_dim
-    image:
-      shape:
-      - 3
-      - 96
-      - 96
-      type: rgb
-rgb_model:
-  _target_: diffusion_policy.model.vision.model_getter.get_clip
-  features: "res1"
-obs_horizon: 2
-resize_shape: null
-# crop_shape: [76, 76]
-# constant center crop
-random_crop: False
-use_group_norm: False
-share_rgb_model: True
-clip_norm: True
+    obs:
+      agent_pos:
+        shape:
+        - 2
+        type: low_dim
+      image:
+        shape:
+        - 3
+        - 96
+        - 96
+        type: rgb
+  rgb_model:
+    _target_: diffusion_policy.model.vision.model_getter.get_clip
+    features: "res1"
+  rgb_out_proj:
+    _target_: torch.nn.Conv2d
+    in_channels: 64
+    out_channels: ${embedding_dim}
+    kernel_size: 1
+  n_obs_steps: ${n_obs_steps}
+  query_embeddings: 
+    _target_: torch.nn.Embedding
+    num_embeddings: ${n_obs_steps}
+    embedding_dim: ${embedding_dim}
+  rotary_embedder: 
+    _target_: diffusion_policy.model.common.position_encodings.RotaryPositionEncoding2D
+    feature_dim: ${embedding_dim}
+  positional_embedder:
+    _target_: diffusion_policy.model.common.position_encodings.SinusoidalPosEmb
+    dim: ${embedding_dim}
+  within_attn: 
+    _target_: diffusion_policy.model.common.layer.RelativeCrossAttentionModule
+    embedding_dim: ${embedding_dim}
+    num_attn_heads: 4
+    num_layers: 4
+  across_attn: 
+    _target_: diffusion_policy.model.common.layer.RelativeCrossAttentionModule
+    embedding_dim: ${embedding_dim}
+    num_attn_heads: 4
+    num_layers: 4
+
+  resize_shape: null
+  # crop_shape: [76, 76]
+  # constant center crop
+  random_crop: False
+  use_group_norm: False
+  share_rgb_model: True
+  clip_norm: True
