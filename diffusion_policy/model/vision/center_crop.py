@@ -14,9 +14,9 @@ class CenterCrop(torchvision.transforms.CenterCrop):
         if self.pos_enc:
             out_shape = torch.tensor(out.shape[-2:])
             h, w = out.shape[-2:]
-            pos_y, pos_x = torch.meshgrid(torch.arange(h), torch.arange(w))
-            pos_y = pos_y.float().to(out.device) / float(h)
-            pos_x = pos_x.float().to(out.device) / float(w)
+            pos_y, pos_x = torch.meshgrid(torch.linspace(0, 1, h), torch.linspace(0, 1, w))
+            pos_y = pos_y.float().to(out.device)
+            pos_x = pos_x.float().to(out.device)
             position_enc = torch.stack((pos_y, pos_x), dim=0)
             offset = ((1 - out_shape / src_shape) / 2).reshape(2, 1, 1)
             scale = (out_shape / src_shape).reshape(2, 1, 1)

@@ -311,13 +311,13 @@ class DiffusionUnetHybridImageRelativePolicy(BaseImagePolicy):
         dtype = self.dtype
         nobs = dict_apply(nobs, lambda x: x.type(dtype).to(device))
         nactions = nactions.type(dtype).to(device)
-
+        curr_agent_pos = nobs['agent_pos'][:, self.n_obs_steps-1]
 
         # handle different ways of passing observation
         local_cond = None
         global_cond = None
         trajectory = nactions
-        trajectory = self.to_rel_trajectory(trajectory, nobs['agent_pos'][:, -1])
+        trajectory = self.to_rel_trajectory(trajectory, curr_agent_pos)
         cond_data = trajectory
         if self.obs_as_global_cond:
             # reshape B, T, ... to B*T

@@ -91,6 +91,8 @@ class TransformerHybridObsRelativeEncoder(ModuleAttrMixin):
                                 num_channels=x.num_features)
                         )
 
+                    this_model.eval()
+                    this_model.requires_grad_(False)
                     key_model_map[key] = this_model
                     if rgb_out_proj is not None:
                         this_out_proj = None
@@ -211,8 +213,8 @@ class TransformerHybridObsRelativeEncoder(ModuleAttrMixin):
             # (N*B,C,H,W)
             imgs = imgs.reshape(-1,*imgs.shape[2:])
             # (B*N,D,H,W) TODO: check if this is correct previous was (N*B,D,H,W)
-            # with torch.no_grad():
-            feature = self.key_model_map['rgb'](imgs)
+            with torch.no_grad():
+                feature = self.key_model_map['rgb'](imgs)
             # (B*N,D,H,W)
             feature = self.key_out_proj_map['rgb'](feature)
             # (B,N,D,H,W)
@@ -271,9 +273,9 @@ class TransformerHybridObsRelativeEncoder(ModuleAttrMixin):
     
     def position_enc_from_shape(self, shape):
         h, w = shape
-        pos_y, pos_x = torch.meshgrid(torch.arange(h), torch.arange(w))
-        pos_y = pos_y.float().to(self.device) / float(h)
-        pos_x = pos_x.float().to(self.device) / float(w)
+        pos_y, pos_x = torch.meshgrid(torch.linspace(0, 1, h), torch.linspace(0, 1, w))
+        pos_y = pos_y.float().to(self.device)
+        pos_x = pos_x.float().to(self.device)
         position_enc = torch.stack((pos_y, pos_x), dim=0)
         return position_enc
 
