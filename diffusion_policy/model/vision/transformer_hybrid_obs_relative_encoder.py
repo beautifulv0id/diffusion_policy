@@ -22,6 +22,7 @@ class TransformerHybridObsRelativeEncoder(ModuleAttrMixin):
             positional_embedder: SinusoidalPosEmb,
             within_attn : RelativeCrossAttentionModule,
             across_attn : RelativeCrossAttentionModule,
+            rgb_model_frozen: bool=True,
             resize_shape: Union[Tuple[int,int], Dict[str,tuple], None]=None,
             crop_shape: Union[Tuple[int,int], Dict[str,tuple], None]=None,
             random_crop: bool=True,
@@ -91,8 +92,9 @@ class TransformerHybridObsRelativeEncoder(ModuleAttrMixin):
                                 num_channels=x.num_features)
                         )
 
-                    this_model.eval()
-                    this_model.requires_grad_(False)
+                    if rgb_model_frozen:
+                        this_model.eval()
+                        this_model.requires_grad_(False)
                     key_model_map[key] = this_model
                     if rgb_out_proj is not None:
                         this_out_proj = None
@@ -172,7 +174,7 @@ class TransformerHybridObsRelativeEncoder(ModuleAttrMixin):
         self.key_shape_map = key_shape_map
         self.n_obs_steps = n_obs_steps
         self.crop_shape = crop_shape
-
+        self.rgb_model_frozen = rgb_model_frozen
         self.rotary_embedder = rotary_embedder
         self.query_emb = query_embeddings
         self.re_cross_attn_within = within_attn
@@ -213,7 +215,7 @@ class TransformerHybridObsRelativeEncoder(ModuleAttrMixin):
             # (N*B,C,H,W)
             imgs = imgs.reshape(-1,*imgs.shape[2:])
             # (B*N,D,H,W) TODO: check if this is correct previous was (N*B,D,H,W)
-            with torch.no_grad():
+            with torch.no_grad() if self.rgb_model_frozen else torch.enable_grad():
                 feature = self.key_model_map['rgb'](imgs)
             # (B*N,D,H,W)
             feature = self.key_out_proj_map['rgb'](feature)
@@ -234,7 +236,7 @@ class TransformerHybridObsRelativeEncoder(ModuleAttrMixin):
                     img, pos = img[...,:3,:,:], img[...,3:,:,:]
                     img_positions.append(pos)
                 img = self.key_normalizer_map[key](img)
-                with torch.no_grad():
+                with torch.no_grad() if self.rgb_model_frozen else torch.enable_grad():
                     feature = self.key_model_map[key](img)
                 feature = self.key_out_proj_map[key](feature)
                 img_features.append(feature)
@@ -276,7 +278,7 @@ class TransformerHybridObsRelativeEncoder(ModuleAttrMixin):
         pos_y, pos_x = torch.meshgrid(torch.linspace(0, 1, h), torch.linspace(0, 1, w))
         pos_y = pos_y.float().to(self.device)
         pos_x = pos_x.float().to(self.device)
-        position_enc = torch.stack((pos_y, pos_x), dim=0)
+        position_enc = torch.stack((pos_x, pos_y), dim=0)
         return position_enc
 
     def forward(self, obs_dict):

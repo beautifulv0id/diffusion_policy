@@ -90,6 +90,7 @@ policy:
     rgb_model:
       _target_: diffusion_policy.model.vision.model_getter.get_clip
       features: "res2"
+    rgb_model_frozen: True
     rgb_out_proj:
       _target_: torch.nn.Conv2d
       in_channels: 256
@@ -128,6 +129,11 @@ policy:
   n_action_steps: ${n_action_steps}
   n_obs_steps: ${n_obs_steps}
   num_inference_steps: 100
+  diffusion_step_embed_dim: 128
+  down_dims:
+  - 512
+  - 1024
+  - 2048
   obs_as_global_cond: ${obs_as_global_cond}
   eval_fixed_crop: False
   kernel_size: 5
