@@ -8,14 +8,14 @@ _target_: diffusion_policy.workspace.train_diffusion_unet_hybrid_relative_worksp
 normalizer:
   stats:
     agent_pos:
-      min: [0.0, 0.0]
-      max: [512.0, 512.0]
+      min: [0.0]
+      max: [512.0]
     action:
-      min: [0.0, 0.0]
-      max: [512.0, 512.0]
+      min: [0.0]
+      max: [512.0]
     image:
-      min: [0.0, 0.0, 0.0]
-      max: [1.0, 1.0, 1.0]
+      min: [0.0]
+      max: [1.0]
 
 checkpoint:
   topk:
@@ -27,15 +27,15 @@ checkpoint:
   save_last_snapshot: False
 
 dataloader:
-  batch_size: 128
-  num_workers: 1
+  batch_size: 64
+  num_workers: 0
   shuffle: True
   pin_memory: True
   persistent_workers: False
 
 val_dataloader:
-  batch_size: 128
-  num_workers: 1
+  batch_size: 64
+  num_workers: 0
   shuffle: False
   pin_memory: True
   persistent_workers: False
@@ -129,7 +129,7 @@ policy:
   n_action_steps: ${n_action_steps}
   n_obs_steps: ${n_obs_steps}
   num_inference_steps: 100
-  diffusion_step_embed_dim: 128
+  diffusion_step_embed_dim: 256
   down_dims:
   - 512
   - 1024

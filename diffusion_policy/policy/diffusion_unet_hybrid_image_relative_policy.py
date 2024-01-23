@@ -242,8 +242,6 @@ class DiffusionUnetHybridImageRelativePolicy(BaseImagePolicy):
         Da = self.action_dim
         Do = self.obs_feature_dim
 
-        assert (To == nobs['agent_pos'].shape[1])
-
         # build input
         device = self.device
         dtype = self.dtype
@@ -282,7 +280,7 @@ class DiffusionUnetHybridImageRelativePolicy(BaseImagePolicy):
         
         # unnormalize prediction
         naction_pred = nsample[...,:Da]
-        naction_pred = self.to_abs_trajectory(naction_pred, nobs['agent_pos'][:, -1])
+        naction_pred = self.to_abs_trajectory(naction_pred, nobs['agent_pos'][:, To-1])
         action_pred = self.normalizer['action'].unnormalize(naction_pred)
 
         # get action
@@ -310,14 +308,13 @@ class DiffusionUnetHybridImageRelativePolicy(BaseImagePolicy):
         To = self.n_obs_steps
 
         assert (T == nactions.shape[1])
-        assert (To == nobs['agent_pos'].shape[1])
 
         # build input
         device = self.device
         dtype = self.dtype
         nobs = dict_apply(nobs, lambda x: x.type(dtype).to(device))
         nactions = nactions.type(dtype).to(device)
-        curr_agent_pos = nobs['agent_pos'][:, self.n_obs_steps-1]
+        curr_agent_pos = nobs['agent_pos'][:, To-1]
 
         # handle different ways of passing observation
         local_cond = None
@@ -328,7 +325,7 @@ class DiffusionUnetHybridImageRelativePolicy(BaseImagePolicy):
         if self.obs_as_global_cond:
             # reshape B, T, ... to B*T
             this_nobs = dict_apply(nobs, 
-                lambda x: x[:,:self.n_obs_steps,...])
+                lambda x: x[:,:To,...])
             nobs_features = self.obs_encoder(this_nobs)
             global_cond = nobs_features
         else:

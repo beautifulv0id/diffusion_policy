@@ -3,6 +3,7 @@ import copy
 import torch
 import torch.nn as nn
 import torchvision
+from torchvision.transforms import Normalize as Normalize
 from diffusion_policy.model.vision.crop_randomizer import CropRandomizer
 from diffusion_policy.model.vision.center_crop import CenterCrop
 from diffusion_policy.model.common.module_attr_mixin import ModuleAttrMixin
@@ -92,9 +93,6 @@ class TransformerHybridObsRelativeEncoder(ModuleAttrMixin):
                                 num_channels=x.num_features)
                         )
 
-                    if rgb_model_frozen:
-                        this_model.eval()
-                        this_model.requires_grad_(False)
                     key_model_map[key] = this_model
                     if rgb_out_proj is not None:
                         this_out_proj = None
@@ -162,6 +160,12 @@ class TransformerHybridObsRelativeEncoder(ModuleAttrMixin):
                 raise RuntimeError(f"Unsupported obs type: {type}")
         rgb_keys = sorted(rgb_keys)
         low_dim_keys = sorted(low_dim_keys)
+    
+        if rgb_model_frozen:
+            for m in key_model_map.values():
+                m.eval()
+                m.requires_grad_(False)                    
+
 
         self.shape_meta = shape_meta
         self.key_model_map = key_model_map

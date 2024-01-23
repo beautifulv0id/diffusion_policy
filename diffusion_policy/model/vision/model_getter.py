@@ -32,15 +32,16 @@ def get_r3m(name, **kwargs):
 
 
 def get_clip(features=None):
-    model, _ = clip.load("RN50")
-    state_dict = model.state_dict()
+    clip_model, clip_transforms = clip.load("RN50")
+    state_dict = clip_model.state_dict()
     layers = tuple([len(set(k.split(".")[2] for k in state_dict if k.startswith(f"visual.layer{b}")))
                     for b in [1, 2, 3, 4]])
     output_dim = state_dict["text_projection"].shape[1]
     heads = state_dict["visual.layer1.0.conv1.weight"].shape[0] * 32 // 64
-    clip_model = ModifiedResNetFeatures(layers, output_dim, heads, features=features)
-    clip_model.load_state_dict(model.visual.state_dict())
-    return clip_model
+    backbone = ModifiedResNetFeatures(layers, output_dim, heads, features=features)
+    backbone.load_state_dict(clip_model.visual.state_dict())
+    normalize = clip_transforms.transforms[-1]
+    return torch.nn.Sequential(normalize, backbone)
 
 
 class ModifiedResNetFeatures(ModifiedResNet):
