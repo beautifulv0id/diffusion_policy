@@ -236,11 +236,13 @@ class DiffusionUnetHybridImageRelativePolicy(BaseImagePolicy):
         # normalize input
         nobs = self.normalizer.normalize(obs_dict)
         value = next(iter(nobs.values()))
-        B, To = value.shape[:2]
+        B = value.shape[0]
+        To = self.n_obs_steps
         T = self.horizon
         Da = self.action_dim
         Do = self.obs_feature_dim
-        To = self.n_obs_steps
+
+        assert (To == nobs['agent_pos'].shape[1])
 
         # build input
         device = self.device
@@ -253,9 +255,9 @@ class DiffusionUnetHybridImageRelativePolicy(BaseImagePolicy):
         if self.obs_as_global_cond:
             # condition through global feature
             this_nobs = dict_apply(nobs, lambda x: x[:,:To,...]) # We need to keep the observation shape
+            # (B, D)
             nobs_features = self.obs_encoder(this_nobs)
-            # reshape back to B, Do
-            global_cond = nobs_features.reshape(B, -1)
+            global_cond = nobs_features
             # empty data for action
             cond_data = torch.zeros(size=(B, T, Da), device=device, dtype=dtype)
             cond_mask = torch.zeros_like(cond_data, dtype=torch.bool)
@@ -303,8 +305,12 @@ class DiffusionUnetHybridImageRelativePolicy(BaseImagePolicy):
         assert 'valid_mask' not in batch
         nobs = self.normalizer.normalize(batch['obs'])
         nactions = self.normalizer['action'].normalize(batch['action'])
-        batch_size = nactions.shape[0]
-        horizon = nactions.shape[1]
+        B = nactions.shape[0]
+        T = self.horizon
+        To = self.n_obs_steps
+
+        assert (T == nactions.shape[1])
+        assert (To == nobs['agent_pos'].shape[1])
 
         # build input
         device = self.device
@@ -324,14 +330,13 @@ class DiffusionUnetHybridImageRelativePolicy(BaseImagePolicy):
             this_nobs = dict_apply(nobs, 
                 lambda x: x[:,:self.n_obs_steps,...])
             nobs_features = self.obs_encoder(this_nobs)
-            # reshape back to B, Do
-            global_cond = nobs_features.reshape(batch_size, -1)
+            global_cond = nobs_features
         else:
             # reshape B, T, ... to B*T
             this_nobs = dict_apply(nobs, lambda x: x.reshape(-1, *x.shape[2:]))
             nobs_features = self.obs_encoder(this_nobs)
             # reshape back to B, T, Do
-            nobs_features = nobs_features.reshape(batch_size, horizon, -1)
+            nobs_features = nobs_features.reshape(B, To, T, -1)
             cond_data = torch.cat([nactions, nobs_features], dim=-1)
             trajectory = cond_data.detach()
 
