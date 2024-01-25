@@ -30,7 +30,6 @@ def rotate(x: torch.Tensor, angle: torch.Tensor, mode='bilinear', padding_mode='
     aff_mat = torch.cat((rot_mat, zeros), 2)
     aff_mat[:,:,0] *= w / 2
     aff_mat[:,:,1] *= h / 2
-    print(aff_mat.shape)
     grid = F.affine_grid(aff_mat, x.size(), align_corners=True)
     grid[...,0] /= w / 2
     grid[...,1] /= h / 2
