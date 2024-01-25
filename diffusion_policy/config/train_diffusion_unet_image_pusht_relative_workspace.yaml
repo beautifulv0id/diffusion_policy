@@ -124,7 +124,7 @@ policy:
     random_crop: False
     use_group_norm: False
     share_rgb_model: True
-    clip_norm: True
+    clip_norm: False
   horizon: ${horizon}
   n_action_steps: ${n_action_steps}
   n_obs_steps: ${n_obs_steps}

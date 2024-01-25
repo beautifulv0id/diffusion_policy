@@ -338,7 +338,6 @@ class DiffusionUnetHybridImageRelativePolicy(BaseImagePolicy):
         T = self.horizon
         To = self.n_obs_steps
 
-        nobs, nactions = self.augment_data(nobs, nactions)
 
         assert (T == nactions.shape[1])
 
@@ -347,6 +346,7 @@ class DiffusionUnetHybridImageRelativePolicy(BaseImagePolicy):
         dtype = self.dtype
         nobs = dict_apply(nobs, lambda x: x.type(dtype).to(device))
         nactions = nactions.type(dtype).to(device)
+        nobs, nactions = self.augment_data(nobs, nactions)
         curr_agent_pos = nobs['agent_pos'][:, To-1]
 
         # handle different ways of passing observation
