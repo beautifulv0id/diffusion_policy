@@ -11,6 +11,7 @@ from diffusion_policy.policy.base_image_policy import BaseImagePolicy
 from diffusion_policy.model.diffusion.conditional_unet1d import ConditionalUnet1D
 from diffusion_policy.model.diffusion.mask_generator import LowdimMaskGenerator
 from diffusion_policy.model.vision.transformer_hybrid_obs_relative_encoder import TransformerHybridObsRelativeEncoder
+from diffusion_policy.model.vision.rotation_utils import rotate
 from diffusion_policy.common.robomimic_config_util import get_robomimic_config
 from robomimic.algo import algo_factory
 from robomimic.algo.algo import PolicyAlgo
@@ -186,6 +187,36 @@ class DiffusionUnetHybridImageRelativePolicy(BaseImagePolicy):
         traj = traj + agent_pos[:, None, :]
         return traj
     
+    def augment_data(self, nobs, naction):
+        """
+        Args:
+            batch (dict): batch of data
+
+        Returns:
+            dict: augmented batch
+        """
+        angles = torch.rand(size=(naction.shape[0],), device=naction.device, dtype=naction.dtype) * 2 * math.pi
+        s, c = torch.sin(angles), torch.cos(angles)
+        rot_mat = torch.stack((torch.stack([c, -s], dim=1),
+                            torch.stack([s, c], dim=1)), dim=1)
+
+        # rotate observations
+        for key, value in nobs.items():
+            if key in self.obs_encoder.rgb_keys:
+                src_shape = value.shape
+                value = value.reshape(-1, *src_shape[2:])
+                nobs[key] = rotate(value, angles.repeat_interleave(value.shape[0] // angles.shape[0], dim=0))
+                nobs[key] = nobs[key].reshape(src_shape)
+            if key in self.obs_encoder.low_dim_keys:
+                # TODO: rotate low dim obs
+                if key == 'agent_pos':
+                    nobs[key] = torch.matmul(value, rot_mat)
+        
+        # rotate actions
+        naction = torch.matmul(naction, rot_mat)
+        
+        return nobs, naction
+    
     # ========= inference  ============
     def conditional_sample(self, 
             condition_data, condition_mask,
@@ -306,6 +337,8 @@ class DiffusionUnetHybridImageRelativePolicy(BaseImagePolicy):
         B = nactions.shape[0]
         T = self.horizon
         To = self.n_obs_steps
+
+        nobs, nactions = self.augment_data(nobs, nactions)
 
         assert (T == nactions.shape[1])
 
