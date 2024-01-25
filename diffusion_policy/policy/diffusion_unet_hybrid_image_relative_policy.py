@@ -38,6 +38,7 @@ class DiffusionUnetHybridImageRelativePolicy(BaseImagePolicy):
             cond_predict_scale=True,
             obs_encoder_group_norm=False,
             eval_fixed_crop=False,
+            aug_data=False,
             # parameters passed to step
             **kwargs):
         super().__init__()
@@ -154,6 +155,7 @@ class DiffusionUnetHybridImageRelativePolicy(BaseImagePolicy):
         self.n_action_steps = n_action_steps
         self.n_obs_steps = n_obs_steps
         self.obs_as_global_cond = obs_as_global_cond
+        self.aug_data = aug_data
         self.kwargs = kwargs
 
         if num_inference_steps is None:
@@ -346,14 +348,15 @@ class DiffusionUnetHybridImageRelativePolicy(BaseImagePolicy):
         dtype = self.dtype
         nobs = dict_apply(nobs, lambda x: x.type(dtype).to(device))
         nactions = nactions.type(dtype).to(device)
-        nobs, nactions = self.augment_data(nobs, nactions)
-        curr_agent_pos = nobs['agent_pos'][:, To-1]
+        
+        if self.training and self.aug_data:
+            nobs, nactions = self.augment_data(nobs, nactions)
 
         # handle different ways of passing observation
         local_cond = None
         global_cond = None
         trajectory = nactions
-        trajectory = self.to_rel_trajectory(trajectory, curr_agent_pos)
+        trajectory = self.to_rel_trajectory(trajectory, nobs['agent_pos'][:, To-1])
         cond_data = trajectory
         if self.obs_as_global_cond:
             # reshape B, T, ... to B*T

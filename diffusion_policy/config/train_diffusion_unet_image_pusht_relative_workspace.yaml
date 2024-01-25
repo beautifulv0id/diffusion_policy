@@ -125,6 +125,8 @@ policy:
     use_group_norm: False
     share_rgb_model: True
     clip_norm: False
+    aug_data: False
+
   horizon: ${horizon}
   n_action_steps: ${n_action_steps}
   n_obs_steps: ${n_obs_steps}
