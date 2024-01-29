@@ -26,6 +26,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             horizon, 
             n_action_steps, 
             n_obs_steps,
+            frozen_obs_encoder=False,
             num_inference_steps=None,
             obs_as_global_cond=True,
             crop_shape=(76, 76),
@@ -162,6 +163,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         self.n_action_steps = n_action_steps
         self.n_obs_steps = n_obs_steps
         self.obs_as_global_cond = obs_as_global_cond
+        self.frozen_obs_encoder = frozen_obs_encoder
         self.kwargs = kwargs
 
         if num_inference_steps is None:
@@ -237,7 +239,8 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         if self.obs_as_global_cond:
             # condition through global feature
             this_nobs = dict_apply(nobs, lambda x: x[:,:To,...].reshape(-1,*x.shape[2:]))
-            nobs_features = self.obs_encoder(this_nobs)
+            with torch.no_grad() if self.frozen_obs_encoder else torch.enable_grad():
+                nobs_features = self.obs_encoder(this_nobs)
             # reshape back to B, Do
             global_cond = nobs_features.reshape(B, -1)
             # empty data for action
@@ -297,7 +300,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         if self.obs_as_global_cond:
             # reshape B, T, ... to B*T
             this_nobs = dict_apply(nobs, 
-                lambda x: x[:,:self.n_obs_steps,...])
+                lambda x: x[:,:self.n_obs_steps,...].reshape(-1,*x.shape[2:]))
             nobs_features = self.obs_encoder(this_nobs)
             # reshape back to B, Do
             global_cond = nobs_features.reshape(batch_size, -1)
