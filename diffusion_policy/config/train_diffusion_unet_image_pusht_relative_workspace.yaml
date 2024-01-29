@@ -74,6 +74,7 @@ policy:
      
   shape_meta: ${task.shape_meta}
 
+  aug_data: False
   noise_scheduler:
     _target_: diffusers.schedulers.scheduling_ddpm.DDPMScheduler
     beta_end: 0.02
@@ -119,13 +120,12 @@ policy:
       num_layers: 5
 
     resize_shape: null
-    # crop_shape: [76, 76]
+    crop_shape: null
     # constant center crop
     random_crop: False
     use_group_norm: False
     share_rgb_model: True
     clip_norm: False
-    aug_data: False
 
   horizon: ${horizon}
   n_action_steps: ${n_action_steps}
@@ -155,7 +155,7 @@ training:
   lr_warmup_steps: 500
   max_train_steps: null
   max_val_steps: null
-  num_epochs: 3050
+  num_epochs: 300
   resume: true
   rollout_every: 50
   sample_every: 5
