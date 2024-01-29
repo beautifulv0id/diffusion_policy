@@ -24,8 +24,8 @@ def rotate(x: torch.Tensor, angle: torch.Tensor, mode='bilinear', padding_mode='
     h, w = x.shape[-2:]
     s = torch.sin(angle)
     c = torch.cos(angle)
-    rot_mat = torch.stack((torch.stack([c, -s], dim=1),
-                           torch.stack([s, c], dim=1)), dim=1)
+    rot_mat = torch.stack((torch.stack([c, s], dim=1),
+                           torch.stack([-s, c], dim=1)), dim=1)
     zeros = torch.zeros(rot_mat.size(0), 2).unsqueeze(2).to(x.device)
     aff_mat = torch.cat((rot_mat, zeros), 2)
     aff_mat[:,:,0] *= w / 2
