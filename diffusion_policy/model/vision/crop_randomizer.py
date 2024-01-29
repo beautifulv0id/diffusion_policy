@@ -253,7 +253,7 @@ def sample_random_image_crops(images, crop_height, crop_width, num_crops, pos_en
         pos_y, pos_x = torch.meshgrid(torch.arange(h), torch.arange(w))
         pos_y = pos_y.float().to(device) / float(h)
         pos_x = pos_x.float().to(device) / float(w)
-        position_enc = torch.stack((pos_y, pos_x)) # shape [C, H, W]
+        position_enc = torch.stack((pos_x, pos_y)) # shape [C, H, W]
 
         # unsqueeze and expand to match leading dimensions -> shape [..., C, H, W]
         leading_shape = source_im.shape[:-3]
