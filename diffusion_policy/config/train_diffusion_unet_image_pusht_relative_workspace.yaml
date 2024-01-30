@@ -27,14 +27,14 @@ checkpoint:
   save_last_snapshot: False
 
 dataloader:
-  batch_size: 64
+  batch_size: 128
   num_workers: 0
   shuffle: True
   pin_memory: True
   persistent_workers: False
 
 val_dataloader:
-  batch_size: 64
+  batch_size: 128
   num_workers: 0
   shuffle: False
   pin_memory: True
@@ -90,13 +90,28 @@ policy:
     shape_meta: ${task.shape_meta}
     rgb_model:
       _target_: diffusion_policy.model.vision.model_getter.get_clip
-      features: "res2"
-    rgb_model_frozen: True
-    rgb_out_proj:
-      _target_: torch.nn.Conv2d
-      in_channels: 256
+      features:
+      - "res1"
+      - "res2"
+      - "res3"
+      - "res4"
+      # - "res5"
+    feature_pyramid: 
+      _target_: torchvision.ops.FeaturePyramidNetwork
+      in_channels_list:
+      - 64
+      - 256
+      - 512
+      - 1024
+      # - 2048
       out_channels: ${embedding_dim}
-      kernel_size: 1
+    feature_map_pyramid:
+      - "res1"
+      - "res2"
+      - "res3"
+      - "res4"
+      # - "res5"
+    rgb_model_frozen: True
     n_obs_steps: ${n_obs_steps}
     query_embeddings: 
       _target_: torch.nn.Embedding

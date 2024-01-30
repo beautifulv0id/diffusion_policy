@@ -11,12 +11,14 @@ from diffusion_policy.common.pytorch_util import dict_apply, replace_submodules
 from diffusion_policy.model.common.position_encodings import RotaryPositionEncoding2D, SinusoidalPosEmb
 from diffusion_policy.model.common.layer import RelativeCrossAttentionModule
 import einops
+from torchvision.ops import FeaturePyramidNetwork
 
 class TransformerHybridObsRelativeEncoder(ModuleAttrMixin):
     def __init__(self,
             shape_meta: dict,
             rgb_model: Union[nn.Module, Dict[str,nn.Module]],
-            rgb_out_proj: Union[nn.Module, Dict[str,nn.Module], None],
+            feature_pyramid: FeaturePyramidNetwork,
+            feature_map_pyramid: list,
             n_obs_steps: int,
             query_embeddings: nn.Embedding,
             rotary_embedder: RotaryPositionEncoding2D,
@@ -49,19 +51,19 @@ class TransformerHybridObsRelativeEncoder(ModuleAttrMixin):
         key_transform_map = nn.ModuleDict()
         key_normalizer_map = nn.ModuleDict()
         key_shape_map = dict()
-        key_out_proj_map = nn.ModuleDict()
+        key_feature_pyramid_map = nn.ModuleDict()
 
         # handle sharing vision backbone
         if share_rgb_model:
             assert isinstance(rgb_model, nn.Module), \
                 "Must provide nn.Module if sharing rgb model"
             key_model_map['rgb'] = rgb_model
-            if rgb_out_proj is not None:
-                assert isinstance(rgb_out_proj, nn.Module), \
+            if feature_pyramid is not None:
+                assert isinstance(feature_pyramid, nn.Module), \
                     "Must provide nn.Module if sharing rgb model"
-                key_out_proj_map['rgb'] = rgb_out_proj
+                key_feature_pyramid_map['rgb'] = feature_pyramid
             else:
-                key_out_proj_map['rgb'] = nn.Identity()
+                key_feature_pyramid_map['rgb'] = nn.Identity()
 
         obs_shape_meta = shape_meta['obs']
         assert ("agent_pos" in obs_shape_meta), "Must have agent_pos in obs_shape_meta"
@@ -94,19 +96,19 @@ class TransformerHybridObsRelativeEncoder(ModuleAttrMixin):
                         )
 
                     key_model_map[key] = this_model
-                    if rgb_out_proj is not None:
-                        this_out_proj = None
-                        if isinstance(rgb_out_proj, dict):
+                    if feature_pyramid is not None:
+                        this_feature_pyramid = None
+                        if isinstance(feature_pyramid, dict):
                             # have provided model for each key
-                            this_out_proj = rgb_out_proj[key]
+                            this_feature_pyramid = feature_pyramid[key]
                         else:
-                            assert isinstance(rgb_out_proj, nn.Module), \
+                            assert isinstance(feature_pyramid, nn.Module), \
                                 "Must provide nn.Module if not sharing rgb model"
                             # have a copy of the rgb model
-                            this_out_proj = copy.deepcopy(rgb_out_proj)
-                        key_out_proj_map[key] = this_out_proj
+                            this_feature_pyramid = copy.deepcopy(feature_pyramid)
+                        key_feature_pyramid_map[key] = this_feature_pyramid
                     else:
-                        key_out_proj_map[key] = nn.Identity()
+                        key_feature_pyramid_map[key] = nn.Identity()
                 
                 # configure resize
                 input_shape = shape
@@ -164,14 +166,21 @@ class TransformerHybridObsRelativeEncoder(ModuleAttrMixin):
         if rgb_model_frozen:
             for m in key_model_map.values():
                 m.eval()
-                m.requires_grad_(False)                    
+                m.requires_grad_(False)     
 
+        key_pyramid_embedding_map = nn.ModuleDict()
+        for key in feature_map_pyramid:
+            key_pyramid_embedding_map[key] = nn.Embedding(
+                num_embeddings=1,
+                embedding_dim=query_embeddings.embedding_dim
+            )               
 
         self.shape_meta = shape_meta
         self.key_model_map = key_model_map
         self.key_transform_map = key_transform_map
         self.key_normalizer_map = key_normalizer_map
-        self.key_out_proj_map = key_out_proj_map
+        self.key_feature_pyramid_map = key_feature_pyramid_map
+        self.feature_map_pyramid = feature_map_pyramid
         self.share_rgb_model = share_rgb_model
         self.rgb_keys = rgb_keys
         self.low_dim_keys = low_dim_keys
@@ -181,6 +190,7 @@ class TransformerHybridObsRelativeEncoder(ModuleAttrMixin):
         self.rgb_model_frozen = rgb_model_frozen
         self.rotary_embedder = rotary_embedder
         self.query_emb = query_embeddings
+        self.key_pyramid_embedding_map = key_pyramid_embedding_map
         self.re_cross_attn_within = within_attn
         self.re_cross_attn_across = across_attn
         self.positional_embedder = positional_embedder
@@ -196,8 +206,9 @@ class TransformerHybridObsRelativeEncoder(ModuleAttrMixin):
     
     def compute_visual_features(self, obs_dict):
         batch_size = None
-        img_features = list()
         img_positions = list()
+        key_img_features_map = {key: list() for key in self.feature_map_pyramid}
+        key_img_positions_map = {key: None for key in self.feature_map_pyramid}
         if self.share_rgb_model:
             # pass all rgb obs to rgb model
             imgs = list()
@@ -221,11 +232,13 @@ class TransformerHybridObsRelativeEncoder(ModuleAttrMixin):
             # (B*N,D,H,W) TODO: check if this is correct previous was (N*B,D,H,W)
             with torch.no_grad() if self.rgb_model_frozen else torch.enable_grad():
                 feature = self.key_model_map['rgb'](imgs)
-            # (B*N,D,H,W)
-            feature = self.key_out_proj_map['rgb'](feature)
-            # (B,N,D,H,W)
-            feature = feature.reshape(batch_size, self.n_obs_steps, *feature.shape[1:])
-            img_features.append(feature)
+            # {f:(B*N,D,H,W)}
+            feature = self.key_feature_pyramid_map['rgb'](feature)
+            # {f:(B,N,D,H,W)}
+            feature = dict_apply(feature, lambda f: f.reshape(batch_size, self.n_obs_steps, *f.shape[1:]))
+            for k, v in feature.items():
+                v = v + self.key_pyramid_embedding_map[k].weight.reshape((1,1,-1,1,1))
+                key_img_features_map[k].append(v)
         else:
             # run each rgb obs to independent models
             for key in self.rgb_keys:
@@ -242,20 +255,35 @@ class TransformerHybridObsRelativeEncoder(ModuleAttrMixin):
                 img = self.key_normalizer_map[key](img)
                 with torch.no_grad() if self.rgb_model_frozen else torch.enable_grad():
                     feature = self.key_model_map[key](img)
-                feature = self.key_out_proj_map[key](feature)
-                img_features.append(feature)
+                feature = self.key_feature_pyramid_map[key](feature)
+                for k, v in feature.items():
+                    v = v + self.key_pyramid_embedding_map[k].weight.reshape((1,1,-1,1,1))
+                    key_img_features_map[k].append(v)
         
         # TODO: check if cat along dim 1 is correct for share_rgb_model=False
-        img_features = torch.cat(img_features, dim=1)
+        key_img_features_map = dict_apply(key_img_features_map, lambda x: torch.cat(x, dim=1))
+
         if self.training and self.crop_shape is not None:
             # (B,N,C,H,W)
             img_positions = torch.cat(img_positions, dim=1)
-            img_positions = torch.nn.functional.interpolate(img_positions.flatten(end_dim=1), size=img_features.shape[-2:], mode='bilinear', align_corners=False) # TODO: check if this is correct
-            img_positions = einops.rearrange(img_positions, '(b n) d h w -> b n d h w', b=batch_size)
+            for k, img_feat in key_img_features_map.items():
+                positions = torch.nn.functional.interpolate(img_positions.flatten(end_dim=1), size=img_feat.shape[-2:], mode='bilinear', align_corners=False) # TODO: check if this is correct
+                positions = einops.rearrange(positions, '(b n) d h w -> b n d h w', b=batch_size)
+                key_img_positions_map[k] = img_positions
         else:
-            img_positions = self.position_enc_from_shape(img_features.shape[-2:])
-            img_positions = pos = einops.repeat(img_positions, 'c h w -> b n c h w', b=batch_size, n=self.n_obs_steps)
-        img_positions = img_positions * 2. - 1.
+            for k, img_feat in key_img_features_map.items():
+                img_positions = self.position_enc_from_shape(img_feat.shape[-2:])
+                img_positions = pos = einops.repeat(img_positions, 'c h w -> b n c h w', b=batch_size, n=self.n_obs_steps)
+                key_img_positions_map[k] = img_positions
+        
+        key_img_positions_map = dict_apply(key_img_positions_map, lambda x: x * 2. - 1.)
+
+        key_img_positions_map = dict_apply(key_img_positions_map, lambda x: x.flatten(start_dim=-2))
+        key_img_features_map = dict_apply(key_img_features_map, lambda x: x.flatten(start_dim=-2))
+
+        img_positions = torch.cat(list(key_img_positions_map.values()), dim=-1)
+        img_features = torch.cat(list(key_img_features_map.values()), dim=-1)
+
         return img_features, img_positions
     
     def process_low_dim_features(self, obs_dict):
@@ -288,14 +316,9 @@ class TransformerHybridObsRelativeEncoder(ModuleAttrMixin):
     def forward(self, obs_dict):
         batch_size = obs_dict[self.low_dim_keys[0]].shape[0]
         N = self.n_obs_steps
-        low_dim_features = list()
-        # (B,N,D)
-        agent_pos : torch.Tensor 
-        # (B,N,D,H,W)
-        img_features : torch.Tensor
 
         # process rgb input
-        # (B,N,D,H,W)
+        # (B,N,D,M)
         img_features, img_positions = self.compute_visual_features(obs_dict)
         
         # process lowdim input
@@ -304,9 +327,9 @@ class TransformerHybridObsRelativeEncoder(ModuleAttrMixin):
 
         # compoute context features
         # (H*W,B*N,D)
-        context_features = einops.rearrange(img_features, 'b n d h w -> (h w) (b n) d')
+        context_features = einops.rearrange(img_features, 'b n d hw -> hw (b n) d')
         # (B*N,H*W,D)
-        context_pos = einops.repeat(img_positions, 'b n d h w -> (b n) (h w) d')
+        context_pos = einops.repeat(img_positions, 'b n d hw -> (b n) hw d')
         # (B*N,H*W,D,2)
         context_pos = self.rotary_embed(context_pos)
 
@@ -355,6 +378,20 @@ class TransformerHybridObsRelativeEncoder(ModuleAttrMixin):
         example_output, _ = self.compute_visual_features(example_obs_dict)
         output_shape = example_output.shape[1:]
         return output_shape
+
+    
+    @torch.no_grad()
+    def rgb_output_shapes(self):
+        if self.share_rgb_model:
+            example_in = torch.zeros(
+                (1,) + self.key_shape_map['rgb'], 
+                dtype=self.dtype,
+                device=self.device)
+        example_out = self.key_model_map['rgb'](example_in)
+        output_shapes = dict()
+        for k, v in example_out.items():
+            output_shapes[k] = v.shape[1:]
+        return output_shapes
 
     @torch.no_grad()
     def output_shape(self):

@@ -47,34 +47,33 @@ def get_clip(features=None):
 class ModifiedResNetFeatures(ModifiedResNet):
     def __init__(self, layers, output_dim, heads, input_resolution=224, width=64, features=None):
         super().__init__(layers, output_dim, heads, input_resolution, width)
+        if isinstance(features, str):
+            if features == "all":
+                features = ["res1", "res2", "res3", "res4", "res5"]
+            else:
+                features = [features]
         self.features = features
     def forward(self, x: torch.Tensor):
+        out = dict()
         x = x.type(self.conv1.weight.dtype)
         x = self.relu1(self.bn1(self.conv1(x)))
         x = self.relu2(self.bn2(self.conv2(x)))
         x0 = self.relu3(self.bn3(self.conv3(x)))
-        if self.features == "res1":
-            return x0
+
+        if "res1" in self.features:
+            out["res1"] =  x0
         x = self.avgpool(x0)
         x1 = self.layer1(x)
-        if self.features == "res2":
-            return x1
+        if "res2" in self.features:
+            out["res2"] =  x1
         x2 = self.layer2(x1)
-        if self.features == "res3":
-            return x2
+        if "res3" in self.features:
+            out["res3"] =  x2
         x3 = self.layer3(x2)
-        if self.features == "res4":
-            return x3
+        if "res4" in self.features:
+            out["res4"] =  x3
         x4 = self.layer4(x3)
-        if self.features == "res5":
-            return x4
+        if "res5" in self.features:
+            out["res5"] =  x4
 
-        assert (self.features is None) or (self.features == "all")
-
-        return {
-            "res1": x0,
-            "res2": x1,
-            "res3": x2,
-            "res4": x3,
-            "res5": x4,
-        }
+        return out
