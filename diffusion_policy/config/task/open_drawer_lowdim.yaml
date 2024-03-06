@@ -1,0 +1,34 @@
+name: open_drawer
+
+num_keypoints: &num_keypoints 21
+shape_meta: &shape_meta
+  # acceptable types: rgb, low_dim
+  obs:
+    agent_pose:
+      shape: [4,4]
+      type: low_dim
+    keypoint_pcd:
+      shape: [*num_keypoints, 3]
+      type: low_dim
+    keypoint_idx:
+      shape: [*num_keypoints]
+      type: low_dim
+  action:
+    shape: [4,4]
+
+gripper_loc_bounds: 
+  _target_: diffusion_policy.common.common_utils.get_gripper_loc_bounds
+  path: "/home/felix/Workspace/diffusion_policy_felix/diffusion_policy/tasks/18_peract_tasks_location_bounds.json"
+  buffer: 0.0
+  task: ${name}
+
+dataset:
+  _target_: diffusion_policy.dataset.rlbench_dataset.RLBenchDataset
+  root: /home/felix/Workspace/diffusion_policy_felix/data/peract/raw/train
+  task_name: open_drawer
+  cameras: []
+  num_episodes: 10
+  variation_number: 0
+  n_obs: ${n_obs_steps}
+  augment_obs: True
+  val_ratio: 0.2

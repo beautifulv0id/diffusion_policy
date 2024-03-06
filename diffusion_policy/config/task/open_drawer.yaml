@@ -1,0 +1,31 @@
+name: open_drawer
+
+image_shape: &image_shape [3, 128, 128]
+num_keypoints: &num_keypoints 21
+shape_meta: &shape_meta
+  # acceptable types: rgb, low_dim
+  obs:
+    image:
+      shape: *image_shape
+      type: rgb
+    agent_pose:
+      shape: [4,4]
+      type: low_dim
+    keypoint_pcd:
+      shape: [*num_keypoints, 3]
+      type: low_dim
+    keypoint_idx:
+      shape: [*num_keypoints]
+      type: low_dim
+  action:
+    shape: [4,4]
+  
+
+dataset:
+  _target_: diffusion_policy.dataset.rlbench_dataset.RLBenchDataset
+  root: /home/felix/Workspace/diffusion_policy_felix/data/peract/raw/train
+  task_name: open_drawer
+  num_episodes: 1
+  variation_number: 0
+  n_obs: 2
+  augment_obs: False

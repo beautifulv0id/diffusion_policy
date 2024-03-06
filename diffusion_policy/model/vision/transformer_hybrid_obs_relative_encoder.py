@@ -409,3 +409,5 @@ class TransformerHybridObsRelativeEncoder(ModuleAttrMixin):
         example_output = self.forward(example_obs_dict)
         output_shape = example_output.shape[1:]
         return output_shape
+
+
