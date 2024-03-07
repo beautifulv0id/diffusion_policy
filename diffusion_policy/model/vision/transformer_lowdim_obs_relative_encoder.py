@@ -9,6 +9,7 @@ from diffusion_policy.model.common.layer import RelativeCrossAttentionModule
 import einops
 from scipy.spatial import transform
 
+# TODO: proper naming, remove relative? Change to something w/ SE3?
 class TransformerHybridObsRelativeEncoder(ModuleAttrMixin):
     def __init__(self,
             shape_meta: dict,

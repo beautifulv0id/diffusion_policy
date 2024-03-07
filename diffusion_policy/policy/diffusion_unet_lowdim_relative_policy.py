@@ -150,38 +150,38 @@ class DiffusionUnetLowDimRelativePolicy(BaseImagePolicy):
         action[:,:,:3,3] = self.unnormalize_pos(action[:,:,:3,3])
         return action
     
-    def convert2rel(self, obs, action=None):
-        x_curr = obs['agent_pose'][:,-1,:3,3]
-        R_curr = obs['agent_pose'][:,-1,:3,:3]
+    def convert2rel(self, x_curr, R_curr, obs, action=None):
         bs = x_curr.shape[0]
+        trans = - torch.einsum('bmn,bn->bm', R_curr.transpose(-1,-2), x_curr)
+        Rot = R_curr.transpose(-1,-2)
         agent_pose = obs['agent_pose'].clone()
-        agent_pose[:,:,:3,3] = agent_pose[:,:,:3,3] - x_curr.view(bs, 1, 3)
-        agent_pose[:,:,:3,:3] = torch.einsum('bmn,bhnk->bhmk', R_curr.transpose(-1,-2), agent_pose[:,:,:3,:3])
+        agent_pose[:,:,:3,:3] = torch.einsum('bmn,bhnk->bhmk', Rot, agent_pose[:,:,:3,:3])
+        agent_pose[:,:,:3,3] = torch.einsum('bmn,bhn->bhm', Rot, agent_pose[:,:,:3,3]) + trans.view(bs, 1, 3)
         obs['agent_pose'] = agent_pose
         keypoint_pcd = obs['keypoint_pcd'].clone()
-        keypoint_pcd = keypoint_pcd - x_curr.view(bs, 1, 1, 3)
-        keypoint_pcd = torch.einsum('bmn,bhkn->bhkm', R_curr.transpose(-1,-2), keypoint_pcd)
+        keypoint_pcd = torch.einsum('bmn,bhkn->bhkm', Rot, keypoint_pcd) + trans.view(bs, 1, 1, 3)
         obs['keypoint_pcd'] = keypoint_pcd
         if action is not None:
             action = action.clone()
-            action[:,:,:3,3] = action[:,:,:3,3] - x_curr.view(bs, 1, 3)
-            action[:,:,:3,:3] = torch.einsum('bmn,bhnk->bhmk', R_curr.transpose(-1,-2), action[:,:,:3,:3])
+            action[:,:,:3,:3] = torch.einsum('bmn,bhnk->bhmk', Rot, action[:,:,:3,:3])
+            action[:,:,:3,3] = torch.einsum('bmn,bhn->bhm', Rot, action[:,:,:3,3]) + trans.view(bs, 1, 3)
             return obs, action
         return obs
     
     def convert2abs(self, x_curr, R_curr, action, obs=None):
         bs = x_curr.shape[0]
         action = action.clone()
-        action[:,:,:3,:3] = torch.einsum('bmn,bhnk->bhmk', R_curr, action[:,:,:3,:3])
-        action[:,:,:3,3] = action[:,:,:3,3] + x_curr.view(bs, 1, 3)
+        trans = x_curr
+        Rot = R_curr
+        action[:,:,:3,:3] = torch.einsum('bmn,bhnk->bhmk', Rot, action[:,:,:3,:3])
+        action[:,:,:3,3] = torch.einsum('bmn,bhn->bhm', Rot, action[:,:,:3,3]) + trans.view(bs, 1, 3)
         if obs is not None:
             agent_pose = obs['agent_pose'].clone()
-            agent_pose[:,:,:3,:3] = torch.einsum('bmn,bhnk->bhmk', R_curr, agent_pose[:,:,:3,:3])
-            agent_pose[:,:,:3,3] = agent_pose[:,:,:3,3] + x_curr.view(bs, 1, 3)
+            agent_pose[:,:,:3,:3] = torch.einsum('bmn,bhnk->bhmk', Rot, agent_pose[:,:,:3,:3])
+            agent_pose[:,:,:3,3] = torch.einsum('bmn,bhn->bhm', Rot, agent_pose[:,:,:3,3]) + trans.view(bs, 1, 3)
             obs['agent_pose'] = agent_pose
             keypoint_pcd = obs['keypoint_pcd'].clone()
-            keypoint_pcd = torch.einsum('bmn,bhkn->bhkm', R_curr, keypoint_pcd)
-            keypoint_pcd = keypoint_pcd + x_curr.view(bs, 1, 3)
+            keypoint_pcd = torch.einsum('bmn,bhkn->bhkm', Rot, keypoint_pcd) + trans.view(bs, 1, 3)
             obs['keypoint_pcd'] = keypoint_pcd
             return action, obs
         return action
@@ -190,7 +190,8 @@ class DiffusionUnetLowDimRelativePolicy(BaseImagePolicy):
     def sample(self, B, T, global_cond):
         model = self.model
 
-        R0 = SO3.rand(B*T).to_matrix().to(global_cond.device)
+        # R0 = SO3.rand(B*T).to_matrix().to(global_cond.device)
+        R0 = SO3().exp_map(torch.randn((B*T,3))).to_matrix().to(global_cond.device)
         x0 = torch.randn(B*T, 3).to(global_cond.device)
         
         K = self.num_inference_steps
@@ -228,8 +229,11 @@ class DiffusionUnetLowDimRelativePolicy(BaseImagePolicy):
         device = self.device
         dtype = self.dtype
         nobs = dict_apply(nobs, lambda x: x.type(dtype).to(device))
+        x_curr = nobs['agent_pose'][:,-1,:3,3].clone()
+        R_curr = nobs['agent_pose'][:,-1,:3,:3].clone()
+
         if self.relative_trajectory:
-            nobs = self.convert2rel(nobs)
+            nobs = self.convert2rel(x_curr, R_curr, nobs)
 
         # condition through global feature
         this_nobs = dict_apply(nobs, lambda x: x[:,:To,...]) # We need to keep the observation shape
@@ -242,7 +246,7 @@ class DiffusionUnetLowDimRelativePolicy(BaseImagePolicy):
         
         # unnormalize prediction
         if self.relative_trajectory:
-            action_pred = self.convert2abs(nobs['agent_pose'][:,-1,:3,3], nobs['agent_pose'][:,-1,:3,:3], action_pred)
+            action_pred = self.convert2abs(x_curr, R_curr, action_pred)
         action_pred = self.unnormalize_action(action_pred)
         
         result = {
@@ -267,12 +271,12 @@ class DiffusionUnetLowDimRelativePolicy(BaseImagePolicy):
         dtype = self.dtype
         nobs = dict_apply(nobs, lambda x: x.type(dtype).to(device))
         nactions = nactions.type(dtype).to(device)
-        
-        if self.relative_trajectory:
-            nobs, nactions = self.convert2rel(nobs, nactions)
 
-        x = nactions[:,:,:3,3]
-        R = nactions[:,:,:3,:3]
+        x_curr = nobs['agent_pose'][:,-1,:3,3].clone()
+        R_curr = nobs['agent_pose'][:,-1,:3,:3].clone()
+
+        if self.relative_trajectory:
+            nobs, nactions = self.convert2rel(x_curr, R_curr, nobs, nactions)
 
         # reshape B, T, ... to B*T
         this_nobs = dict_apply(nobs, 
@@ -280,7 +284,8 @@ class DiffusionUnetLowDimRelativePolicy(BaseImagePolicy):
         nobs_features = self.obs_encoder(this_nobs)
         global_cond = nobs_features
 
-
+        x = nactions[:,:,:3,3]
+        R = nactions[:,:,:3,:3]
         # Sample noise that we'll add to the trajectory
         t = torch.rand(B, device=nactions.device) + 10e-3
         std = marginal_prob_std(t, sigma=0.5)
@@ -293,7 +298,7 @@ class DiffusionUnetLowDimRelativePolicy(BaseImagePolicy):
         v_tar = v_tar.view(B,-1)
 
         # Predict the noise residual
-        v_pred = self.model(noisy_x.reshape(B,-1), noisy_R.reshape(B,3,3), t, global_cond=global_cond)
+        v_pred = self.model(noisy_x.reshape(B,-1), noisy_R.reshape(B,-1,3,3), t, global_cond=global_cond)
         
         # TODO: check why
         loss = ((v_pred - v_tar).pow(2).sum(-1)).mean()
@@ -319,14 +324,13 @@ def test(cfg: OmegaConf):
     batch = dict_apply(dataset[0], lambda x: x.unsqueeze(0))
     action = batch['action']
     obs = batch['obs']
-
-    robs, raction = policy.convert2rel(deepcopy(obs),deepcopy(action))
     x_curr = obs['agent_pose'][:,-1,:3,3]
     R_curr = obs['agent_pose'][:,-1,:3,:3]
+    robs, raction = policy.convert2rel(x_curr, R_curr, deepcopy(obs),deepcopy(action))
     aaction, aobs = policy.convert2abs(x_curr, R_curr, deepcopy(raction), deepcopy(robs))
 
-    assert(torch.allclose(aaction, action)), "action not equal with max diff: %f" % (aaction - action).abs().max()
     assert(torch.allclose(aobs['agent_pose'], obs['agent_pose'])), "agent_pose not equal with max diff: %f" % (aobs['agent_pose'] - obs['agent_pose']).abs().max()
+    assert(torch.allclose(aaction, action)), "action not equal with max diff: %f" % (aaction - action).abs().max()
     assert (torch.allclose(aobs['keypoint_pcd'], obs['keypoint_pcd'])), "keypoint_pcd not equal with max diff: %f" % (aobs['keypoint_pcd'] - obs['keypoint_pcd']).abs().max()
     policy.compute_loss(batch)
     policy.predict_action(obs)
