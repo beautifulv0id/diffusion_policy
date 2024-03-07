@@ -3,16 +3,8 @@ import torch
 import numpy as np
 import copy
 from diffusion_policy.common.pytorch_util import dict_apply
-from diffusion_policy.common.replay_buffer import ReplayBuffer
-from diffusion_policy.common.sampler import (
-    SequenceSampler, get_val_mask, downsample_mask)
-from diffusion_policy.model.common.normalizer import LinearNormalizer
 from diffusion_policy.dataset.base_dataset import BaseImageDataset
-from diffusion_policy.common.normalize_util import get_image_range_normalizer, get_range_normalizer_from_stat
 from pathlib import Path
-from collections import defaultdict, Counter
-import itertools
-from rlbench.demo import Demo
 from rlbench.utils import get_stored_demos
 from diffusion_policy.common.launch_utils import create_dataset
 from rlbench.observation_config import ObservationConfig, CameraConfig

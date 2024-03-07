@@ -8,6 +8,7 @@ from einops.layers.torch import Rearrange
 from diffusion_policy.model.diffusion.conv1d_components import (
     Downsample1d, Upsample1d, Conv1dBlock)
 from diffusion_policy.model.common.position_encodings import SinusoidalPosEmb
+from diffusion_policy.model.common.se3_diffusion_util import marginal_prob_std
 
 logger = logging.getLogger(__name__)
 
@@ -81,10 +82,11 @@ class NaiveConditionalSE3DiffusionModel(nn.Module):
     def forward(self, x: torch.Tensor, R: torch.Tensor, k: torch.Tensor, global_cond: torch.Tensor = None):
         x_R_input = torch.cat((x, R.reshape(R.shape[0], -1)), dim=-1)
         z = self.embed(x_R_input)
+        std = marginal_prob_std(k)
         z_time = self.get_time_embedding(k)
         v = torch.cat((z, z_time),dim=-1)
         for (layer, activation) in self.blocks:
             v = layer(v, global_cond)
             v = activation(v)
-        return v
+        return v/std[:,None].pow(2)
     

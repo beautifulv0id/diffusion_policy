@@ -27,7 +27,7 @@ dataset:
   root: /home/felix/Workspace/diffusion_policy_felix/data/peract/raw/train
   task_name: open_drawer
   cameras: []
-  num_episodes: 10
+  num_episodes: 1
   variation_number: 0
   n_obs: ${n_obs_steps}
   augment_obs: True

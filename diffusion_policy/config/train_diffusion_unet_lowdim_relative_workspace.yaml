@@ -8,7 +8,7 @@ _target_: diffusion_policy.workspace.diffusion_unet_lowdim_relative_policy.Diffu
 checkpoint:
   topk:
     monitor_key: train_loss
-    mode: max
+    mode: min
     k: 1
     format_str: 'epoch={epoch:04d}-train_loss={train_loss:.3f}.ckpt'
   save_last_ckpt: True
@@ -17,7 +17,7 @@ checkpoint:
 dataloader:
   batch_size: 64
   num_workers: 1
-  shuffle: True
+  shuffle: False
   pin_memory: True
   persistent_workers: True
 
@@ -91,6 +91,7 @@ policy:
   n_action_steps: ${n_action_steps}
   n_obs_steps: ${n_obs_steps}
   num_inference_steps: 100
+  delta_t: 0.01
   gripper_loc_bounds: ${task.gripper_loc_bounds}
   relative_trajectory: False
     

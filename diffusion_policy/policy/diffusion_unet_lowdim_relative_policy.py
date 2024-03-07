@@ -26,7 +26,8 @@ class DiffusionUnetLowDimRelativePolicy(BaseImagePolicy):
             horizon : int, 
             n_action_steps : int, 
             n_obs_steps : int,
-            num_inference_steps=None,
+            num_inference_steps=1000,
+            delta_t=0.01,
             gripper_loc_bounds=None,
             relative_trajectory=True,
             # parameters passed to step
@@ -94,7 +95,7 @@ class DiffusionUnetLowDimRelativePolicy(BaseImagePolicy):
         self.kwargs = kwargs
 
         self.num_inference_steps = num_inference_steps
-        self.dt = 0.001
+        self.dt = delta_t
 
         print("Diffusion params: %e" % sum(p.numel() for p in self.model.parameters()))
         print("Vision params: %e" % sum(p.numel() for p in self.obs_encoder.parameters()))
@@ -199,9 +200,7 @@ class DiffusionUnetLowDimRelativePolicy(BaseImagePolicy):
         for k in range(K):
             t = (K - k)/K + 10e-3
             t = torch.tensor(t, device=global_cond.device).repeat(B)
-            std = marginal_prob_std(t, sigma=0.5)
             v = model(x0.reshape(B,-1), R0.reshape(B,3,3), t, global_cond=global_cond)
-            v = v/std[:,None].pow(2)
             _s = v*dt
             x0, R0 = step(x0, R0, _s.reshape(B*T, 6))
 
@@ -253,7 +252,7 @@ class DiffusionUnetLowDimRelativePolicy(BaseImagePolicy):
             'action': action_pred,
         }
         return result
-
+    
     # ========= training  ============
     def compute_loss(self, batch):
         # normalize input
@@ -301,7 +300,7 @@ class DiffusionUnetLowDimRelativePolicy(BaseImagePolicy):
         v_pred = self.model(noisy_x.reshape(B,-1), noisy_R.reshape(B,-1,3,3), t, global_cond=global_cond)
         
         # TODO: check why
-        loss = ((v_pred - v_tar).pow(2).sum(-1)).mean()
+        loss = ((std.pow(2))*(v_pred - v_tar).pow(2).sum(-1)).mean()
         return loss
 
 import hydra
