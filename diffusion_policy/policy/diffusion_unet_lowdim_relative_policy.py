@@ -204,7 +204,7 @@ class DiffusionUnetLowDimRelativePolicy(BaseImagePolicy):
             _s = v*dt
             x0, R0 = step(x0, R0, _s.reshape(B*T, 6))
 
-        trajectory = torch.eye(4, device=global_cond.device).reshape(1,1,4,4).repeat(B, T, 1, 1)
+        trajectory = torch.eye(4, device=global_cond.device, dtype=global_cond.dtype).reshape(1,1,4,4).repeat(B, T, 1, 1)
         trajectory[:,:,:3,3] = x0.reshape(B, T, 3)
         trajectory[:,:,:3,:3] = R0.reshape(B, T, 3, 3)
         return trajectory
@@ -216,6 +216,12 @@ class DiffusionUnetLowDimRelativePolicy(BaseImagePolicy):
         """
         assert 'past_action' not in obs_dict # not implemented yet
         # normalize input
+        obs_dict = dict_apply(obs_dict, lambda x: x.float())
+
+        x_curr = obs_dict['agent_pose'][:,-1,:3,3].clone()
+        R_curr = obs_dict['agent_pose'][:,-1,:3,:3].clone()
+        if self.relative_trajectory:
+            obs_dict = self.convert2rel(x_curr, R_curr, obs_dict)
         nobs = self.normalize_obs(obs_dict)
         value = next(iter(nobs.values()))
         B = value.shape[0]
@@ -228,11 +234,7 @@ class DiffusionUnetLowDimRelativePolicy(BaseImagePolicy):
         device = self.device
         dtype = self.dtype
         nobs = dict_apply(nobs, lambda x: x.type(dtype).to(device))
-        x_curr = nobs['agent_pose'][:,-1,:3,3].clone()
-        R_curr = nobs['agent_pose'][:,-1,:3,:3].clone()
 
-        if self.relative_trajectory:
-            nobs = self.convert2rel(x_curr, R_curr, nobs)
 
         # condition through global feature
         this_nobs = dict_apply(nobs, lambda x: x[:,:To,...]) # We need to keep the observation shape
@@ -244,9 +246,10 @@ class DiffusionUnetLowDimRelativePolicy(BaseImagePolicy):
         action_pred = self.sample(B, T, global_cond=global_cond)
         
         # unnormalize prediction
+        action_pred = self.unnormalize_action(action_pred)
+
         if self.relative_trajectory:
             action_pred = self.convert2abs(x_curr, R_curr, action_pred)
-        action_pred = self.unnormalize_action(action_pred)
         
         result = {
             'action': action_pred,
@@ -256,8 +259,17 @@ class DiffusionUnetLowDimRelativePolicy(BaseImagePolicy):
     # ========= training  ============
     def compute_loss(self, batch):
         # normalize input
-        nobs = self.normalize_obs(batch['obs'])
-        nactions = self.normalize_action(batch['action'])
+        obs = dict_apply(batch['obs'], lambda x: x.float())
+        actions = batch['action'].float()
+
+        x_curr = obs['agent_pose'][:,-1,:3,3].clone()
+        R_curr = obs['agent_pose'][:,-1,:3,:3].clone()
+
+        if self.relative_trajectory:
+            obs, actions = self.convert2rel(x_curr, R_curr, obs, actions)
+
+        nobs = self.normalize_obs(obs)
+        nactions = self.normalize_action(actions)
         
         B = nactions.shape[0]
         T = self.horizon
@@ -271,11 +283,7 @@ class DiffusionUnetLowDimRelativePolicy(BaseImagePolicy):
         nobs = dict_apply(nobs, lambda x: x.type(dtype).to(device))
         nactions = nactions.type(dtype).to(device)
 
-        x_curr = nobs['agent_pose'][:,-1,:3,3].clone()
-        R_curr = nobs['agent_pose'][:,-1,:3,:3].clone()
 
-        if self.relative_trajectory:
-            nobs, nactions = self.convert2rel(x_curr, R_curr, nobs, nactions)
 
         # reshape B, T, ... to B*T
         this_nobs = dict_apply(nobs, 

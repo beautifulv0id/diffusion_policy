@@ -240,12 +240,12 @@ class TrainDiffusionUnetLowDimRelativeWorkspace(BaseWorkspace):
                         # sample trajectory from training set, and evaluate difference
                         batch = dict_apply(train_sampling_batch, lambda x: x.to(device, non_blocking=True))
                         obs_dict = batch['obs']
-                        gt_action = batch['action']
+                        gt_action = batch['action'].float()
                         
                         result = policy.predict_action(obs_dict)
                         pred_action = result['action']
                         R = SO3()
-                        R.update(torch.einsum('blnm,blmn->blnm', pred_action[:,:,:3,:3].transpose(-2,-1), gt_action[:,:,:3,:3]).flatten(0,1).float())
+                        R.update(torch.einsum('blnm,blmk->blnk', pred_action[:,:,:3,:3].transpose(-2,-1), gt_action[:,:,:3,:3]).flatten(0,1).float())
                         theta_eps = R.log_map()
                         mse = torch.nn.functional.mse_loss(pred_action[:,:,:3,3], gt_action[:,:,:3,3])
                         step_log['train_position_mse_error'] = torch.nn.functional.mse_loss(pred_action[:,:,:3,3], gt_action[:,:,:3,3]).item()
