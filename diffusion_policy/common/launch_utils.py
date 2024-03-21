@@ -161,7 +161,7 @@ def add_to_dataset(dataset, obs_idx, demo, keypoint_idx, cameras, n_obs = 2, use
     obs_tp1 = demo[keypoint_idx]
     obs_tm1 = demo[max(0, keypoint_idx - 1)]
     ignore_collisions = int(obs_tm1.ignore_collisions)
-    action = obs_tp1.gripper_matrix
+    action = np.concatenate([obs_tp1.gripper_pose[:3], normalize_quaternion(obs_tp1.gripper_pose[3:]), [obs_tp1.gripper_open], [ignore_collisions]])
     data = []
     for i, obs in enumerate(observations):
         full_obs_dict = extract_obs(obs, cameras, pcd=use_pcd)
@@ -179,10 +179,6 @@ def add_to_dataset(dataset, obs_idx, demo, keypoint_idx, cameras, n_obs = 2, use
         data.append({
             "obs": obs_dict,
             "action": action,
-            "others": {
-                "ignore_collisions": ignore_collisions,
-                "next_gripper_pose": obs_tp1.gripper_matrix
-            }
         })
     
     def stack_list_of_dicts(data):
@@ -194,9 +190,6 @@ def add_to_dataset(dataset, obs_idx, demo, keypoint_idx, cameras, n_obs = 2, use
                 data_dict[k] = stack_list_of_dicts([d[k] for d in data])
         return data_dict
     data = stack_list_of_dicts(data)
-
-    data["others"]["ignore_collisions"] = np.array([ignore_collisions])
-    data["others"]["next_gripper_pose"] = np.concatenate([obs_tp1.gripper_pose[:3], normalize_quaternion(obs_tp1.gripper_pose[3:]), [obs_tp1.gripper_open]])
     dataset.append(data)
 
 def create_dataset(demos, cameras, demo_augmentation_every_n=10, n_obs=2, use_task_keypoints=False, use_pcd=False):

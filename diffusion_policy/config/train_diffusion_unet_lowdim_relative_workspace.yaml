@@ -5,24 +5,26 @@ defaults:
 name: diffusion_unet_lowdim_relative_policy
 _target_: diffusion_policy.workspace.diffusion_unet_lowdim_relative_policy.DiffusionUnetLowDimRelativePolicy
 
+mode: train
+
 checkpoint:
   topk:
-    monitor_key: train_loss
+    monitor_key: val_loss
     mode: min
     k: 1
-    format_str: 'epoch={epoch:04d}-train_loss={train_loss:.3f}.ckpt'
+    format_str: 'epoch={epoch:04d}-val_loss={val_loss:.3f}.ckpt'
   save_last_ckpt: True
   save_last_snapshot: False
 
 dataloader:
-  batch_size: 64
+  batch_size: 128
   num_workers: 1
-  shuffle: False
+  shuffle: True
   pin_memory: True
   persistent_workers: True
 
 val_dataloader:
-  batch_size: 64
+  batch_size: 128
   num_workers: 1
   shuffle: False
   pin_memory: True
@@ -40,7 +42,7 @@ ema:
 task_name: ${task.name}
 exp_name: "default"
 horizon: 1
-n_obs_steps: &n_obs_steps 2
+n_obs_steps: &n_obs_steps 1
 n_action_steps: 1
 embedding_dim: 60
 
@@ -93,7 +95,8 @@ policy:
   num_inference_steps: 100
   delta_t: 0.01
   gripper_loc_bounds: ${task.gripper_loc_bounds}
-  relative_trajectory: False
+  relative_position: True
+  relative_rotation: False
     
 
 training:

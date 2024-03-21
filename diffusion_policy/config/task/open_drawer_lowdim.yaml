@@ -24,11 +24,12 @@ gripper_loc_bounds:
 
 dataset:
   _target_: diffusion_policy.dataset.rlbench_dataset.RLBenchDataset
-  root: /home/felix/Workspace/diffusion_policy_felix/data/peract/raw/train
+  root: /home/felix/Workspace/diffusion_policy_felix/data/train
   task_name: open_drawer
   cameras: []
   num_episodes: 1
   variation_number: 0
+  demo_augmentation_every_n: 1
   n_obs: ${n_obs_steps}
-  augment_obs: True
+  build_history_from_augment_obs: True
   val_ratio: 0.2

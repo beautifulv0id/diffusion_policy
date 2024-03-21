@@ -12,12 +12,14 @@ from diffusion_policy.model.diffusion.simple_network import NaiveConditionalSE3D
 from diffusion_policy.model.diffusion.mask_generator import LowdimMaskGenerator
 from diffusion_policy.model.vision.transformer_lowdim_obs_relative_encoder import TransformerHybridObsRelativeEncoder
 from diffusion_policy.common.robomimic_config_util import get_robomimic_config
+from diffusion_policy.common.common_utils import action_from_trajectory_gripper_open_ignore_collision
 from robomimic.algo.algo import PolicyAlgo
 import robomimic.utils.obs_utils as ObsUtils
 from diffusion_policy.common.pytorch_util import dict_apply
 from diffusion_policy.model.common.se3_diffusion_util import marginal_prob_std, sample_from_se3_gaussian, se3_score_normal, step
 import theseus as th
 from theseus.geometry.so3 import SO3
+from scipy.spatial.transform import Rotation 
 
 class DiffusionUnetLowDimRelativePolicy(BaseImagePolicy):
     def __init__(self, 
@@ -29,7 +31,8 @@ class DiffusionUnetLowDimRelativePolicy(BaseImagePolicy):
             num_inference_steps=1000,
             delta_t=0.01,
             gripper_loc_bounds=None,
-            relative_trajectory=True,
+            relative_position=True,
+            relative_rotation=True,
             # parameters passed to step
             **kwargs):
         super().__init__()
@@ -85,13 +88,19 @@ class DiffusionUnetLowDimRelativePolicy(BaseImagePolicy):
 
         self.obs_encoder = obs_encoder
         self.model : NaiveConditionalSE3DiffusionModel = model
+        self.gripper_state_ignore_collision_predictor = nn.Sequential(
+            nn.Linear(obs_feature_dim, 128),
+            nn.Sigmoid(),
+            nn.Linear(128, 2*horizon),
+        )
         self.horizon = horizon
         self.obs_feature_dim = obs_feature_dim
         self.action_dim = action_dim
         self.n_action_steps = n_action_steps
         self.n_obs_steps = n_obs_steps
         self.gripper_loc_bounds = torch.tensor(gripper_loc_bounds)
-        self.relative_trajectory = relative_trajectory
+        self.relative_position = relative_position
+        self.relative_rotation = relative_rotation
         self.kwargs = kwargs
 
         self.num_inference_steps = num_inference_steps
@@ -99,6 +108,17 @@ class DiffusionUnetLowDimRelativePolicy(BaseImagePolicy):
 
         print("Diffusion params: %e" % sum(p.numel() for p in self.model.parameters()))
         print("Vision params: %e" % sum(p.numel() for p in self.obs_encoder.parameters()))
+
+    def state_dict(self):
+        super_dict = super().state_dict()
+        super_dict['relative_position'] = self.relative_position
+        super_dict['relative_rotation'] = self.relative_rotation
+        return super_dict
+    
+    def load_state_dict(self, state_dict):
+        self.relative_position = state_dict.pop('relative_position', self.relative_position)
+        self.relative_rotation = state_dict.pop('relative_rotation', self.relative_rotation)
+        super().load_state_dict(state_dict)
     
     def normalize_pos(self, pos):
         pos_min = self.gripper_loc_bounds[0].float().to(pos.device)
@@ -135,57 +155,53 @@ class DiffusionUnetLowDimRelativePolicy(BaseImagePolicy):
         return traj
         
     def normalize_obs(self, obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        obs_dict['agent_pose'] = obs_dict['agent_pose'].clone()
-        obs_dict['agent_pose'][:,:,:3,3] = self.normalize_pos(obs_dict['agent_pose'][:,:,:3,3])
-        obs_dict['keypoint_pcd'] = self.normalize_pos(obs_dict['keypoint_pcd'])
-        # obs_dict['image'] = obs_dict['image'] / 255.0
-        # obs_dict['point_cloud'] = self.normalize_pos(obs_dict['point_cloud'].permute(0,1,2,4,5,3)).permute(0,1,2,5,3,4)
+        this_obs = dict_apply(obs_dict, lambda x: x.clone())
+        this_obs['agent_pose'][:,:,:3,3] = self.normalize_pos(this_obs['agent_pose'][:,:,:3,3])
+        this_obs['keypoint_pcd'] = self.normalize_pos(this_obs['keypoint_pcd'])
         return obs_dict
 
-    def normalize_action(self, action: torch.Tensor) -> torch.Tensor:
+    def normalize_trajectory(self, action: torch.Tensor) -> torch.Tensor:
         action = action.clone()
         action[:,:,:3,3] = self.normalize_pos(action[:,:,:3,3])
         return action
     
     def unnormalize_action(self, action: torch.Tensor) -> torch.Tensor:
+        action = action.clone()
         action[:,:,:3,3] = self.unnormalize_pos(action[:,:,:3,3])
         return action
     
+    def toHomogeneous(self, x):
+        return torch.cat([x, torch.ones_like(x[...,0:1])], dim=-1)
+    
     def convert2rel(self, x_curr, R_curr, obs, action=None):
-        bs = x_curr.shape[0]
-        trans = - torch.einsum('bmn,bn->bm', R_curr.transpose(-1,-2), x_curr)
-        Rot = R_curr.transpose(-1,-2)
-        agent_pose = obs['agent_pose'].clone()
-        agent_pose[:,:,:3,:3] = torch.einsum('bmn,bhnk->bhmk', Rot, agent_pose[:,:,:3,:3])
-        agent_pose[:,:,:3,3] = torch.einsum('bmn,bhn->bhm', Rot, agent_pose[:,:,:3,3]) + trans.view(bs, 1, 3)
-        obs['agent_pose'] = agent_pose
-        keypoint_pcd = obs['keypoint_pcd'].clone()
-        keypoint_pcd = torch.einsum('bmn,bhkn->bhkm', Rot, keypoint_pcd) + trans.view(bs, 1, 1, 3)
-        obs['keypoint_pcd'] = keypoint_pcd
+        this_obs = dict_apply(obs, lambda x: x.clone())
+        H = torch.eye(4, device=x_curr.device, dtype=x_curr.dtype).reshape(1,4,4).repeat(x_curr.shape[0], 1, 1)
+        if self.relative_position:
+            H[:,:3,3] = -x_curr
+        if self.relative_rotation:
+            H[:,:3,3] = torch.einsum('bmn,bn->bm', R_curr.transpose(-1,-2), H[:,:3,3])
+            H[:,:3,:3] = R_curr.transpose(-1,-2) 
+        this_obs['keypoint_pcd'] = torch.einsum('bmn,bhkn->bhkm', H, self.toHomogeneous(this_obs['keypoint_pcd']))[..., :3]
+        this_obs['agent_pose'] = torch.einsum('bmn,bhnk->bhmk', H, this_obs['agent_pose'])
         if action is not None:
-            action = action.clone()
-            action[:,:,:3,:3] = torch.einsum('bmn,bhnk->bhmk', Rot, action[:,:,:3,:3])
-            action[:,:,:3,3] = torch.einsum('bmn,bhn->bhm', Rot, action[:,:,:3,3]) + trans.view(bs, 1, 3)
-            return obs, action
-        return obs
+            this_action = torch.einsum('bmn,bhnk->bhmk', H, action)
+            return this_obs, this_action
+        return this_obs
     
     def convert2abs(self, x_curr, R_curr, action, obs=None):
-        bs = x_curr.shape[0]
-        action = action.clone()
-        trans = x_curr
-        Rot = R_curr
-        action[:,:,:3,:3] = torch.einsum('bmn,bhnk->bhmk', Rot, action[:,:,:3,:3])
-        action[:,:,:3,3] = torch.einsum('bmn,bhn->bhm', Rot, action[:,:,:3,3]) + trans.view(bs, 1, 3)
+        H = torch.eye(4, device=self.device, dtype=self.dtype).reshape(1,4,4).repeat(x_curr.shape[0], 1, 1)
+        if self.relative_position:
+            H[:,:3,3] = x_curr
+        if self.relative_rotation:
+            H[:,:3,:3] = R_curr
+        this_action = torch.einsum('bmn,bhnk->bhmk', H, action)
         if obs is not None:
-            agent_pose = obs['agent_pose'].clone()
-            agent_pose[:,:,:3,:3] = torch.einsum('bmn,bhnk->bhmk', Rot, agent_pose[:,:,:3,:3])
-            agent_pose[:,:,:3,3] = torch.einsum('bmn,bhn->bhm', Rot, agent_pose[:,:,:3,3]) + trans.view(bs, 1, 3)
-            obs['agent_pose'] = agent_pose
-            keypoint_pcd = obs['keypoint_pcd'].clone()
-            keypoint_pcd = torch.einsum('bmn,bhkn->bhkm', Rot, keypoint_pcd) + trans.view(bs, 1, 3)
-            obs['keypoint_pcd'] = keypoint_pcd
-            return action, obs
-        return action
+            this_obs = dict_apply(obs, lambda x: x.clone())
+            this_obs['keypoint_pcd'] = torch.einsum('bmn,bhkn->bhkm', H, self.toHomogeneous(this_obs['keypoint_pcd']))[..., :3]
+            this_obs['agent_pose'] = torch.einsum('bmn,bhnk->bhmk', H, this_obs['agent_pose'])
+            return this_action, this_obs
+        return this_action
+    
 
     # ========= inference  ============
     def sample(self, B, T, global_cond):
@@ -204,7 +220,7 @@ class DiffusionUnetLowDimRelativePolicy(BaseImagePolicy):
             _s = v*dt
             x0, R0 = step(x0, R0, _s.reshape(B*T, 6))
 
-        trajectory = torch.eye(4, device=global_cond.device, dtype=global_cond.dtype).reshape(1,1,4,4).repeat(B, T, 1, 1)
+        trajectory = torch.eye(4, device=self.device, dtype=self.dtype).reshape(1,1,4,4).repeat(B, T, 1, 1)
         trajectory[:,:,:3,3] = x0.reshape(B, T, 3)
         trajectory[:,:,:3,:3] = R0.reshape(B, T, 3, 3)
         return trajectory
@@ -216,25 +232,21 @@ class DiffusionUnetLowDimRelativePolicy(BaseImagePolicy):
         """
         assert 'past_action' not in obs_dict # not implemented yet
         # normalize input
-        obs_dict = dict_apply(obs_dict, lambda x: x.float())
 
         x_curr = obs_dict['agent_pose'][:,-1,:3,3].clone()
         R_curr = obs_dict['agent_pose'][:,-1,:3,:3].clone()
-        if self.relative_trajectory:
+        if self.relative_position or self.relative_rotation:
             obs_dict = self.convert2rel(x_curr, R_curr, obs_dict)
         nobs = self.normalize_obs(obs_dict)
         value = next(iter(nobs.values()))
         B = value.shape[0]
         To = self.n_obs_steps
         T = self.horizon
-        Da = self.action_dim
-        Do = self.obs_feature_dim
 
         # build input
         device = self.device
         dtype = self.dtype
         nobs = dict_apply(nobs, lambda x: x.type(dtype).to(device))
-
 
         # condition through global feature
         this_nobs = dict_apply(nobs, lambda x: x[:,:To,...]) # We need to keep the observation shape
@@ -243,47 +255,58 @@ class DiffusionUnetLowDimRelativePolicy(BaseImagePolicy):
         global_cond = nobs_features
 
         # run sampling
-        action_pred = self.sample(B, T, global_cond=global_cond)
+        trajectory_pred = self.sample(B, T, global_cond=global_cond)
+
+        # regress gripper open
+        gripper_state_ignore_collision_prediction = self.gripper_state_ignore_collision_predictor(nobs_features).reshape(B, T, 2)
+        gripper_state_ignore_collision_prediction = torch.sigmoid(gripper_state_ignore_collision_prediction)
+        gripper_state, ignore_collision = (gripper_state_ignore_collision_prediction > 0.5).float().chunk(2, dim=-1)
         
         # unnormalize prediction
-        action_pred = self.unnormalize_action(action_pred)
+        trajectory_pred = self.unnormalize_action(trajectory_pred)
 
-        if self.relative_trajectory:
-            action_pred = self.convert2abs(x_curr, R_curr, action_pred)
+        if self.relative_position or self.relative_rotation:
+            trajectory_pred = self.convert2abs(x_curr, R_curr, trajectory_pred)
         
+        action = action_from_trajectory_gripper_open_ignore_collision(trajectory_pred, gripper_state, ignore_collision)
         result = {
-            'action': action_pred,
+            'action': action,
+            'trajectory': trajectory_pred,
+            'open_gripper': gripper_state_ignore_collision_prediction[:,:,0],
+            'ignore_collision': gripper_state_ignore_collision_prediction[:,:,1]
         }
         return result
     
     # ========= training  ============
     def compute_loss(self, batch):
         # normalize input
-        obs = dict_apply(batch['obs'], lambda x: x.float())
+        obs = batch['obs']
         actions = batch['action'].float()
-
+        
+        trajectory = torch.eye(4, device=self.device, dtype=self.dtype).reshape(1,1,4,4).repeat(actions.shape[0], self.horizon, 1, 1)
+        trajectory[:,:,:3,3] = actions[:,:,:3]
+        trajectory[:,:,:3,:3] = torch.from_numpy(Rotation.from_quat(actions[:,:,3:7].flatten(0,1).cpu()).as_matrix().reshape(actions.shape[0], self.horizon, 3, 3)).to(self.device, self.dtype)
+        
         x_curr = obs['agent_pose'][:,-1,:3,3].clone()
         R_curr = obs['agent_pose'][:,-1,:3,:3].clone()
 
-        if self.relative_trajectory:
-            obs, actions = self.convert2rel(x_curr, R_curr, obs, actions)
+        if self.relative_position or self.relative_rotation:
+            obs, trajectory = self.convert2rel(x_curr, R_curr, obs, trajectory)
 
         nobs = self.normalize_obs(obs)
-        nactions = self.normalize_action(actions)
+        trajectory = self.normalize_trajectory(trajectory)
         
-        B = nactions.shape[0]
+        B = trajectory.shape[0]
         T = self.horizon
         To = self.n_obs_steps
 
-        assert (T == nactions.shape[1])
+        assert (T == trajectory.shape[1])
 
         # build input
         device = self.device
         dtype = self.dtype
         nobs = dict_apply(nobs, lambda x: x.type(dtype).to(device))
-        nactions = nactions.type(dtype).to(device)
-
-
+        trajectory = trajectory.type(dtype).to(device)
 
         # reshape B, T, ... to B*T
         this_nobs = dict_apply(nobs, 
@@ -291,15 +314,19 @@ class DiffusionUnetLowDimRelativePolicy(BaseImagePolicy):
         nobs_features = self.obs_encoder(this_nobs)
         global_cond = nobs_features
 
-        x = nactions[:,:,:3,3]
-        R = nactions[:,:,:3,:3]
+        x = trajectory[:,:,:3,3]
+        R = trajectory[:,:,:3,:3]
         # Sample noise that we'll add to the trajectory
-        t = torch.rand(B, device=nactions.device) + 10e-3
+        t = torch.rand(B, device=trajectory.device) + 10e-3
         std = marginal_prob_std(t, sigma=0.5)
         # Compute score
         with torch.enable_grad():
             noisy_x, noisy_R = sample_from_se3_gaussian(x.flatten(0,1), R.flatten(0,1), std.repeat_interleave(T, dim=0))
             v_tar = se3_score_normal(noisy_x, noisy_R, x_tar=x.flatten(0,1), R_tar=R.flatten(0,1), std=std.repeat_interleave(T, dim=0))
+
+        # regress gripper open
+        pred = self.gripper_state_ignore_collision_predictor(nobs_features).reshape(B, T, 2)
+        regression_loss = F.binary_cross_entropy_with_logits(pred, actions[:,:,7:9])
 
         # TODO: generalize to T > 1
         v_tar = v_tar.view(B,-1)
@@ -309,6 +336,7 @@ class DiffusionUnetLowDimRelativePolicy(BaseImagePolicy):
         
         # TODO: check why
         loss = ((std.pow(2))*(v_pred - v_tar).pow(2).sum(-1)).mean()
+        loss += regression_loss * 0.1
         return loss
 
 import hydra
@@ -328,16 +356,19 @@ def test(cfg: OmegaConf):
     OmegaConf.resolve(cfg)
     policy : DiffusionUnetLowDimRelativePolicy = hydra.utils.instantiate(cfg.policy)
     dataset = hydra.utils.instantiate(cfg.task.dataset)
-    batch = dict_apply(dataset[0], lambda x: x.unsqueeze(0))
-    action = batch['action']
+    batch = dict_apply(dataset[0], lambda x: x.unsqueeze(0).float())
+    action= batch['action']    
+    trajectory = torch.eye(4).reshape(1,1,4,4).repeat(action.shape[0], policy.horizon, 1, 1)
+    trajectory[:,:,:3,3] = action[:,:,:3]
+    trajectory[:,:,:3,:3] = torch.from_numpy(Rotation.from_quat(action[:,:,3:7].flatten(0,1)).as_matrix().reshape(action.shape[0], policy.horizon, 3, 3)    )
     obs = batch['obs']
     x_curr = obs['agent_pose'][:,-1,:3,3]
     R_curr = obs['agent_pose'][:,-1,:3,:3]
-    robs, raction = policy.convert2rel(x_curr, R_curr, deepcopy(obs),deepcopy(action))
-    aaction, aobs = policy.convert2abs(x_curr, R_curr, deepcopy(raction), deepcopy(robs))
+    robs, rtrajectory = policy.convert2rel(x_curr, R_curr, deepcopy(obs),deepcopy(trajectory))
+    atrajectory, aobs = policy.convert2abs(x_curr, R_curr, deepcopy(rtrajectory), deepcopy(robs))
 
     assert(torch.allclose(aobs['agent_pose'], obs['agent_pose'])), "agent_pose not equal with max diff: %f" % (aobs['agent_pose'] - obs['agent_pose']).abs().max()
-    assert(torch.allclose(aaction, action)), "action not equal with max diff: %f" % (aaction - action).abs().max()
+    assert(torch.allclose(atrajectory, trajectory)), "action not equal with max diff: %f" % (atrajectory - trajectory).abs().max()
     assert (torch.allclose(aobs['keypoint_pcd'], obs['keypoint_pcd'])), "keypoint_pcd not equal with max diff: %f" % (aobs['keypoint_pcd'] - obs['keypoint_pcd']).abs().max()
     policy.compute_loss(batch)
     policy.predict_action(obs)

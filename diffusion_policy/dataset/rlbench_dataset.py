@@ -17,7 +17,7 @@ class RLBenchDataset(BaseImageDataset):
             variation_number=0,
             cameras = ['left_shoulder', 'right_shoulder', 'overhead', 'wrist', 'front'],
             n_obs=2,
-            augment_obs=True, # If True, observations are taken from the autmented demo
+            build_history_from_augment_obs=True, # If True, observations are taken from the autmented demo
             demo_augmentation_every_n=10,
             use_task_keypoints=True,
             use_pcd = False,
@@ -48,7 +48,7 @@ class RLBenchDataset(BaseImageDataset):
             task_low_dim_state=True,
         )
 
-        n_val = min(max(1, round(num_episodes * val_ratio)), num_episodes-1)
+        n_val = min(max(0, round(num_episodes * val_ratio)), num_episodes-1)
         n_train = num_episodes - n_val
         demos = get_stored_demos(amount = num_episodes,
                                      image_paths = False,
@@ -67,14 +67,14 @@ class RLBenchDataset(BaseImageDataset):
         train_dataset, train_demo_begin = create_dataset(train_demos, 
                                         cameras=cameras, 
                                         demo_augmentation_every_n=demo_augmentation_every_n, 
-                                        n_obs=n_obs if not augment_obs else 1, 
+                                        n_obs=n_obs if not build_history_from_augment_obs else 1, 
                                         use_task_keypoints=use_task_keypoints,
                                         use_pcd=use_pcd)
         
         val_dataset, val_demo_begin = create_dataset(val_demos,
                                         cameras=cameras, 
                                         demo_augmentation_every_n=demo_augmentation_every_n, 
-                                        n_obs=n_obs if not augment_obs else 1, 
+                                        n_obs=n_obs if not build_history_from_augment_obs else 1, 
                                         use_task_keypoints=use_task_keypoints,
                                         use_pcd=use_pcd)
         
@@ -83,7 +83,7 @@ class RLBenchDataset(BaseImageDataset):
         self.val_dataset = val_dataset
         self.val_demo_begin = val_demo_begin
         self.n_obs = n_obs
-        self.augment_obs = augment_obs  
+        self.augment_obs = build_history_from_augment_obs  
 
     def __len__(self) -> int:
         return len(self.dataset)
@@ -124,6 +124,7 @@ import hydra
 from omegaconf import OmegaConf
 import pathlib
 OmegaConf.register_new_resolver("eval", eval, replace=True)
+import pickle 
 
 @hydra.main(
     version_base=None,

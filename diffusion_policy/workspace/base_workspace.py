@@ -8,7 +8,7 @@ from omegaconf import OmegaConf
 import dill
 import torch
 import threading
-
+import json
 
 class BaseWorkspace:
     include_keys = tuple()
@@ -72,6 +72,15 @@ class BaseWorkspace:
     
     def get_checkpoint_path(self, tag='latest'):
         return pathlib.Path(self.output_dir).joinpath('checkpoints', f'{tag}.ckpt')
+    
+    def get_best_checkpoint_path(self):
+        file = pathlib.Path(self.output_dir).joinpath('checkpoints', 'checkpoint_map.json')
+        if file.exists():
+            with file.open('r') as f:
+                path_value_map = json.load(f)
+            if path_value_map:
+                return pathlib.Path(min(path_value_map, key=path_value_map.get))
+        return self.get_checkpoint_path()
 
     def load_payload(self, payload, exclude_keys=None, include_keys=None, **kwargs):
         if exclude_keys is None:

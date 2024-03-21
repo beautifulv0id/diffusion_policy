@@ -1,5 +1,6 @@
 from typing import Optional, Dict
 import os
+import json
 
 class TopKCheckpointManager:
     def __init__(self,
@@ -18,9 +19,20 @@ class TopKCheckpointManager:
         self.k = k
         self.format_str = format_str
         self.path_value_map = dict()
-    
+        self.load_value_map()
+
+    def load_value_map(self):
+        path = os.path.join(self.save_dir, 'checkpoint_map.json')
+        if os.path.exists(path):
+            with open(path, 'r') as f:
+                self.path_value_map = json.load(f)
+        else:
+            self.path_value_map = dict()
+
     def get_ckpt_path(self, data: Dict[str, float]) -> Optional[str]:
         if self.k == 0:
+            return None
+        if self.monitor_key not in data:
             return None
 
         value = data[self.monitor_key]
@@ -30,6 +42,7 @@ class TopKCheckpointManager:
         if len(self.path_value_map) < self.k:
             # under-capacity
             self.path_value_map[ckpt_path] = value
+            self.save_checkpoint_map()
             return ckpt_path
         
         # at capacity
@@ -51,9 +64,15 @@ class TopKCheckpointManager:
             del self.path_value_map[delete_path]
             self.path_value_map[ckpt_path] = value
 
+            self.save_checkpoint_map()
+
             if not os.path.exists(self.save_dir):
                 os.mkdir(self.save_dir)
 
             if os.path.exists(delete_path):
                 os.remove(delete_path)
             return ckpt_path
+
+    def save_checkpoint_map(self):
+        with open(os.path.join(self.save_dir, 'checkpoint_map.json'), 'w') as f:
+            json.dump(self.path_value_map, f, indent=4)
