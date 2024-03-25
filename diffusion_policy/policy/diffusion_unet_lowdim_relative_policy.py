@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from einops import rearrange, reduce
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 from diffusion_policy.model.common.normalizer import LinearNormalizer
-from diffusion_policy.policy.base_image_policy import BaseImagePolicy
+from diffusion_policy.policy.base_lowdim_policy import BaseLowdimPolicy
 from diffusion_policy.model.diffusion.conditional_unet1d import ConditionalUnet1D
 from diffusion_policy.model.diffusion.simple_network import NaiveConditionalSE3DiffusionModel
 from diffusion_policy.model.diffusion.mask_generator import LowdimMaskGenerator
@@ -21,7 +21,7 @@ import theseus as th
 from theseus.geometry.so3 import SO3
 from scipy.spatial.transform import Rotation 
 
-class DiffusionUnetLowDimRelativePolicy(BaseImagePolicy):
+class DiffusionUnetLowDimRelativePolicy(BaseLowdimPolicy):
     def __init__(self, 
             shape_meta: dict,
             obs_encoder: TransformerHybridObsRelativeEncoder,

@@ -23,8 +23,6 @@ from rlbench.backend.exceptions import InvalidActionError
 from rlbench.demo import Demo
 from pyrep.errors import IKError, ConfigurationPathError
 from pyrep.const import RenderMode
-from diffusion_policy.common.launch_utils import low_dim_obs_to_keypoints
-from scipy.spatial.transform import Rotation as R
 
 
 ALL_RLBENCH_TASKS = [
@@ -137,26 +135,19 @@ class Actioner:
         self,
         policy=None,
         instructions=None,
-        action_dim=8,
+        apply_cameras=("left_shoulder", "right_shoulder", "wrist"),
+        action_dim=7,
+        predict_trajectory=True
     ):
         self._policy = policy
         self._instructions = instructions
+        self._apply_cameras = apply_cameras
         self._action_dim = action_dim
+        self._predict_trajectory = predict_trajectory
 
         self._actions = {}
         self._instr = None
         self._task_str = None
-        self._gripper_bounds = np.array(        [[
-            0.10261330753564835,
-            -0.06472617387771606,
-            0.9140162467956543
-        ],
-        [
-            0.3657068908214569,
-            0.4357367157936096,
-            1.2285298109054565
-        ]]
-)
 
         self._policy.eval()
 
@@ -198,79 +189,179 @@ class Actioner:
 
         return action_ls, trajectory_ls, trajectory_mask_ls
 
-    def predict(self, keypoint_idxs, keypoints, gripper):
+    def predict(self, rgbs, pcds, gripper,
+                interpolation_length=None):
         """
         Args:
-            keypoint_idxs: (bs, num_hist, N)
-            keypoints: (bs, num_hist, N, 3)
-            gripper: (B, nhist, 4, 4)
+            rgbs: (bs, num_hist, num_cameras, 3, H, W)
+            pcds: (bs, num_hist, num_cameras, 3, H, W)
+            gripper: (B, nhist, output_dim)
+            interpolation_length: an integer
 
         Returns:
-            action: torch.Tensor
+            {"action": torch.Tensor, "trajectory": torch.Tensor}
         """
+        output = {"action": None, "trajectory": None}
 
-        self._task_id = self._task_id.to(gripper.device)
-        obs = {
-            "keypoint_idx": keypoint_idxs,
-            "keypoint_pcd": keypoints,
-            "agent_pose": gripper,
-        }
-        action = self._policy.predict_action(obs)["action"][0,0,:self._action_dim]
-        pos = action[:3]
+        rgbs = rgbs / 2 + 0.5  # in [0, 1]
 
-        # apply gripper bounds
-        for i in range(3):
-            if pos[i] < self._gripper_bounds[0][i] or pos[i] > self._gripper_bounds[1][i]:
-                print(f"Clipping pos {i} from {pos[i]} to {self._gripper_bounds[0][i]}")
-            pos[i] = np.clip(pos[i], self._gripper_bounds[0][i], self._gripper_bounds[1][i])
+        if self._instr is None:
+            raise ValueError()
 
-        return action.detach().cpu().numpy()
+        self._instr = self._instr.to(rgbs.device)
+        self._task_id = self._task_id.to(rgbs.device)
+
+        # Predict trajectory
+        if self._predict_trajectory:
+            print('Predict Trajectory')
+            fake_traj = torch.full(
+                [1, interpolation_length - 1, gripper.shape[-1]], 0
+            ).to(rgbs.device)
+            traj_mask = torch.full(
+                [1, interpolation_length - 1], False
+            ).to(rgbs.device)
+            output["trajectory"] = self._policy(
+                fake_traj,
+                traj_mask,
+                rgbs[:, -1],
+                pcds[:, -1],
+                self._instr,
+                gripper[..., :7],
+                run_inference=True
+            )
+        else:
+            print('Predict Keypose')
+            pred = self._policy(
+                rgbs[:, -1],
+                pcds[:, -1],
+                self._instr,
+                gripper[:, -1, :self._action_dim],
+            )
+            # Hackish, assume self._policy is an instance of Act3D
+            output["action"] = self._policy.prepare_action(pred)
+
+        return output
 
     @property
     def device(self):
         return next(self._policy.parameters()).device
 
 
-class RLBenchLowDimEnv:
+def obs_to_attn(obs, camera):
+    extrinsics_44 = torch.from_numpy(
+        obs.misc[f"{camera}_camera_extrinsics"]
+    ).float()
+    extrinsics_44 = torch.linalg.inv(extrinsics_44)
+    intrinsics_33 = torch.from_numpy(
+        obs.misc[f"{camera}_camera_intrinsics"]
+    ).float()
+    intrinsics_34 = F.pad(intrinsics_33, (0, 1, 0, 0))
+    gripper_pos_3 = torch.from_numpy(obs.gripper_pose[:3]).float()
+    gripper_pos_41 = F.pad(gripper_pos_3, (0, 1), value=1).unsqueeze(1)
+    points_cam_41 = extrinsics_44 @ gripper_pos_41
+
+    proj_31 = intrinsics_34 @ points_cam_41
+    proj_3 = proj_31.float().squeeze(1)
+    u = int((proj_3[0] / proj_3[2]).round())
+    v = int((proj_3[1] / proj_3[2]).round())
+
+    return u, v
+
+
+class RLBenchEnv:
 
     def __init__(
         self,
         data_path,
+        image_size=(128, 128),
+        apply_rgb=False,
+        apply_depth=False,
+        apply_pc=False,
         headless=False,
-        collision_checking=False,
-        obs_history_augmentation_every_n=10,
+        apply_cameras=("left_shoulder", "right_shoulder", "wrist", "front"),
+        fine_sampling_ball_diameter=None,
+        collision_checking=False
     ):
 
         # setup required inputs
         self.data_path = data_path
+        self.apply_rgb = apply_rgb
+        self.apply_depth = apply_depth
+        self.apply_pc = apply_pc
+        self.apply_cameras = apply_cameras
+        self.fine_sampling_ball_diameter = fine_sampling_ball_diameter
 
         # setup RLBench environments
-        self.obs_config = self.create_obs_config()
+        self.obs_config = self.create_obs_config(
+            image_size, apply_rgb, apply_depth, apply_pc, apply_cameras
+        )
 
         self.action_mode = MoveArmThenGripper(
             arm_action_mode=EndEffectorPoseViaPlanning(collision_checking=collision_checking),
             gripper_action_mode=Discrete()
         )
-        self.obs_history = []
-        self.obs_history_augmentation_every_n = obs_history_augmentation_every_n
-        self.action_mode.arm_action_mode.set_callable_each_step(lambda obs: self.obs_history.append(obs))
         self.env = Environment(
             self.action_mode, str(data_path), self.obs_config,
             headless=headless
         )
+        self.image_size = image_size
 
+    def get_obs_action(self, obs):
+        """
+        Fetch the desired state and action based on the provided demo.
+            :param obs: incoming obs
+            :return: required observation and action list
+        """
 
-    def get_keypoints_gripper_from_obs(self, obs):
+        # fetch state
+        state_dict = {"rgb": [], "depth": [], "pc": []}
+        for cam in self.apply_cameras:
+            if self.apply_rgb:
+                rgb = getattr(obs, "{}_rgb".format(cam))
+                state_dict["rgb"] += [rgb]
+
+            if self.apply_depth:
+                depth = getattr(obs, "{}_depth".format(cam))
+                state_dict["depth"] += [depth]
+
+            if self.apply_pc:
+                pc = getattr(obs, "{}_point_cloud".format(cam))
+                state_dict["pc"] += [pc]
+
+        # fetch action
+        action = np.concatenate([obs.gripper_pose, [obs.gripper_open]])
+        return state_dict, torch.from_numpy(action).float()
+
+    def get_rgb_pcd_gripper_from_obs(self, obs):
         """
         Return rgb, pcd, and gripper from a given observation
         :param obs: an Observation from the env
         :return: rgb, pcd, gripper
         """
-        pcd = torch.from_numpy(low_dim_obs_to_keypoints(obs.task_low_dim_state))
-        keypoint_idx = torch.arange(pcd.shape[0])
-        agent_pose = torch.from_numpy(obs.gripper_matrix)
-        return pcd, keypoint_idx, agent_pose
-    
+        state_dict, gripper = self.get_obs_action(obs)
+        state = transform(state_dict, augmentation=False)
+        state = einops.rearrange(
+            state,
+            "(m n ch) h w -> n m ch h w",
+            ch=3,
+            n=len(self.apply_cameras),
+            m=2
+        )
+        rgb = state[:, 0].unsqueeze(0)  # 1, N, C, H, W
+        pcd = state[:, 1].unsqueeze(0)  # 1, N, C, H, W
+        gripper = gripper.unsqueeze(0)  # 1, D
+
+        attns = torch.Tensor([])
+        for cam in self.apply_cameras:
+            u, v = obs_to_attn(obs, cam)
+            attn = torch.zeros(1, 1, 1, self.image_size[0], self.image_size[1])
+            if not (u < 0 or u > self.image_size[1] - 1 or v < 0 or v > self.image_size[0] - 1):
+                attn[0, 0, 0, v, u] = 1
+            attns = torch.cat([attns, attn], 1)
+        rgb = torch.cat([rgb, attns], 2)
+
+        return rgb, pcd, gripper
+
     def get_obs_action_from_demo(self, demo):
         """
         Fetch the desired state and action based on the provided demo.
@@ -408,13 +499,12 @@ class RLBenchLowDimEnv:
             except:
                 continue
 
-            keypoint_idxs = torch.Tensor([]).to(device)
-            keypoints = torch.Tensor([]).to(device)
+            rgbs = torch.Tensor([]).to(device)
+            pcds = torch.Tensor([]).to(device)
             grippers = torch.Tensor([]).to(device)
 
             # descriptions, obs = task.reset()
             descriptions, obs = task.reset_to_demo(demo)
-            self.obs_history.append(obs)
 
             actioner.load_episode(task_str, variation)
 
@@ -425,40 +515,32 @@ class RLBenchLowDimEnv:
             for step_id in range(max_steps):
 
                 # Fetch the current observation, and predict one action
-                if step_id > 0:
-                    self.obs_history = self.obs_history[::-1][::self.obs_history_augmentation_every_n][::-1][-num_history:]
+                rgb, pcd, gripper = self.get_rgb_pcd_gripper_from_obs(obs)
+                rgb = rgb.to(device)
+                pcd = pcd.to(device)
+                gripper = gripper.to(device)
 
-                for obs in self.obs_history:
-                    keypoint, keypoint_idx, gripper = self.get_keypoints_gripper_from_obs(obs)
-                    keypoint_idx = keypoint_idx.to(device).reshape(1,1,*keypoint_idx.shape)
-                    keypoint = keypoint.to(device).reshape(1,1,*keypoint.shape)
-                    gripper = gripper.to(device).reshape(1,1,*gripper.shape)
-
-                    keypoint_idxs = torch.cat([keypoint_idxs, keypoint_idx], dim=1)
-                    keypoints = torch.cat([keypoints, keypoint], dim=1)
-                    grippers = torch.cat([grippers, gripper], dim=1)
-
-                self.obs_history = []
+                rgbs = torch.cat([rgbs, rgb.unsqueeze(1)], dim=1)
+                pcds = torch.cat([pcds, pcd.unsqueeze(1)], dim=1)
+                grippers = torch.cat([grippers, gripper.unsqueeze(1)], dim=1)
 
                 # Prepare proprioception history
-                gripper_input = grippers[:, -num_history:]
-                keypoint_input = keypoints[:, -num_history:][:, :, :, :3]
-                keypoint_idxs_input = keypoint_idxs[:, -num_history:]
-                npad = num_history - gripper_input.shape[1]
-                gripper_input = F.pad(
-                    gripper_input, (0, 0, 0, 0, npad, 0), mode='replicate'
-                )
-                keypoint_input = F.pad(
-                    keypoint_input, (0, 0, 0, 0, npad, 0), mode='replicate'
-                )
-                keypoint_idxs_input = F.pad(
-                    keypoint_idxs_input, (0, 0, npad, 0), mode='replicate'
-                )
+                rgbs_input = rgbs[:, -1:][:, :, :, :3]
+                pcds_input = pcds[:, -1:]
+                if num_history < 1:
+                    gripper_input = grippers[:, -1]
+                else:
+                    gripper_input = grippers[:, -num_history:]
+                    npad = num_history - gripper_input.shape[1]
+                    gripper_input = F.pad(
+                        gripper_input, (0, 0, npad, 0), mode='replicate'
+                    )
 
-                action = actioner.predict(
-                    keypoint_idxs_input,
-                    keypoint_input,
+                output = actioner.predict(
+                    rgbs_input,
+                    pcds_input,
                     gripper_input,
+                    interpolation_length=interpolation_length
                 )
 
                 if verbose:
@@ -468,9 +550,31 @@ class RLBenchLowDimEnv:
 
                 # Update the observation based on the predicted action
                 try:
-                    print("Plan with RRT")
-                    collision_checking = self._collision_checking(task_str, step_id)
-                    obs, reward, terminate, _ = move(action, collision_checking=collision_checking)
+                    # Execute entire predicted trajectory step by step
+                    if output.get("trajectory", None) is not None:
+                        trajectory = output["trajectory"][-1].cpu().numpy()
+                        trajectory[:, -1] = trajectory[:, -1].round()
+
+                        # execute
+                        for action in tqdm(trajectory):
+                            #try:
+                            #    collision_checking = self._collision_checking(task_str, step_id)
+                            #    obs, reward, terminate, _ = move(action_np, collision_checking=collision_checking)
+                            #except:
+                            #    terminate = True
+                            #    pass
+                            collision_checking = self._collision_checking(task_str, step_id)
+                            obs, reward, terminate, _ = move(action, collision_checking=collision_checking)
+
+                    # Or plan to reach next predicted keypoint
+                    else:
+                        print("Plan with RRT")
+                        action = output["action"]
+                        action[..., -1] = torch.round(action[..., -1])
+                        action = action[-1].detach().cpu().numpy()
+
+                        collision_checking = self._collision_checking(task_str, step_id)
+                        obs, reward, terminate, _ = move(action, collision_checking=collision_checking)
 
                     max_reward = max(max_reward, reward)
 
@@ -610,25 +714,44 @@ class RLBenchLowDimEnv:
         return success_rate, valid, invalid_demos
 
     def create_obs_config(
-        self
+        self, image_size, apply_rgb, apply_depth, apply_pc, apply_cameras, **kwargs
     ):
         """
         Set up observation config for RLBench environment.
+            :param image_size: Image size.
+            :param apply_rgb: Applying RGB as inputs.
+            :param apply_depth: Applying Depth as inputs.
+            :param apply_pc: Applying Point Cloud as inputs.
+            :param apply_cameras: Desired cameras.
             :return: observation config
         """
         unused_cams = CameraConfig()
         unused_cams.set_all(False)
+        used_cams = CameraConfig(
+            rgb=apply_rgb,
+            point_cloud=apply_pc,
+            depth=apply_depth,
+            mask=False,
+            image_size=image_size,
+            render_mode=RenderMode.OPENGL,
+            **kwargs,
+        )
+
+        camera_names = apply_cameras
+        kwargs = {}
+        for n in camera_names:
+            kwargs[n] = used_cams
 
         obs_config = ObservationConfig(
-            front_camera=unused_cams,
-            left_shoulder_camera=unused_cams,
-            right_shoulder_camera=unused_cams,
-            wrist_camera=unused_cams,
-            overhead_camera=unused_cams,
+            front_camera=kwargs.get("front", unused_cams),
+            left_shoulder_camera=kwargs.get("left_shoulder", unused_cams),
+            right_shoulder_camera=kwargs.get("right_shoulder", unused_cams),
+            wrist_camera=kwargs.get("wrist", unused_cams),
+            overhead_camera=kwargs.get("overhead", unused_cams),
             joint_forces=False,
             joint_positions=False,
             joint_velocities=True,
-            task_low_dim_state=True,
+            task_low_dim_state=False,
             gripper_touch_forces=False,
             gripper_pose=True,
             gripper_open=True,
@@ -720,28 +843,22 @@ def transform(obs_dict, scale_size=(0.75, 1.25), augmentation=False):
     return torch.cat(obs, dim=0)
 
 
-
-import hydra
-from hydra import compose, initialize
-from omegaconf import OmegaConf
-from diffusion_policy.policy.diffusion_unet_lowdim_relative_policy import DiffusionUnetLowDimRelativePolicy
-
-OmegaConf.register_new_resolver("eval", eval, replace=True)
-
 def test():
-    with initialize(version_base=None, config_path="../../config"):
-        cfg = compose(config_name="train_diffusion_unet_lowdim_relative_workspace")
 
-    OmegaConf.resolve(cfg)
-
-    env = RLBenchLowDimEnv(
-        data_path="/home/felix/Workspace/diffusion_policy_felix/data/train",
+    env = RLBenchEnv(
+        data_path="/home/felix/Workspace/diffusion_policy_felix/data/peract/",
+        image_size=(128, 128),
+        apply_rgb=True,
+        apply_depth=False,
+        apply_pc=True,
         headless=False,
+        apply_cameras=("left_shoulder", "right_shoulder", "wrist"),
+        fine_sampling_ball_diameter=None,
         collision_checking=False,
-        obs_history_augmentation_every_n=2
     )
 
-    # env.verify_demos("open_drawer", 0, 1, max_tries=1, verbose=True)
+    env.verify_demos("open_drawer", -1, 10, max_tries=4, verbose=True)
+    return
 
     task_str = "open_drawer"
     task_type = task_file_to_task_class(task_str)
@@ -749,21 +866,39 @@ def test():
     task_variations = task.variation_count()
     task.set_variation(0)
 
-    policy : DiffusionUnetLowDimRelativePolicy = hydra.utils.instantiate(cfg.policy)
-    checkpoint_path = "/home/felix/Workspace/diffusion_policy_felix/data/outputs/2024.03.20/11.54.51_diffusion_unet_lowdim_relative_policy_open_drawer/checkpoints/latest.ckpt"
-    checkpoint = torch.load(checkpoint_path)
-    policy.load_state_dict(checkpoint["state_dicts"]['model'])
+    class Policy(torch.nn.Module):
+        def __init__(self):
+            super(Policy, self).__init__()
+            self.param = torch.nn.Parameter(torch.tensor([]))
+
+        def load(self, action_ls):
+            self.action_ls = action_ls
+            self.action_idx = 0
+
+        def prepare_action(self, pred):
+            return pred
+        def __call__(self, rgbs, pcds, inst, gripper):
+            action = self.action_ls[self.action_idx%len(self.action_ls)]
+            self.action_idx += 1
+            return action
     
+    policy = Policy()
     actioner = Actioner(
         policy=policy,
         instructions={"open_drawer": [[torch.rand(10)],[torch.rand(10)],[torch.rand(10)]]},
-        action_dim=8,
+        apply_cameras=("left_shoulder", "right_shoulder", "wrist"),
+        action_dim=7,
+        predict_trajectory=False
     )
+
+    demo = env.get_demo(task_str, 0, 0)[0]
+    action_ls, trajectory_ls, trajectory_mask_ls = actioner.get_action_from_demo(demo)
+    policy.load(action_ls)
 
     env._evaluate_task_on_one_variation(
         task_str="open_drawer",
         task=task,
-        max_steps=30,
+        max_steps=100,
         variation=0,
         num_demos=1,
         actioner=actioner,
@@ -771,7 +906,7 @@ def test():
         verbose=True,
         dense_interpolation=False,
         interpolation_length=50,
-        num_history=policy.n_obs_steps,
+        num_history=1,
     )
     # env.env.launch()
 

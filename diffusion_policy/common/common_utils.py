@@ -94,7 +94,7 @@ def action_from_trajectory_gripper_open_ignore_collision(trajectory : torch.Tens
     pos = trajectory[:, :, :3, 3]
     rot = trajectory[:, :, :3, :3]
     quat = torch.from_numpy(
-        Rotation.from_matrix(rot.reshape(-1,3,3).cpu()).as_quat().reshape(B, T, 4)
+        Rotation.from_matrix(rot.reshape(-1,3,3).detach().cpu()).as_quat().reshape(B, T, 4)
         ).to(device=device, dtype=dtype)
 
     action = torch.cat([pos, quat, gripper_open, ignore_collision], dim=-1)

@@ -192,11 +192,20 @@ def add_to_dataset(dataset, obs_idx, demo, keypoint_idx, cameras, n_obs = 2, use
     data = stack_list_of_dicts(data)
     dataset.append(data)
 
-def create_dataset(demos, cameras, demo_augmentation_every_n=10, n_obs=2, use_task_keypoints=False, use_pcd=False):
+def create_dataset(demos, cameras, demo_augmentation_every_n=10, n_obs=2, use_task_keypoints=False, use_pcd=False, keypoints_only=False):
     dataset = []
     episode_begin = [0]
     for demo in demos:
         episode_keypoints = _keypoint_discovery(demo)
+        if keypoints_only:
+            last_keypoint = 0
+            for i in range(len(episode_keypoints)):
+                add_to_dataset(dataset, last_keypoint, demo, episode_keypoints[i], cameras, n_obs, use_task_keypoints, use_pcd)
+                last_keypoint = episode_keypoints[i]
+                episode_begin.append(episode_begin[-1])
+            episode_begin[-1] = len(dataset)
+            continue
+
         for i in range(len(demo)-1):
             if i % demo_augmentation_every_n:
                 continue
@@ -204,7 +213,7 @@ def create_dataset(demos, cameras, demo_augmentation_every_n=10, n_obs=2, use_ta
             while len(episode_keypoints) > 0 and i >= episode_keypoints[0]:
                 episode_keypoints = episode_keypoints[1:]
             if len(episode_keypoints) == 0:
-                break
+                break            
             add_to_dataset(dataset, i, demo, episode_keypoints[0], cameras, n_obs, use_task_keypoints, use_pcd)
             episode_begin.append(episode_begin[-1])
         episode_begin[-1] = len(dataset)

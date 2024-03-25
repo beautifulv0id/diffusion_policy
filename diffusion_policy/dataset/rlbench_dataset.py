@@ -14,7 +14,7 @@ class RLBenchDataset(BaseImageDataset):
             root, 
             task_name="open_drawer",
             num_episodes=1,
-            variation_number=0,
+            variation=0,
             cameras = ['left_shoulder', 'right_shoulder', 'overhead', 'wrist', 'front'],
             n_obs=2,
             build_history_from_augment_obs=True, # If True, observations are taken from the autmented demo
@@ -24,10 +24,11 @@ class RLBenchDataset(BaseImageDataset):
             use_rgb = False,
             use_depth = False,
             use_mask = False,
+            keypoints_only=False,
             val_ratio=0.0,
             ):
         super().__init__()
-        assert variation_number == 0
+        assert variation == 0
 
         root = Path(root)
         num_episodes = num_episodes
@@ -53,10 +54,10 @@ class RLBenchDataset(BaseImageDataset):
         demos = get_stored_demos(amount = num_episodes,
                                      image_paths = False,
                                      dataset_root = root,
-                                     variation_number = variation_number,
+                                     variation_number = variation,
                                      task_name = task_name,
                                      obs_config = obs_config,
-                                     random_selection = True,
+                                     random_selection = False, #TODO: change this
                                      from_episode_number = 0)
         
         val_idxs = np.random.choice(num_episodes, size=n_val, replace=False)
@@ -69,14 +70,16 @@ class RLBenchDataset(BaseImageDataset):
                                         demo_augmentation_every_n=demo_augmentation_every_n, 
                                         n_obs=n_obs if not build_history_from_augment_obs else 1, 
                                         use_task_keypoints=use_task_keypoints,
-                                        use_pcd=use_pcd)
+                                        use_pcd=use_pcd,
+                                        keypoints_only=keypoints_only)
         
         val_dataset, val_demo_begin = create_dataset(val_demos,
                                         cameras=cameras, 
                                         demo_augmentation_every_n=demo_augmentation_every_n, 
                                         n_obs=n_obs if not build_history_from_augment_obs else 1, 
                                         use_task_keypoints=use_task_keypoints,
-                                        use_pcd=use_pcd)
+                                        use_pcd=use_pcd,
+                                        keypoints_only=keypoints_only)
         
         self.dataset = train_dataset
         self.demo_begin = train_demo_begin
@@ -146,6 +149,7 @@ def test(cfg: OmegaConf):
     data = dataset[0]
     
     print_dict(data)
+    print("Dataset length:", len(dataset))
 
 if __name__ == "__main__":
     test()
