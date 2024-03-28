@@ -56,7 +56,7 @@ optimizer:
   weight_decay: 1.0e-06
 
 policy:
-  _target_: diffusion_policy.policy.diffusion_unet_lowdim_relative_policy.DiffusionUnetLowDimRelativePolicy
+  _target_: diffusion_policy.policy.flow_matching_unet_lowdim_policy.FlowMatchingUnetLowDimPolicy
      
   shape_meta: ${task.shape_meta}
 
@@ -95,9 +95,9 @@ policy:
   num_inference_steps: 100
   delta_t: 0.01
   gripper_loc_bounds: ${task.gripper_loc_bounds}
-  relative_position: True
+  relative_position: False
   relative_rotation: False
-  noise_aug_std: 0.01
+  noise_aug_std: 0.00
     
 
 training:

@@ -80,7 +80,7 @@ class NaiveConditionalSE3DiffusionModel(nn.Module):
         return self.time_embed(k)
 
     def forward(self, x: torch.Tensor, R: torch.Tensor, k: torch.Tensor, global_cond: torch.Tensor = None):
-        x_R_input = torch.cat((x, R.reshape(R.shape[0], -1)), dim=-1)
+        x_R_input = torch.cat((x.reshape(x.shape[0], -1), R.reshape(R.shape[0], -1)), dim=-1)
         z = self.embed(x_R_input)
         std = marginal_prob_std(k)
         z_time = self.get_time_embedding(k)

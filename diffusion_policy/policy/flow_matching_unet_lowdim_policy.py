@@ -8,7 +8,7 @@ from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 from diffusion_policy.model.common.normalizer import LinearNormalizer
 from diffusion_policy.policy.base_lowdim_policy import BaseLowdimPolicy
 from diffusion_policy.model.diffusion.conditional_unet1d import ConditionalUnet1D
-from diffusion_policy.model.diffusion.simple_network import NaiveConditionalSE3DiffusionModel
+from diffusion_policy.model.flow_matching.feat_pcloud_naive_policy import NaivePolicy
 from diffusion_policy.model.diffusion.mask_generator import LowdimMaskGenerator
 from diffusion_policy.model.vision.transformer_lowdim_obs_relative_encoder import TransformerHybridObsRelativeEncoder
 from diffusion_policy.common.robomimic_config_util import get_robomimic_config
@@ -20,8 +20,9 @@ from diffusion_policy.model.common.se3_diffusion_util import marginal_prob_std, 
 import theseus as th
 from theseus.geometry.so3 import SO3
 from scipy.spatial.transform import Rotation 
+from geomstats.geometry.special_orthogonal import SpecialOrthogonal
 
-class DiffusionUnetLowDimRelativePolicy(BaseLowdimPolicy):
+class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
     def __init__(self, 
             shape_meta: dict,
             obs_encoder: TransformerHybridObsRelativeEncoder,
@@ -33,7 +34,8 @@ class DiffusionUnetLowDimRelativePolicy(BaseLowdimPolicy):
             gripper_loc_bounds=None,
             relative_position=True,
             relative_rotation=True,
-            noise_aug_std=0.01,
+            noise_aug_std=0.1,
+            velocity_scale=1.0,
             # parameters passed to step
             **kwargs):
         super().__init__()
@@ -77,24 +79,22 @@ class DiffusionUnetLowDimRelativePolicy(BaseLowdimPolicy):
 
         # create diffusion model
         obs_feature_dim = obs_encoder.output_shape()[0]
-        input_dim = action_dim
+        input_dim = 16 * horizon
 
 
-        model = NaiveConditionalSE3DiffusionModel(
-            in_channels=input_dim,
-            out_channels=6,
-            embed_dim=obs_feature_dim,
-            cond_dim=obs_feature_dim
+        model = NaivePolicy(
+            dim=input_dim,
+            output_size=6,
+            context_dim=obs_feature_dim,
         )
 
         self.obs_encoder = obs_encoder
-        self.model : NaiveConditionalSE3DiffusionModel = model
+        self.model = model
         self.gripper_state_ignore_collision_predictor = nn.Sequential(
             nn.Linear(obs_feature_dim, 128),
             nn.Sigmoid(),
             nn.Linear(128, 2*horizon),
         )
-
 
         self.horizon = horizon
         self.obs_feature_dim = obs_feature_dim
@@ -107,9 +107,13 @@ class DiffusionUnetLowDimRelativePolicy(BaseLowdimPolicy):
         self.kwargs = kwargs
         self.num_inference_steps = num_inference_steps
         self.dt = delta_t
+        self.velocity_scale = velocity_scale
+        self.vec_manifold = SpecialOrthogonal(n=3, point_type="vector")
         if noise_aug_std > 0:
             self.noise_aug_std = noise_aug_std
             self.data_augmentation = True
+        else:
+            self.data_augmentation = False
 
         print("Diffusion params: %e" % sum(p.numel() for p in self.model.parameters()))
         print("Vision params: %e" % sum(p.numel() for p in self.obs_encoder.parameters()))
@@ -208,27 +212,63 @@ class DiffusionUnetLowDimRelativePolicy(BaseLowdimPolicy):
         return this_action
     
 
-    # ========= inference  ============
-    def sample(self, B, T, global_cond):
-        model = self.model
+    # ========= inference  ============    
+    def get_random_pose(self, batch_size):
+        R = torch.tensor(Rotation.random(batch_size).as_matrix()).to(self.device)
+        t = torch.randn(batch_size, 3).to(self.device)
+        H = torch.eye(4)[None,...].repeat(batch_size,1,1).to(self.device)
+        H[:, :3, :3] = R
+        H[:, :3, -1] = t
+        return H
 
-        # R0 = SO3.rand(B*T).to_matrix().to(global_cond.device)
-        R0 = SO3().exp_map(torch.randn((B*T,3))).to_matrix().to(global_cond.device)
-        x0 = torch.randn(B*T, 3).to(global_cond.device)
+    def sample(self, global_cond, batch_size=64, To=1, T=100, get_traj=False):
+
+        with torch.no_grad():
+            self.model.set_context(global_cond)
+            steps = T
+            t = torch.linspace(0, 1., steps=steps)
+            dt = 1/steps
+
+            # Euler method
+            # sample H_0 first
+            H0 = self.get_random_pose(batch_size=batch_size*To)
+
+            if get_traj:
+                trj = H0[:,None,...].repeat(1,steps,1,1)
+            Ht = H0
+            for s in range(0, steps):
+                ut = self.velocity_scale*self.model(Ht.view(batch_size,To,4,4), t[s]*torch.ones_like(Ht[:,0,0]))
+                utdt = ut*dt
+
+                utdt = utdt.reshape(batch_size*To, 6)
+
+                ## rotation update ##
+                rot_xt = Ht[:, :3, :3].cpu().numpy()
+                rot_utdt = utdt[:, :3].cpu().numpy()
+                rot_xt_v = self.vec_manifold.rotation_vector_from_matrix(rot_xt)
+                rot_xt_v2 = self.vec_manifold.compose(rot_xt_v, rot_utdt)
+                rot_xt_2 = self.vec_manifold.matrix_from_rotation_vector(rot_xt_v2)
+                rot_xt_2 = torch.from_numpy(rot_xt_2).to(device=self.device, dtype=self.dtype)
+
+                ## translation update ##
+                trans_xt = Ht[:, :3, -1]
+                trans_utdt = utdt[:, 3:]
+                #Place the translation back in world frame
+                #trans_utdt = torch.einsum('bij,bj->bi', rot_xt.transpose(-1,-2), trans_utdt)
+                trans_xt2 = trans_xt + trans_utdt
+
+                Ht[:, :3, :3] = rot_xt_2
+                Ht[:, :3, -1] = trans_xt2
+                if get_traj:
+                    trj[:,s,...] = Ht
         
-        K = self.num_inference_steps
-        dt = self.dt
-        for k in range(K):
-            t = (K - k)/K + 10e-3
-            t = torch.tensor(t, device=global_cond.device).repeat(B)
-            v = model(x0.reshape(B,-1), R0.reshape(B,3,3), t, global_cond=global_cond)
-            _s = v*dt
-            x0, R0 = step(x0, R0, _s.reshape(B*T, 6))
+        Ht = Ht.reshape(batch_size, To, 4, 4)
 
-        trajectory = torch.eye(4, device=self.device, dtype=self.dtype).reshape(1,1,4,4).repeat(B, T, 1, 1)
-        trajectory[:,:,:3,3] = x0.reshape(B, T, 3)
-        trajectory[:,:,:3,:3] = R0.reshape(B, T, 3, 3)
-        return trajectory
+        if get_traj:
+            trj = trj.reshape(batch_size, steps, To, 4, 4)
+            return Ht, trj
+        else:
+            return Ht
 
     def predict_action(self, obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         """
@@ -260,7 +300,7 @@ class DiffusionUnetLowDimRelativePolicy(BaseLowdimPolicy):
         global_cond = nobs_features
 
         # run sampling
-        trajectory_pred = self.sample(B, T, global_cond=global_cond)
+        trajectory_pred = self.sample(global_cond, B, T)
 
         # regress gripper open
         gripper_state_ignore_collision_prediction = self.gripper_state_ignore_collision_predictor(nobs_features).reshape(B, T, 2)
@@ -336,26 +376,100 @@ class DiffusionUnetLowDimRelativePolicy(BaseLowdimPolicy):
 
         x = trajectory[:,:,:3,3]
         R = trajectory[:,:,:3,:3]
-        # Sample noise that we'll add to the trajectory
-        t = torch.rand(B, device=trajectory.device) + 10e-3
-        std = marginal_prob_std(t, sigma=0.5)
-        # Compute score
-        with torch.enable_grad():
-            noisy_x, noisy_R = sample_from_se3_gaussian(x.flatten(0,1), R.flatten(0,1), std.repeat_interleave(T, dim=0))
-            v_tar = se3_score_normal(noisy_x, noisy_R, x_tar=x.flatten(0,1), R_tar=R.flatten(0,1), std=std.repeat_interleave(T, dim=0))
+
+        H1 = trajectory.flatten(0,1)
+        H0 = self.get_random_pose(B*To)
+        t = torch.rand(H0.shape[0]).type_as(H0).to(H0.device)
+
+        ## Sample X at time t through the Geodesic from x0 -> x1
+        def sample_xt(x0, x1, t):
+            """
+            Function which compute the sample xt along the geodesic from x0 to x1 on SE(3).
+            """
+            ## Point to translation and rotation ##
+            t0, R0 = x0[:, :3, -1], x0[:, :3, :3]
+            t1, R1 = x1[:, :3, -1], x1[:, :3, :3]
+
+            ## Get rot_t ##
+            rot_x0 = self.vec_manifold.rotation_vector_from_matrix(R0.cpu().numpy())
+            rot_x1 = self.vec_manifold.rotation_vector_from_matrix(R1.cpu().numpy())
+            log_x1 = self.vec_manifold.log_not_from_identity(rot_x1, rot_x0)
+            rot_xt = self.vec_manifold.exp_not_from_identity(t.cpu().reshape(-1, 1) * log_x1, rot_x0)
+            rot_xt = self.vec_manifold.matrix_from_rotation_vector(rot_xt)
+            rot_xt = torch.from_numpy(rot_xt).to(device)
+
+            ## Get trans_t ##
+            trans_xt = t0*(1. - t[:,None]) + t1*t[:,None]
+
+            xt = torch.eye(4)[None,...].repeat(rot_xt.shape[0], 1, 1).to(device)
+            xt[:, :3, :3] = rot_xt
+            xt[:, :3, -1] = trans_xt
+            return xt
+
+        Ht = sample_xt(H0.double(), H1.double(), t)
+
+        ## Compute velocity target at xt at time t through the geodesic x0 -> x1
+        def compute_conditional_vel(x0, x1, xt, t):
+
+            def invert_se3(matrix):
+                """
+                Invert a homogeneous transformation matrix.
+
+                :param matrix: A 4x4 numpy array representing a homogeneous transformation matrix.
+                :return: The inverted transformation matrix.
+                """
+
+                # Extract rotation (R) and translation (t) from the matrix
+                R = matrix[..., :3, :3]
+                t = matrix[..., :3, 3]
+
+                # Invert the rotation (R^T) and translation (-R^T * t)
+                R_inv = torch.transpose(R, -1, -2)
+                t_inv = -torch.einsum('...ij,...j->...i', R_inv, t)
+
+                # Construct the inverted matrix
+                inverted_matrix = torch.clone(matrix)
+                inverted_matrix[..., :3, :3] = R_inv
+                inverted_matrix[..., :3, 3] = t_inv
+
+                return inverted_matrix
+
+
+            xt_inv = invert_se3(xt)
+
+            # xt1 = torch.einsum('...ij,...jk->...ik', xt_inv, x1)
+            ## Point to translation and rotation ##
+            # trans_xt1, rot_xt1 = xt1[:, :3, -1], xt1[:, :3, :3]
+
+            trans_xt, rot_xt = xt[:, :3, -1], xt[:, :3, :3]
+            trans_x1, rot_x1 = x1[:, :3, -1], x1[:, :3, :3]
+
+            ## Compute Velocity in rot ##
+            delta_r = torch.transpose(rot_xt, -1, -2)@rot_x1
+            rot_ut = torch.from_numpy(self.vec_manifold.rotation_vector_from_matrix(delta_r.cpu().numpy())).to(self.device) / torch.clip((1 - t[:, None]), 0.01, 1.)
+
+            ## Compute Velocity in trans ##
+            #trans_ut = -trans_xt1/ torch.clip((1 - t[:, None]), 0.01, 1.)
+            trans_ut = (trans_x1 - trans_xt)/ torch.clip((1 - t[:, None]), 0.01, 1.)
+            #trans_ut = 0.*trans_ut
+
+            return torch.cat((rot_ut, trans_ut), dim=1).detach()
+
+        ut = compute_conditional_vel(H0.double(), H1.double(), Ht.double(), t)
+        ut = ut.reshape(B, -1)
 
         # regress gripper open
         pred = self.gripper_state_ignore_collision_predictor(nobs_features).reshape(B, T, 2)
         regression_loss = F.binary_cross_entropy_with_logits(pred, actions[:,:,7:9])
 
-        # TODO: generalize to T > 1
-        v_tar = v_tar.view(B,-1)
-
         # Predict the noise residual
-        v_pred = self.model(noisy_x.reshape(B,-1), noisy_R.reshape(B,-1,3,3), t, global_cond=global_cond)
-        
-        # TODO: check why
-        loss = ((std.pow(2))*(v_pred - v_tar).pow(2).sum(-1)).mean()
+        Ht.requires_grad = True
+        t.requires_grad = True
+        Ht = Ht.reshape(B, To, 4, 4)
+        self.model.set_context(nobs_features)
+        vt = self.model(Ht, t)
+
+        loss = torch.mean((ut-vt)**2)
         loss += regression_loss * 0.1
         return loss
 
@@ -369,18 +483,19 @@ OmegaConf.register_new_resolver("eval", eval, replace=True)
     version_base=None,
     config_path=str(pathlib.Path(__file__).parent.parent.joinpath(
         'config')),
-    config_name='train_diffusion_unet_lowdim_relative_workspace.yaml'
+    config_name='train_flow_matching_unet_lowdim_workspace.yaml'
 )
 def test(cfg: OmegaConf):
     from copy import deepcopy
     OmegaConf.resolve(cfg)
-    policy : DiffusionUnetLowDimRelativePolicy = hydra.utils.instantiate(cfg.policy)
+    policy : FlowMatchingUnetLowDimPolicy = hydra.utils.instantiate(cfg.policy)
+    policy = policy.to(cfg.training.device)
     dataset = hydra.utils.instantiate(cfg.task.dataset)
     batch = dict_apply(dataset[0], lambda x: x.unsqueeze(0).float().cuda())
     action= batch['action']    
     trajectory = torch.eye(4).reshape(1,1,4,4).repeat(action.shape[0], policy.horizon, 1, 1).cuda()
     trajectory[:,:,:3,3] = action[:,:,:3]
-    trajectory[:,:,:3,:3] = torch.from_numpy(Rotation.from_quat(action[:,:,3:7].flatten(0,1).cpu()).as_matrix().reshape(action.shape[0], policy.horizon, 3, 3)    )
+    trajectory[:,:,:3,:3] = torch.from_numpy(Rotation.from_quat(action[:,:,3:7].flatten(0,1).cpu()).as_matrix().reshape(action.shape[0], policy.horizon, 3, 3)).cuda()
     obs = batch['obs']
     x_curr = obs['agent_pose'][:,-1,:3,3]
     R_curr = obs['agent_pose'][:,-1,:3,:3]
