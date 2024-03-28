@@ -1,9 +1,10 @@
 defaults:
   - _self_
   - task: open_drawer_lowdim
+  - encoder: transformer_lowdim_obs_relative_encoder
 
-name: diffusion_unet_lowdim_relative_policy
-_target_: diffusion_policy.workspace.diffusion_unet_lowdim_relative_policy.DiffusionUnetLowDimRelativePolicy
+name: flow_matching_unet_lowdim_policy
+_target_: diffusion_policy.workspace.flow_matching_unet_lowdim_policy.FlowMatchingUnetLowDimPolicy
 
 mode: train
 
@@ -60,44 +61,16 @@ policy:
      
   shape_meta: ${task.shape_meta}
 
-  obs_encoder:
-    _target_: diffusion_policy.model.vision.transformer_lowdim_obs_relative_encoder.TransformerHybridObsRelativeEncoder
-    shape_meta: ${task.shape_meta}
-    n_obs_steps: ${n_obs_steps}
-    query_embeddings: 
-      _target_: torch.nn.Embedding
-      num_embeddings: ${n_obs_steps}
-      embedding_dim: ${embedding_dim}
-    keypoint_embeddings: 
-      _target_: torch.nn.Embedding
-      num_embeddings: ${task.num_keypoints}
-      embedding_dim: ${embedding_dim}
-    rotary_embedder: 
-      _target_: diffusion_policy.model.common.position_encodings.RotaryPositionEncoding2D
-      feature_dim: ${embedding_dim}
-    positional_embedder:
-      _target_: diffusion_policy.model.common.position_encodings.SinusoidalPosEmb
-      dim: ${embedding_dim}
-    within_attn: 
-      _target_: diffusion_policy.model.common.layer.RelativeCrossAttentionModule
-      embedding_dim: ${embedding_dim}
-      num_attn_heads: 5
-      num_layers: 5
-    across_attn: 
-      _target_: diffusion_policy.model.common.layer.RelativeCrossAttentionModule
-      embedding_dim: ${embedding_dim}
-      num_attn_heads: 5
-      num_layers: 5
-
+  obs_encoder: ${encoder}
   horizon: ${horizon}
   n_action_steps: ${n_action_steps}
   n_obs_steps: ${n_obs_steps}
   num_inference_steps: 100
   delta_t: 0.01
   gripper_loc_bounds: ${task.gripper_loc_bounds}
-  relative_position: False
+  relative_position: True
   relative_rotation: False
-  noise_aug_std: 0.00
+  noise_aug_std: 0.0
     
 
 training:

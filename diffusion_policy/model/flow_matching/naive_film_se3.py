@@ -8,7 +8,6 @@ from einops.layers.torch import Rearrange
 from diffusion_policy.model.diffusion.conv1d_components import (
     Downsample1d, Upsample1d, Conv1dBlock)
 from diffusion_policy.model.common.position_encodings import SinusoidalPosEmb
-from diffusion_policy.model.common.se3_diffusion_util import marginal_prob_std
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +54,7 @@ class FILMConditionalBlock(nn.Module):
         return out
     
 
-class NaiveConditionalSE3DiffusionModel(nn.Module):
+class NaiveFilmSE3FlowMatchingModel(nn.Module):
     def __init__(self, 
             in_channels, 
             out_channels = 6, 
@@ -79,14 +78,13 @@ class NaiveConditionalSE3DiffusionModel(nn.Module):
     def get_time_embedding(self, k):
         return self.time_embed(k)
 
-    def forward(self, x: torch.Tensor, R: torch.Tensor, k: torch.Tensor, global_cond: torch.Tensor = None):
-        x_R_input = torch.cat((x.reshape(x.shape[0], -1), R.reshape(R.shape[0], -1)), dim=-1)
-        z = self.embed(x_R_input)
-        std = marginal_prob_std(k)
+    def forward(self, H: torch.Tensor, k: torch.Tensor, global_cond: torch.Tensor = None):
+        H = H.flatten(1)
+        z = self.embed(H)
         z_time = self.get_time_embedding(k)
         v = torch.cat((z, z_time),dim=-1)
         for (layer, activation) in self.blocks:
             v = layer(v, global_cond)
             v = activation(v)
-        return v/std[:,None].pow(2)
+        return v
     

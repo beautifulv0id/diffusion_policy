@@ -15,7 +15,8 @@ class RLBenchLowdimRunner(BaseLowdimRunner):
                 max_steps: int,
                 variation: int,
                 num_demos: int,
-                max_tries: int = 1,
+                max_rtt_tries: int = 1,
+                demo_tries: int = 1,
                 headless: bool = False,
                 collision_checking: bool = True,
                 action_dim: int = 8,
@@ -38,7 +39,8 @@ class RLBenchLowdimRunner(BaseLowdimRunner):
         self.action_dim = action_dim
         self.max_steps = max_steps
         self.num_demos = num_demos
-        self.max_tries = max_tries
+        self.max_rtt_tries = max_rtt_tries
+        self.demo_tries = demo_tries
         self.variation = variation
 
     def run(self, policy: BaseLowdimPolicy) -> Dict:
@@ -51,7 +53,8 @@ class RLBenchLowdimRunner(BaseLowdimRunner):
             variation=self.variation,
             num_demos=self.num_demos,
             actioner=actioner,
-            max_tries=self.max_tries,
+            max_rtt_tries=self.max_rtt_tries,
+            demo_tries=self.demo_tries,
             verbose=False,
             num_history=policy.n_obs_steps,
         )

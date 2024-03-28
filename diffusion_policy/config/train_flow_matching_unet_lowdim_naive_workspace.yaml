@@ -1,10 +1,9 @@
 defaults:
   - _self_
   - task: open_drawer_lowdim
-  - encoder: transformer_lowdim_obs_relative_encoder
 
-name: diffusion_unet_lowdim_relative_policy
-_target_: diffusion_policy.workspace.diffusion_unet_lowdim_relative_policy.DiffusionUnetLowDimRelativePolicy
+name: flow_matching_unet_lowdim_naive_policy
+_target_: diffusion_policy.workspace.flow_matching_unet_lowdim_policy.FlowMatchingUnetLowDimNaivePolicy
 
 mode: train
 
@@ -57,20 +56,19 @@ optimizer:
   weight_decay: 1.0e-06
 
 policy:
-  _target_: diffusion_policy.policy.diffusion_unet_lowdim_relative_policy.DiffusionUnetLowDimRelativePolicy
+  _target_: diffusion_policy.policy.flow_matching_unet_lowdim_naive_policy.FlowMatchingUnetLowDimNaivePolicy
      
   shape_meta: ${task.shape_meta}
 
-  obs_encoder: ${encoder}
   horizon: ${horizon}
   n_action_steps: ${n_action_steps}
   n_obs_steps: ${n_obs_steps}
   num_inference_steps: 100
   delta_t: 0.01
   gripper_loc_bounds: ${task.gripper_loc_bounds}
-  relative_position: True
+  relative_position: False
   relative_rotation: False
-  noise_aug_std: 0.01
+  noise_aug_std: 0.00
     
 
 training:

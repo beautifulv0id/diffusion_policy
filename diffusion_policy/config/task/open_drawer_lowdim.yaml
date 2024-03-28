@@ -46,7 +46,8 @@ env_runner:
   max_steps: 3
   variation: *variation_number
   num_demos: *num_episodes
-  max_tries: 10
+  max_rtt_tries: 10
+  demo_tries: 5
   obs_history_augmentation_every_n: 1
   collision_checking: True
   action_dim: 8

@@ -147,7 +147,7 @@ class RLBenchLowDimEnv:
                     variation=variation,
                     num_demos=num_demos // len(task_variations) + 1,
                     actioner=actioner,
-                    max_tries=max_tries,
+                    max_rtt_tries=max_tries,
                     verbose=verbose,
                     num_history=num_history
                 )
@@ -174,7 +174,8 @@ class RLBenchLowDimEnv:
         variation: int,
         num_demos: int,
         actioner: Actioner,
-        max_tries: int = 1,
+        max_rtt_tries: int = 1,
+        demo_tries: int = 1,
         verbose: bool = False,
         num_history=0,
     ):
@@ -195,103 +196,105 @@ class RLBenchLowDimEnv:
             except:
                 continue
 
-            keypoint_idxs = torch.Tensor([]).to(device)
-            keypoints = torch.Tensor([]).to(device)
-            grippers = torch.Tensor([]).to(device)
+            for i in range(demo_tries):
 
-            # descriptions, obs = task.reset()
-            descriptions, obs = task.reset_to_demo(demo)
-            self.obs_history.append(obs)
+                keypoint_idxs = torch.Tensor([]).to(device)
+                keypoints = torch.Tensor([]).to(device)
+                grippers = torch.Tensor([]).to(device)
 
-            actioner.load_episode(task_str, variation)
-            # actioner.load_demo(demo) # TODO: remove this line
+                # descriptions, obs = task.reset()
+                descriptions, obs = task.reset_to_demo(demo)
+                self.obs_history.append(obs)
 
-            move = Mover(task, max_tries=max_tries)
-            reward = 0.0
-            max_reward = 0.0
+                actioner.load_episode(task_str, variation)
+                # actioner.load_demo(demo) # TODO: remove this line
 
-            for step_id in range(max_steps):
+                move = Mover(task, max_tries=max_rtt_tries)
+                reward = 0.0
+                max_reward = 0.0
 
-                # Fetch the current observation, and predict one action
-                if step_id > 0:
-                    self.obs_history = self.obs_history[::-1][::self.obs_history_augmentation_every_n][::-1][-num_history:]
+                for step_id in range(max_steps):
 
-                for obs in self.obs_history:
-                    keypoint, keypoint_idx, gripper = self.get_keypoints_gripper_from_obs(obs)
-                    keypoint_idx = keypoint_idx.to(device).reshape(1,1,*keypoint_idx.shape)
-                    keypoint = keypoint.to(device).reshape(1,1,*keypoint.shape)
-                    gripper = gripper.to(device).reshape(1,1,*gripper.shape)
+                    # Fetch the current observation, and predict one action
+                    if step_id > 0:
+                        self.obs_history = self.obs_history[::-1][::self.obs_history_augmentation_every_n][::-1][-num_history:]
 
-                    keypoint_idxs = torch.cat([keypoint_idxs, keypoint_idx], dim=1)
-                    keypoints = torch.cat([keypoints, keypoint], dim=1)
-                    grippers = torch.cat([grippers, gripper], dim=1)
+                    for obs in self.obs_history:
+                        keypoint, keypoint_idx, gripper = self.get_keypoints_gripper_from_obs(obs)
+                        keypoint_idx = keypoint_idx.to(device).reshape(1,1,*keypoint_idx.shape)
+                        keypoint = keypoint.to(device).reshape(1,1,*keypoint.shape)
+                        gripper = gripper.to(device).reshape(1,1,*gripper.shape)
 
-                self.obs_history = []
+                        keypoint_idxs = torch.cat([keypoint_idxs, keypoint_idx], dim=1)
+                        keypoints = torch.cat([keypoints, keypoint], dim=1)
+                        grippers = torch.cat([grippers, gripper], dim=1)
 
-                # Prepare proprioception history
-                gripper_input = grippers[:, -num_history:]
-                keypoint_input = keypoints[:, -num_history:][:, :, :, :3]
-                keypoint_idxs_input = keypoint_idxs[:, -num_history:]
-                npad = num_history - gripper_input.shape[1]
-                gripper_input = F.pad(
-                    gripper_input, (0, 0, 0, 0, npad, 0), mode='replicate'
+                    self.obs_history = []
+
+                    # Prepare proprioception history
+                    gripper_input = grippers[:, -num_history:]
+                    keypoint_input = keypoints[:, -num_history:][:, :, :, :3]
+                    keypoint_idxs_input = keypoint_idxs[:, -num_history:]
+                    npad = num_history - gripper_input.shape[1]
+                    gripper_input = F.pad(
+                        gripper_input, (0, 0, 0, 0, npad, 0), mode='replicate'
+                    )
+                    keypoint_input = F.pad(
+                        keypoint_input, (0, 0, 0, 0, npad, 0), mode='replicate'
+                    )
+                    keypoint_idxs_input = F.pad(
+                        keypoint_idxs_input, (0, 0, npad, 0), mode='replicate'
+                    )
+
+                    action = actioner.predict(
+                        keypoint_idxs_input,
+                        keypoint_input,
+                        gripper_input,
+                    )
+
+                    if verbose:
+                        print(f"Step {step_id}")
+
+                    terminate = True
+
+                    # Update the observation based on the predicted action
+                    try:
+                        print("Plan with RRT")
+                        collision_checking = self._collision_checking(task_str, step_id)
+                        obs, reward, terminate, _ = move(action, collision_checking=collision_checking)
+
+                        max_reward = max(max_reward, reward)
+
+                        if reward == 1:
+                            success_rate += 1
+                            break
+
+                        if terminate:
+                            print("The episode has terminated!")
+
+                    except (IKError, ConfigurationPathError, InvalidActionError) as e:
+                        print(task_str, demo, step_id, success_rate, e)
+                        reward = 0
+                        #break
+
+                total_reward += max_reward
+                if reward == 0:
+                    step_id += 1
+
+                print(
+                    task_str,
+                    "Variation",
+                    variation,
+                    "Demo",
+                    demo_id,
+                    "Reward",
+                    f"{reward:.2f}",
+                    "max_reward",
+                    f"{max_reward:.2f}",
+                    f"SR: {success_rate / ((demo_id+1) * demo_tries)}",
+                    f"SR: {total_reward:.2f}/{demo_id+1}",
+                    "# valid demos", num_valid_demos,
                 )
-                keypoint_input = F.pad(
-                    keypoint_input, (0, 0, 0, 0, npad, 0), mode='replicate'
-                )
-                keypoint_idxs_input = F.pad(
-                    keypoint_idxs_input, (0, 0, npad, 0), mode='replicate'
-                )
-
-                action = actioner.predict(
-                    keypoint_idxs_input,
-                    keypoint_input,
-                    gripper_input,
-                )
-
-                if verbose:
-                    print(f"Step {step_id}")
-
-                terminate = True
-
-                # Update the observation based on the predicted action
-                try:
-                    print("Plan with RRT")
-                    collision_checking = self._collision_checking(task_str, step_id)
-                    obs, reward, terminate, _ = move(action, collision_checking=collision_checking)
-
-                    max_reward = max(max_reward, reward)
-
-                    if reward == 1:
-                        success_rate += 1
-                        break
-
-                    if terminate:
-                        print("The episode has terminated!")
-
-                except (IKError, ConfigurationPathError, InvalidActionError) as e:
-                    print(task_str, demo, step_id, success_rate, e)
-                    reward = 0
-                    #break
-
-            total_reward += max_reward
-            if reward == 0:
-                step_id += 1
-
-            print(
-                task_str,
-                "Variation",
-                variation,
-                "Demo",
-                demo_id,
-                "Reward",
-                f"{reward:.2f}",
-                "max_reward",
-                f"{max_reward:.2f}",
-                f"SR: {success_rate}/{demo_id+1}",
-                f"SR: {total_reward:.2f}/{demo_id+1}",
-                "# valid demos", num_valid_demos,
-            )
 
         # Compensate for failed demos
         if num_valid_demos == 0:
@@ -299,7 +302,7 @@ class RLBenchLowDimEnv:
             valid = False
         else:
             valid = True
-
+        success_rate = success_rate / (num_valid_demos * demo_tries)
         return success_rate, valid, num_valid_demos
 
     def _collision_checking(self, task_str, step_id):
@@ -447,13 +450,13 @@ class RLBenchLowDimEnv:
 import hydra
 from hydra import compose, initialize
 from omegaconf import OmegaConf
-from diffusion_policy.policy.diffusion_unet_lowdim_relative_policy import DiffusionUnetLowDimRelativePolicy
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
 def test():
+    from diffusion_policy.policy.diffusion_unet_lowdim_relative_policy import DiffusionUnetLowDimRelativePolicy
     with initialize(version_base=None, config_path="../../config"):
-        cfg = compose(config_name="train_diffusion_unet_lowdim_relative_workspace")
+        cfg = compose(config_name="train_flow_matching_unet_lowdim_workspace")
 
     OmegaConf.resolve(cfg)
 
@@ -485,7 +488,7 @@ def test():
     task.set_variation(0)
 
     policy : DiffusionUnetLowDimRelativePolicy = hydra.utils.instantiate(cfg.policy)
-    checkpoint_path = "/home/felix/Workspace/diffusion_policy_felix/data/outputs/2024.03.25/09.01.10_diffusion_unet_lowdim_relative_policy_open_drawer/checkpoints/latest.ckpt"
+    checkpoint_path = "/home/felix/Workspace/diffusion_policy_felix/data/outputs/2024.03.28/15.36.55_diffusion_unet_lowdim_relative_policy_open_drawer/checkpoints/latest.ckpt"
     checkpoint = torch.load(checkpoint_path)
     policy.load_state_dict(checkpoint["state_dicts"]['model'])
     
@@ -542,11 +545,12 @@ def test():
     env._evaluate_task_on_one_variation(
         task_str="open_drawer",
         task=task,
-        max_steps=30,
+        max_steps=3,
         variation=0,
         num_demos=1,
         actioner=actioner,
-        max_tries=10,
+        max_rtt_tries=10,
+        demo_tries=5,
         verbose=True,
         num_history=policy.n_obs_steps,
     )

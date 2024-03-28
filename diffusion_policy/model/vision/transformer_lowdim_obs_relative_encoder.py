@@ -10,7 +10,7 @@ import einops
 from scipy.spatial import transform
 
 # TODO: proper naming, remove relative? Change to something w/ SE3?
-class TransformerHybridObsRelativeEncoder(ModuleAttrMixin):
+class TransformerLowdimObsRelativeEncoder(ModuleAttrMixin):
     def __init__(self,
             shape_meta: dict,
             n_obs_steps: int,
@@ -169,7 +169,7 @@ OmegaConf.register_new_resolver("eval", eval, replace=True)
 )
 def test(cfg: OmegaConf):
     OmegaConf.resolve(cfg)
-    obs_encoder : TransformerHybridObsRelativeEncoder = hydra.utils.instantiate(cfg.policy.obs_encoder)
+    obs_encoder : TransformerLowdimObsRelativeEncoder = hydra.utils.instantiate(cfg.policy.obs_encoder)
     out = obs_encoder.output_shape()
     print(out)
 

@@ -8,9 +8,8 @@ from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 from diffusion_policy.model.common.normalizer import LinearNormalizer
 from diffusion_policy.policy.base_lowdim_policy import BaseLowdimPolicy
 from diffusion_policy.model.diffusion.conditional_unet1d import ConditionalUnet1D
-from diffusion_policy.model.flow_matching.feat_pcloud_geo_inv_policy import GeometryInvariantTransformer
+from diffusion_policy.model.flow_matching.feat_pcloud_naive_policy import NaivePolicy
 from diffusion_policy.model.diffusion.mask_generator import LowdimMaskGenerator
-from diffusion_policy.model.vision.transformer_lowdim_obs_relative_encoder import TransformerLowdimObsRelativeEncoder
 from diffusion_policy.common.robomimic_config_util import get_robomimic_config
 from diffusion_policy.common.common_utils import action_from_trajectory_gripper_open_ignore_collision
 from robomimic.algo.algo import PolicyAlgo
@@ -22,11 +21,9 @@ from theseus.geometry.so3 import SO3
 from scipy.spatial.transform import Rotation 
 from geomstats.geometry.special_orthogonal import SpecialOrthogonal
 
-class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
+class FlowMatchingUnetLowDimNaivePolicy(BaseLowdimPolicy):
     def __init__(self, 
             shape_meta: dict,
-            obs_encoder: TransformerLowdimObsRelativeEncoder,
-            model: NaiveFilmSE3FlowMatchingModel,
             horizon : int, 
             n_action_steps : int, 
             n_obs_steps : int,
@@ -79,18 +76,15 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
         ObsUtils.initialize_obs_utils_with_config(config)
 
         # create diffusion model
-        obs_feature_dim = obs_encoder.output_shape()[0]
         input_dim = 16 * horizon
+        obs_feature_dim = 3 * 21
 
-
-        model = NaiveFilmSE3FlowMatchingModel(
-            in_channels=input_dim,
-            out_channels=6,
-            embed_dim=obs_feature_dim,
-            cond_dim=obs_feature_dim
+        model = NaivePolicy(
+            dim=input_dim,
+            output_size=6,
+            context_dim=obs_feature_dim,
         )
 
-        self.obs_encoder = obs_encoder
         self.model = model
         self.gripper_state_ignore_collision_predictor = nn.Sequential(
             nn.Linear(obs_feature_dim, 128),
@@ -118,7 +112,6 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
             self.data_augmentation = False
 
         print("Diffusion params: %e" % sum(p.numel() for p in self.model.parameters()))
-        print("Vision params: %e" % sum(p.numel() for p in self.obs_encoder.parameters()))
 
     def state_dict(self):
         super_dict = super().state_dict()
@@ -226,6 +219,7 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
     def sample(self, global_cond, batch_size=64, To=1, T=100, get_traj=False):
 
         with torch.no_grad():
+            self.model.set_context(global_cond)
             steps = T
             t = torch.linspace(0, 1., steps=steps)
             dt = 1/steps
@@ -238,7 +232,7 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
                 trj = H0[:,None,...].repeat(1,steps,1,1)
             Ht = H0
             for s in range(0, steps):
-                ut = self.velocity_scale*self.model(Ht.view(batch_size,To,4,4), t[s]*torch.ones_like(Ht[:,0,0]), global_cond)
+                ut = self.velocity_scale*self.model(Ht.view(batch_size,To,4,4), t[s]*torch.ones_like(Ht[:,0,0]))
                 utdt = ut*dt
 
                 utdt = utdt.reshape(batch_size*To, 6)
@@ -297,14 +291,13 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
         # condition through global feature
         this_nobs = dict_apply(nobs, lambda x: x[:,:To,...]) # We need to keep the observation shape
         # (B, D)
-        nobs_features = self.obs_encoder(this_nobs)
-        global_cond = nobs_features
+        global_cond = nobs["keypoint_pcd"].reshape(B, -1)
 
         # run sampling
         trajectory_pred = self.sample(global_cond, B, T)
 
         # regress gripper open
-        gripper_state_ignore_collision_prediction = self.gripper_state_ignore_collision_predictor(nobs_features).reshape(B, T, 2)
+        gripper_state_ignore_collision_prediction = self.gripper_state_ignore_collision_predictor(global_cond).reshape(B, T, 2)
         gripper_state_ignore_collision_prediction = torch.sigmoid(gripper_state_ignore_collision_prediction)
         gripper_state, ignore_collision = (gripper_state_ignore_collision_prediction > 0.5).float().chunk(2, dim=-1)
         
@@ -356,6 +349,7 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
         if self.data_augmentation:
             nobs = self.augment_obs(nobs)
 
+        
         B = trajectory.shape[0]
         T = self.horizon
         To = self.n_obs_steps
@@ -369,10 +363,7 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
         trajectory = trajectory.type(dtype).to(device)
 
         # reshape B, T, ... to B*T
-        this_nobs = dict_apply(nobs, 
-            lambda x: x[:,:To,...])
-        nobs_features = self.obs_encoder(this_nobs)
-        global_cond = nobs_features
+        global_cond = nobs["keypoint_pcd"].reshape(B, -1)
 
         H1 = trajectory.flatten(0,1)
         H0 = self.get_random_pose(B*To)
@@ -463,7 +454,8 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
         Ht.requires_grad = True
         t.requires_grad = True
         Ht = Ht.reshape(B, To, 4, 4)
-        vt = self.model(Ht, t, global_cond)
+        self.model.set_context(global_cond)
+        vt = self.model(Ht, t)
 
         loss = torch.mean((ut-vt)**2)
         loss += regression_loss * 0.1
@@ -479,12 +471,12 @@ OmegaConf.register_new_resolver("eval", eval, replace=True)
     version_base=None,
     config_path=str(pathlib.Path(__file__).parent.parent.joinpath(
         'config')),
-    config_name='train_flow_matching_unet_lowdim_workspace.yaml'
+    config_name='train_flow_matching_unet_lowdim_naive_workspace.yaml'
 )
 def test(cfg: OmegaConf):
     from copy import deepcopy
     OmegaConf.resolve(cfg)
-    policy : FlowMatchingUnetLowDimPolicy = hydra.utils.instantiate(cfg.policy)
+    policy : FlowMatchingUnetLowDimNaivePolicy = hydra.utils.instantiate(cfg.policy)
     policy = policy.to(cfg.training.device)
     dataset = hydra.utils.instantiate(cfg.task.dataset)
     batch = dict_apply(dataset[0], lambda x: x.unsqueeze(0).float().cuda())

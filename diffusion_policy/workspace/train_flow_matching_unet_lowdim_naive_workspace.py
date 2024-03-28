@@ -20,7 +20,7 @@ import tqdm
 import numpy as np
 import shutil
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
-from diffusion_policy.policy.flow_matching_unet_lowdim_policy import FlowMatchingUnetLowDimPolicy
+from diffusion_policy.policy.flow_matching_unet_lowdim_naive_policy import FlowMatchingUnetLowDimNaivePolicy
 from diffusion_policy.common.common_utils import trajectory_gripper_open_ignore_collision_from_action
 from diffusion_policy.dataset.base_dataset import BaseImageDataset
 from diffusion_policy.env_runner.base_lowdim_runner import BaseLowdimRunner
@@ -34,7 +34,7 @@ from scipy.spatial.transform import Rotation
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
-class TrainFlowMatchingUnetLowDimWorkspace(BaseWorkspace):
+class TrainFlowMatchingUnetLowDimNaiveWorkspace(BaseWorkspace):
     include_keys = ['global_step', 'epoch']
 
     def __init__(self, cfg: OmegaConf, output_dir=None):
@@ -47,9 +47,9 @@ class TrainFlowMatchingUnetLowDimWorkspace(BaseWorkspace):
         random.seed(seed)
 
         # configure model
-        self.model: FlowMatchingUnetLowDimPolicy = hydra.utils.instantiate(cfg.policy)
+        self.model: FlowMatchingUnetLowDimNaivePolicy = hydra.utils.instantiate(cfg.policy)
 
-        self.ema_model: FlowMatchingUnetLowDimPolicy = None
+        self.ema_model: FlowMatchingUnetLowDimNaivePolicy = None
         if cfg.training.use_ema:
             self.ema_model = copy.deepcopy(self.model)
 
@@ -396,7 +396,7 @@ class TrainFlowMatchingUnetLowDimWorkspace(BaseWorkspace):
     config_path=str(pathlib.Path(__file__).parent.parent.joinpath("config")), 
     config_name=pathlib.Path(__file__).stem)
 def main(cfg):
-    workspace = TrainFlowMatchingUnetLowDimWorkspace(cfg)
+    workspace = TrainFlowMatchingUnetLowDimNaiveWorkspace(cfg)
     if cfg.mode == 'train':
         workspace.run()
     elif cfg.mode == 'eval':

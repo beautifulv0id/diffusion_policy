@@ -8,9 +8,9 @@ from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 from diffusion_policy.model.common.normalizer import LinearNormalizer
 from diffusion_policy.policy.base_lowdim_policy import BaseLowdimPolicy
 from diffusion_policy.model.diffusion.conditional_unet1d import ConditionalUnet1D
-from diffusion_policy.model.diffusion.simple_network import NaiveConditionalSE3DiffusionModel
+from diffusion_policy.model.diffusion.naive_film_se3 import NaiveFILMSE3DiffusionModel
 from diffusion_policy.model.diffusion.mask_generator import LowdimMaskGenerator
-from diffusion_policy.model.vision.transformer_lowdim_obs_relative_encoder import TransformerHybridObsRelativeEncoder
+from diffusion_policy.model.vision.transformer_lowdim_obs_relative_encoder import TransformerLowdimObsRelativeEncoder
 from diffusion_policy.common.robomimic_config_util import get_robomimic_config
 from diffusion_policy.common.common_utils import action_from_trajectory_gripper_open_ignore_collision
 from robomimic.algo.algo import PolicyAlgo
@@ -24,7 +24,7 @@ from scipy.spatial.transform import Rotation
 class DiffusionUnetLowDimRelativePolicy(BaseLowdimPolicy):
     def __init__(self, 
             shape_meta: dict,
-            obs_encoder: TransformerHybridObsRelativeEncoder,
+            obs_encoder: TransformerLowdimObsRelativeEncoder,
             horizon : int, 
             n_action_steps : int, 
             n_obs_steps : int,
@@ -77,10 +77,10 @@ class DiffusionUnetLowDimRelativePolicy(BaseLowdimPolicy):
 
         # create diffusion model
         obs_feature_dim = obs_encoder.output_shape()[0]
-        input_dim = action_dim
+        input_dim = 16 * horizon
 
 
-        model = NaiveConditionalSE3DiffusionModel(
+        model = NaiveFILMSE3DiffusionModel(
             in_channels=input_dim,
             out_channels=6,
             embed_dim=obs_feature_dim,
@@ -88,7 +88,7 @@ class DiffusionUnetLowDimRelativePolicy(BaseLowdimPolicy):
         )
 
         self.obs_encoder = obs_encoder
-        self.model : NaiveConditionalSE3DiffusionModel = model
+        self.model : NaiveFILMSE3DiffusionModel = model
         self.gripper_state_ignore_collision_predictor = nn.Sequential(
             nn.Linear(obs_feature_dim, 128),
             nn.Sigmoid(),
@@ -221,7 +221,10 @@ class DiffusionUnetLowDimRelativePolicy(BaseLowdimPolicy):
         for k in range(K):
             t = (K - k)/K + 10e-3
             t = torch.tensor(t, device=global_cond.device).repeat(B)
-            v = model(x0.reshape(B,-1), R0.reshape(B,3,3), t, global_cond=global_cond)
+            H = torch.eye(4, device=global_cond.device, dtype=self.dtype).reshape(1,4,4).repeat(B, 1, 1)
+            H[:,:3,3] = x0
+            H[:,:3,:3] = R0
+            v = model(H, t, global_cond=global_cond)
             _s = v*dt
             x0, R0 = step(x0, R0, _s.reshape(B*T, 6))
 
@@ -352,7 +355,10 @@ class DiffusionUnetLowDimRelativePolicy(BaseLowdimPolicy):
         v_tar = v_tar.view(B,-1)
 
         # Predict the noise residual
-        v_pred = self.model(noisy_x.reshape(B,-1), noisy_R.reshape(B,-1,3,3), t, global_cond=global_cond)
+        noisy_H = torch.eye(4, device=self.device, dtype=self.dtype).reshape(1,1,4,4).repeat(B, T, 1, 1)
+        noisy_H[:,:,:3,3] = noisy_x.reshape(B, T, 3)
+        noisy_H[:,:,:3,:3] = noisy_R.reshape(B, T, 3, 3)
+        v_pred = self.model(noisy_H, t, global_cond=global_cond)
         
         # TODO: check why
         loss = ((std.pow(2))*(v_pred - v_tar).pow(2).sum(-1)).mean()
@@ -375,12 +381,13 @@ def test(cfg: OmegaConf):
     from copy import deepcopy
     OmegaConf.resolve(cfg)
     policy : DiffusionUnetLowDimRelativePolicy = hydra.utils.instantiate(cfg.policy)
+    policy = policy.cuda()
     dataset = hydra.utils.instantiate(cfg.task.dataset)
     batch = dict_apply(dataset[0], lambda x: x.unsqueeze(0).float().cuda())
     action= batch['action']    
     trajectory = torch.eye(4).reshape(1,1,4,4).repeat(action.shape[0], policy.horizon, 1, 1).cuda()
     trajectory[:,:,:3,3] = action[:,:,:3]
-    trajectory[:,:,:3,:3] = torch.from_numpy(Rotation.from_quat(action[:,:,3:7].flatten(0,1).cpu()).as_matrix().reshape(action.shape[0], policy.horizon, 3, 3)    )
+    trajectory[:,:,:3,:3] = torch.from_numpy(Rotation.from_quat(action[:,:,3:7].flatten(0,1).cpu()).as_matrix().reshape(action.shape[0], policy.horizon, 3, 3)    ).cuda()
     obs = batch['obs']
     x_curr = obs['agent_pose'][:,-1,:3,3]
     R_curr = obs['agent_pose'][:,-1,:3,:3]
