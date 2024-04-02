@@ -81,8 +81,10 @@ class RLBenchDataset(BaseImageDataset):
                                         use_pcd=use_pcd,
                                         keypoints_only=keypoints_only)
         
+        self.demos = train_demos
         self.dataset = train_dataset
         self.demo_begin = train_demo_begin
+        self.val_demos = val_demos
         self.val_dataset = val_dataset
         self.val_demo_begin = val_demo_begin
         self.n_obs = n_obs
@@ -118,6 +120,7 @@ class RLBenchDataset(BaseImageDataset):
         val_set = copy.copy(self)
         val_set.dataset = self.val_dataset
         val_set.demo_begin = self.val_demo_begin
+        val_set.demos = self.val_demos
         return val_set
 
     def get_normalizer(self):

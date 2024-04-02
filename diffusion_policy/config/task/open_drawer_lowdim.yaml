@@ -22,30 +22,24 @@ gripper_loc_bounds:
   buffer: 0.0
   task: ${name}
 
-dataset_path: &dataset_path /home/felix/Workspace/diffusion_policy_felix/data/train
-variation_number: &variation_number 0
-num_episodes: &num_episodes 1
-
 dataset:
   _target_: diffusion_policy.dataset.rlbench_dataset.RLBenchDataset
-  root: *dataset_path
+  root: /home/felix/Workspace/diffusion_policy_felix/data/train
   task_name: open_drawer
   cameras: []
-  num_episodes: *num_episodes
-  variation: *variation_number
+  num_episodes: 1
+  variation: 0
   demo_augmentation_every_n: 1
   n_obs: ${n_obs_steps}
   build_history_from_augment_obs: True
-  val_ratio: 0.2
   keypoints_only: True
+  val_ratio: 0.2
 
 env_runner:
   _target_: diffusion_policy.env_runner.rlbench_lowdim_runner.RLBenchLowdimRunner
-  data_root: *dataset_path
+  data_root: ${task.dataset.root}
   task_str: "open_drawer"
   max_steps: 3
-  variation: *variation_number
-  num_demos: *num_episodes
   max_rtt_tries: 10
   demo_tries: 5
   obs_history_augmentation_every_n: 1

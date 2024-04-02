@@ -23,7 +23,7 @@ from diffusion_policy.workspace.base_workspace import BaseWorkspace
 from diffusion_policy.policy.flow_matching_unet_lowdim_policy import FlowMatchingUnetLowDimPolicy
 from diffusion_policy.common.common_utils import trajectory_gripper_open_ignore_collision_from_action
 from diffusion_policy.dataset.base_dataset import BaseImageDataset
-from diffusion_policy.env_runner.base_lowdim_runner import BaseLowdimRunner
+from diffusion_policy.env_runner.rlbench_lowdim_runner import RLBenchLowDimEnv
 from diffusion_policy.common.checkpoint_util import TopKCheckpointManager
 from diffusion_policy.common.json_logger import JsonLogger
 from diffusion_policy.common.pytorch_util import dict_apply, optimizer_to
@@ -166,7 +166,7 @@ class TrainFlowMatchingUnetLowDimWorkspace(BaseWorkspace):
                 self.load_checkpoint(path=lastest_ckpt_path)
 
         # configure dataset
-        dataset: BaseImageDataset
+        dataset: BaseImageDataset # TODO: change to BaseLowdimDataset
         dataset = hydra.utils.instantiate(cfg.task.dataset)
         assert isinstance(dataset, BaseImageDataset)
         train_dataloader = DataLoader(dataset, **cfg.dataloader)
@@ -197,12 +197,13 @@ class TrainFlowMatchingUnetLowDimWorkspace(BaseWorkspace):
                 model=self.ema_model)
 
         # configure env
-        env_runner: BaseLowdimRunner
+        env_runner: RLBenchLowDimEnv
         env_runner = hydra.utils.instantiate(
             cfg.task.env_runner,
-            output_dir=self.output_dir)
-        assert isinstance(env_runner, BaseLowdimRunner)
-            
+            output_dir=self.output_dir,
+            demos=dataset.demos,
+            eval_demos=val_dataset.demos)
+
         # configure logging
         wandb_run = wandb.init(
             dir=str(self.output_dir),
@@ -307,7 +308,10 @@ class TrainFlowMatchingUnetLowDimWorkspace(BaseWorkspace):
 
                     # run rollout
                     if (self.epoch % cfg.training.rollout_every) == 0:
-                        runner_log = env_runner.run(policy)
+                        runner_log = env_runner.run(policy, mode="train")
+                        runner_log.update(
+                            env_runner.run(policy, mode="eval")
+                        )
                         # log all
                         step_log.update(runner_log)
 
@@ -396,6 +400,7 @@ class TrainFlowMatchingUnetLowDimWorkspace(BaseWorkspace):
     config_path=str(pathlib.Path(__file__).parent.parent.joinpath("config")), 
     config_name=pathlib.Path(__file__).stem)
 def main(cfg):
+    OmegaConf.resolve(cfg)
     workspace = TrainFlowMatchingUnetLowDimWorkspace(cfg)
     if cfg.mode == 'train':
         workspace.run()

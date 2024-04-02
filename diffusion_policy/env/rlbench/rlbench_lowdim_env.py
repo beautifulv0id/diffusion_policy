@@ -165,7 +165,7 @@ class RLBenchLowDimEnv:
 
         return var_success_rates
 
-    @torch.no_grad()
+
     def _evaluate_task_on_one_variation(
         self,
         task_str: str,
@@ -179,22 +179,57 @@ class RLBenchLowDimEnv:
         verbose: bool = False,
         num_history=0,
     ):
-        device = actioner.device
-
-        success_rate = 0
+        demos = []
         num_valid_demos = 0
+        for i in range(num_demos):
+            try:
+                demo = self.get_demo(task_str, variation, episode_index=i)[0]
+                demos.append(demo)
+                num_valid_demos += 1
+            except:
+                print(f"Invalid demo {i} for {task_str} variation {variation}")
+                print()
+                traceback.print_exc()
+
+        successful_demos = self._evaluate_task_on_demos(
+            task=task,
+            task_str=task_str,
+            demos=demos,
+            max_steps=max_steps,
+            actioner=actioner,
+            max_rtt_tries=max_rtt_tries,
+            demo_tries=demo_tries,
+            verbose=verbose,
+            num_history=num_history,
+        )
+
+        if num_valid_demos == 0:
+            success_rate = 0.0
+            valid = False
+        else:
+            success_rate = successful_demos / (num_valid_demos * demo_tries)
+            valid = True
+        return success_rate, valid, num_valid_demos
+
+    @torch.no_grad()
+    def _evaluate_task_on_demos(self,       
+                                task: TaskEnvironment,
+                                task_str: str,
+                                demos: List[Demo],  
+                                max_steps: int,
+                                actioner: Actioner,
+                                max_rtt_tries: int = 1,
+                                demo_tries: int = 1,
+                                verbose: bool = False,
+                                num_history=0):
+        device = actioner.device
+        success_rate = 0
         total_reward = 0
 
-        for demo_id in range(num_demos):
+        for demo_id, demo in enumerate(demos):
             if verbose:
                 print()
                 print(f"Starting demo {demo_id}")
-
-            try:
-                demo = self.get_demo(task_str, variation, episode_index=demo_id)[0]
-                num_valid_demos += 1
-            except:
-                continue
 
             for i in range(demo_tries):
 
@@ -206,7 +241,7 @@ class RLBenchLowDimEnv:
                 descriptions, obs = task.reset_to_demo(demo)
                 self.obs_history.append(obs)
 
-                actioner.load_episode(task_str, variation)
+                actioner.load_episode(task_str, demo.variation_number)
                 # actioner.load_demo(demo) # TODO: remove this line
 
                 move = Mover(task, max_tries=max_rtt_tries)
@@ -284,7 +319,7 @@ class RLBenchLowDimEnv:
                 print(
                     task_str,
                     "Variation",
-                    variation,
+                    demo.variation_number,
                     "Demo",
                     demo_id,
                     "Reward",
@@ -292,19 +327,10 @@ class RLBenchLowDimEnv:
                     "max_reward",
                     f"{max_reward:.2f}",
                     f"SR: {success_rate / ((demo_id+1) * demo_tries)}",
-                    f"SR: {total_reward:.2f}/{demo_id+1}",
-                    "# valid demos", num_valid_demos,
-                )
+                    f"Total reward: {total_reward:.2f}/{(demo_id+1) * demo_tries}"                )
 
-        # Compensate for failed demos
-        if num_valid_demos == 0:
-            assert success_rate == 0
-            valid = False
-        else:
-            valid = True
-        success_rate = success_rate / (num_valid_demos * demo_tries)
-        return success_rate, valid, num_valid_demos
-
+        successful_demos = success_rate
+        return successful_demos
     def _collision_checking(self, task_str, step_id):
         """Collision checking for planner."""
         # collision_checking = True
@@ -488,7 +514,7 @@ def test():
     task.set_variation(0)
 
     policy : DiffusionUnetLowDimRelativePolicy = hydra.utils.instantiate(cfg.policy)
-    checkpoint_path = "/home/felix/Workspace/diffusion_policy_felix/data/outputs/2024.03.28/15.36.55_diffusion_unet_lowdim_relative_policy_open_drawer/checkpoints/latest.ckpt"
+    checkpoint_path = "/home/felix/Workspace/diffusion_policy_felix/data/outputs/2024.03.28/17.19.38_flow_matching_unet_lowdim_policy_open_drawer/checkpoints/latest.ckpt"
     checkpoint = torch.load(checkpoint_path)
     policy.load_state_dict(checkpoint["state_dicts"]['model'])
     
