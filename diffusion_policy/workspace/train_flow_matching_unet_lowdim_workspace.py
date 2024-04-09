@@ -18,7 +18,6 @@ import random
 import wandb
 import tqdm
 import numpy as np
-import shutil
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
 from diffusion_policy.policy.flow_matching_unet_lowdim_policy import FlowMatchingUnetLowDimPolicy
 from diffusion_policy.common.common_utils import trajectory_gripper_open_ignore_collision_from_action
@@ -307,7 +306,7 @@ class TrainFlowMatchingUnetLowDimWorkspace(BaseWorkspace):
                     policy.eval()
 
                     # run rollout
-                    if (self.epoch % cfg.training.rollout_every) == 0:
+                    if (self.epoch % cfg.training.rollout_every) == 0 and self.epoch > 0:
                         runner_log = env_runner.run(policy, mode="train")
                         runner_log.update(
                             env_runner.run(policy, mode="eval")

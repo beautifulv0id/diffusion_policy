@@ -1,25 +1,25 @@
-from typing import Dict, Tuple, Union
-import copy
 import torch
 import torch.nn as nn
 from diffusion_policy.model.common.module_attr_mixin import ModuleAttrMixin
 from diffusion_policy.common.pytorch_util import dict_apply, replace_submodules
-from diffusion_policy.model.common.position_encodings import RotaryPositionEncoding3D, SinusoidalPosEmb
+from diffusion_policy.model.common.geometry_invariant_transformer import GeometryInvariantTransformer
+from diffusion_policy.model.common.position_encodings import SinusoidalPosEmb
 from diffusion_policy.model.common.layer import RelativeCrossAttentionModule
 import einops
-from scipy.spatial import transform
 
 # TODO: proper naming, remove relative? Change to something w/ SE3?
-class TransformerLowdimObsRelativeEncoder(ModuleAttrMixin):
+class GITLowdimEncoder(ModuleAttrMixin):
     def __init__(self,
             shape_meta: dict,
             n_obs_steps: int,
             query_embeddings: nn.Embedding,
             keypoint_embeddings: nn.Embedding,
-            rotary_embedder: RotaryPositionEncoding3D,
             positional_embedder: SinusoidalPosEmb,
-            within_attn : RelativeCrossAttentionModule,
             across_attn : RelativeCrossAttentionModule,
+            embed_dim: int = 60,
+            depth: int = 2,
+            num_heads: int = 4,
+            mlp_dim: int = 256,
         ):
         """
         Assumes rgb input: B,To,C,H,W
@@ -51,21 +51,23 @@ class TransformerLowdimObsRelativeEncoder(ModuleAttrMixin):
         self.low_dim_keys = low_dim_keys
         self.key_shape_map = key_shape_map
         self.n_obs_steps = n_obs_steps
-        self.rotary_embedder = rotary_embedder
-        self.query_emb = query_embeddings
-        self.keypoint_emb = keypoint_embeddings
-        self.re_cross_attn_within = within_attn
-        self.re_cross_attn_across = across_attn
         self.positional_embedder = positional_embedder
+        self.keypoint_emb = keypoint_embeddings
+        self.query_emb = query_embeddings
 
-    def rotary_embed(self, x):
-        """
-        Args:
-            x (torch.Tensor): (B, N, Da)
-        Returns:
-            torch.Tensor: (B, N, D, 2)
-        """
-        return self.rotary_embedder(x)
+        self.re_inv_cross_attn_within = GeometryInvariantTransformer(
+            dim=embed_dim,
+            depth=depth,
+            dim_head=embed_dim,
+            heads=num_heads,
+            mlp_dim=mlp_dim,
+            kv_dim=embed_dim,
+            dropout=0.,
+            return_last_attmap=False
+        )
+        self.re_inv_cross_attn_across = across_attn
+
+
     
     def process_low_dim_features(self, obs_dict):
         batch_size = None
@@ -98,31 +100,25 @@ class TransformerLowdimObsRelativeEncoder(ModuleAttrMixin):
         # (B,N,D), (B,N,D,H,W)
         agent_pose, keypoint_pcd, keypoint_features, low_dim_features = \
             self.process_low_dim_features(obs_dict)
-        
-        agent_pos = agent_pose[:, :, :3, 3]
-        
+                
         # compoute context features
         # (N,B*N,D)
-        context_features = einops.rearrange(keypoint_features, 'b n m d -> m (b n) d')
+        context_features = einops.rearrange(keypoint_features, 'b n m d -> (b n) m d')
         # (B*N,M,D)
         context_pos = einops.repeat(keypoint_pcd, 'b n m d -> (b n) m d')
-        # (B*N,M,D,2)
-        context_pos = self.rotary_embed(context_pos)
 
         # compute query features
         # (1,B*N,D)
-        query = einops.repeat(self.query_emb.weight, "n d -> 1 (b n) d", b=batch_size)
+        query = einops.repeat(self.query_emb.weight, "n d -> (b n) 1 d", b=batch_size)
         # (B*N,1,D)
-        query_pos = einops.repeat(agent_pos, "b n d -> (b n) 1 d")
-        # (B*N,1,D,2)
-        query_pos = self.rotary_embed(query_pos).type(query.dtype)
+        query_pose = einops.repeat(agent_pose, "b n i j -> (b n) 1 i j")
 
         # cross attention within observation
-        # (L,B*N,D)
-        obs_embs = self.re_cross_attn_within(query=query, value=context_features, 
-                                             query_pos=query_pos, value_pos=context_pos)
+        extras = {'x_poses': query_pose, 'z_poses': context_pos,
+              'x_types':'se3', 'z_types':'3D'}
+        obs_embs = self.re_inv_cross_attn_within(x=query, z=context_features, extras=extras)
         # (B*N,D)
-        obs_embs = obs_embs[-1].squeeze(0)
+        obs_embs = obs_embs.squeeze(1)
         # (N,B,D)
         obs_embs = einops.rearrange(obs_embs, '(b n) d -> n b d', b=batch_size)
         # (N,1,D)
@@ -131,7 +127,7 @@ class TransformerLowdimObsRelativeEncoder(ModuleAttrMixin):
         obs_embs = obs_embs + obs_pos_embs
 
         # cross attention across observations
-        obs_emb = self.re_cross_attn_across(query=obs_embs[-1:], 
+        obs_emb = self.re_inv_cross_attn_across(query=obs_embs[-1:], 
                                             value=obs_embs[:-1])[0]\
                                                 .squeeze(0)
 
@@ -165,11 +161,11 @@ OmegaConf.register_new_resolver("eval", eval, replace=True)
     version_base=None,
     config_path=str(pathlib.Path(__file__).parent.parent.parent.joinpath(
         'config')),
-    config_name='train_diffusion_unet_lowdim_relative_workspace.yaml'
+    config_name='train_flow_matching_unet_lowdim_workspace.yaml',
 )
 def test(cfg: OmegaConf):
     OmegaConf.resolve(cfg)
-    obs_encoder : TransformerLowdimObsRelativeEncoder = hydra.utils.instantiate(cfg.policy.observation_encoder)
+    obs_encoder : GITLowdimEncoder = hydra.utils.instantiate(cfg.policy.observation_encoder)
     out = obs_encoder.output_shape()
     print(out)
 

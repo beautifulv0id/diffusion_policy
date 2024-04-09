@@ -1,0 +1,19 @@
+_target_: diffusion_policy.model.vision.git_lowdim_encoder.GITLowdimEncoder
+shape_meta: ${task.shape_meta}
+n_obs_steps: ${n_obs_steps}
+query_embeddings: 
+  _target_: torch.nn.Embedding
+  num_embeddings: ${n_obs_steps}
+  embedding_dim: ${embedding_dim}
+keypoint_embeddings: 
+  _target_: torch.nn.Embedding
+  num_embeddings: ${task.num_keypoints}
+  embedding_dim: ${embedding_dim}
+positional_embedder:
+  _target_: diffusion_policy.model.common.position_encodings.SinusoidalPosEmb
+  dim: ${embedding_dim}
+across_attn: 
+  _target_: diffusion_policy.model.common.layer.RelativeCrossAttentionModule
+  embedding_dim: ${embedding_dim}
+  num_attn_heads: 3
+  num_layers: 2

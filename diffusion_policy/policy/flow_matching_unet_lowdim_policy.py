@@ -19,7 +19,6 @@ from diffusion_policy.common.pytorch_util import dict_apply
 from diffusion_policy.model.common.se3_diffusion_util import marginal_prob_std, sample_from_se3_gaussian, se3_score_normal, step
 from theseus.geometry.so3 import SO3
 from scipy.spatial.transform import Rotation 
-from geomstats.geometry.special_orthogonal import SpecialOrthogonal
 from pytorch3d.transforms import quaternion_to_matrix
 
 def rotation_vector_from_matrix(R):
@@ -38,7 +37,8 @@ def matrix_from_rotation_vector(rot):
 class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
     def __init__(self, 
             shape_meta: dict,
-            obs_encoder: TransformerLowdimObsRelativeEncoder,
+            observation_encoder: TransformerLowdimObsRelativeEncoder,
+            # action_decoder: nn.Module,
             horizon : int, 
             n_action_steps : int, 
             n_obs_steps : int,
@@ -91,19 +91,18 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
         ObsUtils.initialize_obs_utils_with_config(config)
 
         # create diffusion model
-        obs_feature_dim = obs_encoder.output_shape()[0]
+        obs_feature_dim = observation_encoder.output_shape()[0]
         input_dim = 16 * horizon
 
-
-        model = NaiveFilmSE3FlowMatchingModel(
+        action_decoder = NaiveFilmSE3FlowMatchingModel(
             in_channels=input_dim,
             out_channels=6,
             embed_dim=obs_feature_dim,
             cond_dim=obs_feature_dim
         )
 
-        self.obs_encoder = obs_encoder
-        self.model = model
+        self.observation_encoder = observation_encoder
+        self.action_decoder = action_decoder
         self.gripper_state_ignore_collision_predictor = nn.Sequential(
             nn.Linear(obs_feature_dim, 128),
             nn.Sigmoid(),
@@ -122,15 +121,14 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
         self.num_inference_steps = num_inference_steps
         self.dt = delta_t
         self.velocity_scale = velocity_scale
-        self.vec_manifold = SpecialOrthogonal(n=3, point_type="vector")
         if noise_aug_std > 0:
             self.noise_aug_std = noise_aug_std
             self.data_augmentation = True
         else:
             self.data_augmentation = False
 
-        print("Diffusion params: %e" % sum(p.numel() for p in self.model.parameters()))
-        print("Vision params: %e" % sum(p.numel() for p in self.obs_encoder.parameters()))
+        print("Diffusion params: %e" % sum(p.numel() for p in self.action_decoder.parameters()))
+        print("Vision params: %e" % sum(p.numel() for p in self.observation_encoder.parameters()))
 
     def state_dict(self):
         super_dict = super().state_dict()
@@ -228,8 +226,8 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
 
     # ========= inference  ============    
     def get_random_pose(self, batch_size):
-        H_log = torch.randn((batch_size, 3), device=self.device, dtype=self.dtype)
-        R = SO3.exp_map(H_log).to_matrix()
+        lR = torch.randn((batch_size, 3), device=self.device, dtype=self.dtype)
+        R = SO3.exp_map(lR).to_matrix()
         t = torch.randn((batch_size, 3), device=self.device, dtype=self.dtype)
         H = torch.eye(4, device=self.device, dtype=self.dtype)[None,...].repeat(batch_size,1,1)
         H[:, :3, :3] = R
@@ -251,23 +249,23 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
                 trj = H0[:,None,...].repeat(1,steps,1,1)
             Ht = H0
             for s in range(0, steps):
-                ut = self.velocity_scale*self.model(Ht.view(batch_size,To,4,4), t[s]*torch.ones_like(Ht[:,0,0]), global_cond)
+                ut = self.velocity_scale*self.action_decoder(Ht.view(batch_size,To,4,4), t[s]*torch.ones_like(Ht[:,0,0]), global_cond)
                 utdt = ut*dt
 
                 utdt = utdt.reshape(batch_size*To, 6)
 
                 ## rotation update ##
-                Rt = Ht[:, :3, :3]
-                log_utdt = SO3.exp_map(utdt[:, :3]).to_matrix()
-                Rt_step = torch.einsum('bij,bjk->bik', log_utdt, Rt)               
+                R_w_t = Ht[:, :3, :3]
+                R_w_tp1 = SO3.exp_map(utdt[:, :3]).to_matrix()
+                R_w_tp1 = torch.matmul(R_w_t, R_w_tp1)           
 
                 ## translation update ##
-                xt = Ht[:, :3, -1]
+                x_t = Ht[:, :3, -1]
                 x_utdt = utdt[:, 3:]
-                xt_step = xt + x_utdt
+                x_tp1 = x_t + x_utdt
 
-                Ht[:, :3, :3] = Rt_step
-                Ht[:, :3, -1] = xt_step
+                Ht[:, :3, :3] = R_w_tp1
+                Ht[:, :3, -1] = x_tp1
                 if get_traj:
                     trj[:,s,...] = Ht
         
@@ -305,7 +303,7 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
         # condition through global feature
         this_nobs = dict_apply(nobs, lambda x: x[:,:To,...]) # We need to keep the observation shape
         # (B, D)
-        nobs_features = self.obs_encoder(this_nobs)
+        nobs_features = self.observation_encoder(this_nobs)
         global_cond = nobs_features
 
         # run sampling
@@ -334,11 +332,11 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
     # ========= training  ============
     def augment_obs(self, obs):
         B = obs['agent_pose'].shape[0]
-        R_delta = SO3().exp_map(torch.normal(mean=0, std=self.noise_aug_std, size=(B, 3))).to_matrix().to(self.device)
-        x_delta = torch.normal(mean=0, std=self.noise_aug_std, size=(B, 3), device=self.device)
+        R = SO3().exp_map(torch.normal(mean=0, std=self.noise_aug_std, size=(B, 3), device=self.device)).to_matrix()
+        x = torch.normal(mean=0, std=self.noise_aug_std, size=(B, 3), device=self.device)
         H_delta = torch.eye(4, device=self.device, dtype=self.dtype).reshape(1,4,4).repeat(B, 1, 1)
-        H_delta[:,:3,3] = x_delta
-        H_delta[:,:3,:3] = R_delta
+        H_delta[:,:3,3] = x
+        H_delta[:,:3,:3] = R
         obs["agent_pose"] = torch.einsum('bmn,bhnk->bhmk', H_delta, obs["agent_pose"])
         return obs
     
@@ -379,12 +377,12 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
         # reshape B, T, ... to B*T
         this_nobs = dict_apply(nobs, 
             lambda x: x[:,:To,...])
-        nobs_features = self.obs_encoder(this_nobs)
+        nobs_features = self.observation_encoder(this_nobs)
         global_cond = nobs_features
 
         H1 = trajectory.flatten(0,1)
         H0 = self.get_random_pose(B*To)
-        t = torch.rand(H0.shape[0]).type_as(H0).to(H0.device)
+        t = torch.rand(H0.shape[0], device=device, dtype=dtype)
 
         ## Sample X at time t through the Geodesic from x0 -> x1
         def sample_xt(x0, x1, t):
@@ -392,72 +390,40 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
             Function which compute the sample xt along the geodesic from x0 to x1 on SE(3).
             """
             ## Point to translation and rotation ##
-            t0, Rw0 = x0[:, :3, -1], x0[:, :3, :3]
-            t1, Rw1 = x1[:, :3, -1], x1[:, :3, :3]
+            t_0, R_w_0 = x0[:, :3, -1], x0[:, :3, :3]
+            t_1, R_w_1 = x1[:, :3, -1], x1[:, :3, :3]
 
             ## Get rot_t ##
-            R0w = torch.transpose(Rw0, -1, -2)
-            R01 = torch.matmul(R0w,Rw1)
-            log_x01 = rotation_vector_from_matrix(R01)
-            R0t = matrix_from_rotation_vector(log_x01*t[:,None])
-            Rwt = torch.matmul(Rw0, R0t)
+            R_0_w = torch.transpose(R_w_0, -1, -2)
+            R_0_1 = torch.matmul(R_0_w,R_w_1)
+            lR_0_1 = rotation_vector_from_matrix(R_0_1)
+            R_0_t = matrix_from_rotation_vector(lR_0_1*t[:,None])
+            R_w_t = torch.matmul(R_w_0, R_0_t)
 
             ## Get trans_t ##
-            xwt = t0*(1. - t[:,None]) + t1*t[:,None]
+            x_t = t_0*(1. - t[:,None]) + t_1*t[:,None]
 
-            Ht = torch.eye(4)[None,...].repeat(Rwt.shape[0], 1, 1).to(device)
-            Ht[:, :3, :3] = Rwt
-            Ht[:, :3, -1] = xwt
+            Ht = torch.eye(4, device=device)[None,...].repeat(R_w_t.shape[0], 1, 1)
+            Ht[:, :3, :3] = R_w_t
+            Ht[:, :3, -1] = x_t
             return Ht
 
         Ht = sample_xt(H0, H1, t)
 
         ## Compute velocity target at xt at time t through the geodesic x0 -> x1
-        def compute_conditional_vel(x0, x1, xt, t):
-
-            def invert_se3(matrix):
-                """
-                Invert a homogeneous transformation matrix.
-
-                :param matrix: A 4x4 numpy array representing a homogeneous transformation matrix.
-                :return: The inverted transformation matrix.
-                """
-
-                # Extract rotation (R) and translation (t) from the matrix
-                R = matrix[..., :3, :3]
-                t = matrix[..., :3, 3]
-
-                # Invert the rotation (R^T) and translation (-R^T * t)
-                R_inv = torch.transpose(R, -1, -2)
-                t_inv = -torch.einsum('...ij,...j->...i', R_inv, t)
-
-                # Construct the inverted matrix
-                inverted_matrix = torch.clone(matrix)
-                inverted_matrix[..., :3, :3] = R_inv
-                inverted_matrix[..., :3, 3] = t_inv
-
-                return inverted_matrix
-
-
-            # xt_inv = invert_se3(xt)
-
-            # xt1 = torch.einsum('...ij,...jk->...ik', xt_inv, x1)
-            ## Point to translation and rotation ##
-            # trans_xt1, rot_xt1 = xt1[:, :3, -1], xt1[:, :3, :3]
-
-            trans_xt, rot_xt = xt[:, :3, -1], xt[:, :3, :3]
-            trans_x1, rot_x1 = x1[:, :3, -1], x1[:, :3, :3]
+        def compute_conditional_vel(x0, H_w_1, H_w_t, t):
+            x_t, R_w_t = H_w_t[:, :3, -1], H_w_t[:, :3, :3]
+            x_1, R_w_1 = H_w_1[:, :3, -1], H_w_1[:, :3, :3]
 
             ## Compute Velocity in rot ##
-            delta_r = torch.transpose(rot_xt, -1, -2)@rot_x1
-            rot_ut = rotation_vector_from_matrix(delta_r) / torch.clip((1 - t[:, None]), 0.01, 1.)
+            R_t_w = torch.transpose(R_w_t, -1, -2)
+            R_t_1 = torch.matmul(R_t_w, R_w_1)
+            lR_t_ut = rotation_vector_from_matrix(R_t_1) / torch.clip((1 - t[:, None]), 0.01, 1.)
 
             ## Compute Velocity in trans ##
-            #trans_ut = -trans_xt1/ torch.clip((1 - t[:, None]), 0.01, 1.)
-            trans_ut = (trans_x1 - trans_xt)/ torch.clip((1 - t[:, None]), 0.01, 1.)
-            #trans_ut = 0.*trans_ut
+            x_ut = (x_1 - x_t)/ torch.clip((1 - t[:, None]), 0.01, 1.)
 
-            return torch.cat((rot_ut, trans_ut), dim=1).detach()
+            return torch.cat((lR_t_ut, x_ut), dim=1).detach()
 
         ut = compute_conditional_vel(H0, H1, Ht, t)
         ut = ut.reshape(B, -1)
@@ -470,7 +436,7 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
         Ht.requires_grad = True
         t.requires_grad = True
         Ht = Ht.reshape(B, To, 4, 4)
-        vt = self.model(Ht, t, global_cond)
+        vt = self.action_decoder(Ht, t, global_cond)
 
         loss = torch.mean((ut-vt)**2)
         loss += regression_loss * 0.1
