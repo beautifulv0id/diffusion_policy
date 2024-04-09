@@ -39,6 +39,7 @@ env_runner:
   _target_: diffusion_policy.env_runner.rlbench_lowdim_runner.RLBenchLowdimRunner
   data_root: ${task.dataset.root}
   task_str: "open_drawer"
+  max_episodes: 5
   max_steps: 3
   max_rtt_tries: 10
   demo_tries: 5

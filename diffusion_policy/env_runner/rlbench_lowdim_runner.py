@@ -14,6 +14,7 @@ class RLBenchLowdimRunner(BaseLowdimRunner):
                  data_root, #TODO: or pass demos?
                 task_str: str,
                 max_steps: int,
+                max_episodes: int,
                 demos: List[Demo],
                 eval_demos: List[Demo],
                 max_rtt_tries: int = 1,
@@ -37,8 +38,8 @@ class RLBenchLowdimRunner(BaseLowdimRunner):
         self.env = env
         self.action_dim = action_dim
         self.max_steps = max_steps
-        self.demos = demos
-        self.eval_demos = eval_demos
+        self.demos = demos[:max_episodes]
+        self.eval_demos = eval_demos[:max_episodes]
         self.max_rtt_tries = max_rtt_tries
         self.demo_tries = demo_tries
 
@@ -49,6 +50,9 @@ class RLBenchLowdimRunner(BaseLowdimRunner):
             demos = self.demos
         elif mode == "eval":
             demos = self.eval_demos
+
+        if len(demos) == 0:
+            return {}
 
         successfull_demos = self.env._evaluate_task_on_demos(
             demos=demos,
@@ -62,8 +66,7 @@ class RLBenchLowdimRunner(BaseLowdimRunner):
             num_history=policy.n_obs_steps,
         )
 
-        success_rate = successfull_demos / len(demos)
-        
+        success_rate = successfull_demos / (len(demos) * self.demo_tries)
         return {mode+"_success_rate": success_rate}
 
 import hydra

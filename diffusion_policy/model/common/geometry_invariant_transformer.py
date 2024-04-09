@@ -5,7 +5,7 @@ from torch.nn import init
 import math
 
 
-from geo_rel_policies.model.geometric_relative_attention import MultiHeadGeometricRelativeAttention
+from diffusion_policy.model.common.geometric_relative_attention import MultiHeadGeometricRelativeAttention
 
 
 __USE_DEFAULT_INIT__ = False
