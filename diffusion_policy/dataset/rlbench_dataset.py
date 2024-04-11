@@ -28,7 +28,7 @@ class RLBenchDataset(BaseImageDataset):
             val_ratio=0.0,
             ):
         super().__init__()
-        assert variation == 0
+        # assert variation == 0
 
         root = Path(root)
         num_episodes = num_episodes
@@ -63,8 +63,8 @@ class RLBenchDataset(BaseImageDataset):
         val_idxs = np.random.choice(num_episodes, size=n_val, replace=False)
         train_idxs = np.array([i for i in range(num_episodes) if i not in val_idxs])
         train_demos = [demos[i] for i in train_idxs]
-        val_demos = [demos[i] for i in val_idxs]
-
+        val_demos = [demos[i] for i in val_idxs]    
+        
         train_dataset, train_demo_begin = create_dataset(train_demos, 
                                         cameras=cameras, 
                                         demo_augmentation_every_n=demo_augmentation_every_n, 

@@ -34,7 +34,7 @@ class FILMConditionalBlock(nn.Module):
             nn.Unflatten(-1, (-1, 1))
         )
     
-    def forward(self, x: torch.Tensor, cond: dict = None):
+    def forward(self, x: torch.Tensor, cond: torch.Tensor = None):
         '''
             x : [ batch_size x in_channels x horizon ]
             cond : [ batch_size x cond_dim]
@@ -59,12 +59,14 @@ class NaiveFilmSE3FlowMatchingModel(nn.Module):
             in_channels, 
             out_channels = 6, 
             embed_dim = 128,
-            cond_dim = 60):
+            mid_dim = 256,
+            num_blocks = 4,):
         super().__init__()
+
         self.blocks = nn.ModuleList([
-            nn.ModuleList([FILMConditionalBlock(2*embed_dim, 128, cond_dim), nn.ReLU()]),
-            nn.ModuleList([FILMConditionalBlock(128, 256, cond_dim), nn.ReLU()]),
-            nn.ModuleList([FILMConditionalBlock(256, out_channels, cond_dim), nn.Identity()])])
+            nn.ModuleList([FILMConditionalBlock(2*embed_dim, mid_dim, embed_dim), nn.ReLU()]),
+            *[nn.ModuleList([FILMConditionalBlock(mid_dim, mid_dim, embed_dim), nn.ReLU()]) for _ in range(num_blocks)],
+            nn.ModuleList([FILMConditionalBlock(mid_dim, out_channels, embed_dim), nn.Identity()])])
         
         ## Time Embedings Encoder ##
         self.time_embed = nn.Sequential(

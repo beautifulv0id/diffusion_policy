@@ -12,6 +12,7 @@ class Arguments(tap.Tap):
 
 def main(root_dir, task):
     variations = os.listdir(f'{root_dir}/{task}/all_variations/episodes')
+    variations = [v for v in variations if (not '.DS_Store' in v) and (not 'num_objects.txt' in v)]
     seen_variations = {}
     for variation in variations:
         num = int(variation.replace('episode', ''))
@@ -46,6 +47,7 @@ def main(root_dir, task):
 if __name__ == '__main__':
     args = Arguments().parse_args()
     root_dir = str(args.root_dir.absolute())
-    tasks = [f for f in os.listdir(root_dir) if '.zip' not in f]
+    tasks = [f for f in os.listdir(root_dir) if ('.zip' not in f) and ('.DS_Store' not in f)]
     for task in tasks:
+        print(f'Processing {task}')
         main(root_dir, task)

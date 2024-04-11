@@ -65,7 +65,7 @@ class GITLowdimEncoder(ModuleAttrMixin):
             dropout=0.,
             return_last_attmap=False
         )
-        self.re_inv_cross_attn_across = across_attn
+        self.re_cross_attn_across = across_attn
 
 
     
@@ -79,7 +79,7 @@ class GITLowdimEncoder(ModuleAttrMixin):
                 batch_size = data.shape[0]
             else:
                 assert batch_size == data.shape[0]
-            assert data.shape[1:] == self.key_shape_map[key]
+            assert data.shape[1:] == self.key_shape_map[key], f"Expected shape {self.key_shape_map[key]} but got {data.shape[1:]} for key {key}"
             if key == 'agent_pose':
                 agent_pose = data
             elif key == 'keypoint_pcd':
@@ -127,9 +127,12 @@ class GITLowdimEncoder(ModuleAttrMixin):
         obs_embs = obs_embs + obs_pos_embs
 
         # cross attention across observations
-        obs_emb = self.re_inv_cross_attn_across(query=obs_embs[-1:], 
-                                            value=obs_embs[:-1])[0]\
-                                                .squeeze(0)
+        if obs_embs.shape[0] > 1:
+            obs_emb = self.re_cross_attn_across(query=obs_embs[-1:], 
+                                                value=obs_embs[:-1])[0]\
+                                                    .squeeze(0)
+        else:
+            obs_emb = obs_embs[0]
 
         result = obs_emb
         return result

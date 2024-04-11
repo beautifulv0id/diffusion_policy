@@ -1,7 +1,8 @@
 defaults:
   - _self_
-  - task: open_drawer_lowdim
-  - encoder: transformer_lowdim_obs_relative_encoder
+  - task: slide_block_to_color_target
+  - encoder: GITLowdimEncoder
+  - model: naive_film_se3_flow_matching_model
 
 name: flow_matching_unet_lowdim_policy
 _target_: diffusion_policy.workspace.flow_matching_unet_lowdim_policy.FlowMatchingUnetLowDimPolicy
@@ -18,14 +19,14 @@ checkpoint:
   save_last_snapshot: False
 
 dataloader:
-  batch_size: 128
+  batch_size: 64
   num_workers: 1
   shuffle: True
   pin_memory: True
   persistent_workers: True
 
 val_dataloader:
-  batch_size: 128
+  batch_size: 64
   num_workers: 1
   shuffle: False
   pin_memory: True
@@ -60,12 +61,12 @@ policy:
   _target_: diffusion_policy.policy.flow_matching_unet_lowdim_policy.FlowMatchingUnetLowDimPolicy
      
   shape_meta: ${task.shape_meta}
-
-  obs_encoder: ${encoder}
+  observation_encoder: ${encoder}
+  action_decoder: ${model}
   horizon: ${horizon}
   n_action_steps: ${n_action_steps}
   n_obs_steps: ${n_obs_steps}
-  num_inference_steps: 100
+  num_inference_steps: 10
   delta_t: 0.01
   gripper_loc_bounds: ${task.gripper_loc_bounds}
   relative_position: True
@@ -82,9 +83,9 @@ training:
   lr_warmup_steps: 500
   max_train_steps: null
   max_val_steps: null
-  num_epochs: 100000
+  num_epochs: 300000
   resume: true
-  rollout_every: 500
+  rollout_every: 5000
   sample_every: 5
   seed: 42
   tqdm_interval_sec: 1.0

@@ -52,6 +52,7 @@ def extract_obs(obs: Observation,
     grip_mat = obs.gripper_matrix
     grip_pose = obs.gripper_pose
     joint_pos = obs.joint_positions
+    object_poses = obs.misc.pop('object_poses', None)
     obs.gripper_pose = None
     obs.gripper_matrix = None
     obs.wrist_camera_matrix = None
@@ -122,6 +123,7 @@ def extract_obs(obs: Observation,
 
     obs_dict['gripper_matrix'] = obs.gripper_matrix
     obs_dict['gripper_pose'] = obs.gripper_pose
+    obs_dict['object_poses'] = object_poses
     return obs_dict
 
 # taken from https://github.com/stepjam/ARM/blob/main/arm/utils.py
@@ -156,6 +158,19 @@ def low_dim_obs_to_keypoints(low_dim_obs):
     pcd = np.array(pcd)
     return pcd
 
+def object_poses_to_keypoints(object_poses):
+    poses = object_poses.reshape(-1, 7)
+    positions = poses[:, :3]
+    rotations = R.from_quat(poses[:, 3:]).as_matrix()
+    pcd = []
+    for rot, pos in zip(rotations, positions):
+        pcd.append(pos)
+        for ax in rot:
+            pcd.append(pos + 0.05 * ax)
+            pcd.append(pos - 0.05 * ax)
+    pcd = np.array(pcd)
+    return pcd
+
 def add_to_dataset(dataset, obs_idx, demo, keypoint_idx, cameras, n_obs = 2, use_task_keypoints=False, use_pcd=False, use_rgb=False):
     observations = [demo[max(0, obs_idx - i)] for i in range(n_obs)]
     obs_tp1 = demo[keypoint_idx]
@@ -168,7 +183,7 @@ def add_to_dataset(dataset, obs_idx, demo, keypoint_idx, cameras, n_obs = 2, use
         obs_dict = {}
         obs_dict['agent_pose'] = full_obs_dict['gripper_matrix']
         if use_task_keypoints:
-            pcd = low_dim_obs_to_keypoints(full_obs_dict['task_low_dim_state'])
+            pcd = object_poses_to_keypoints(full_obs_dict['object_poses'])
             obs_dict['keypoint_pcd'] = pcd
             obs_dict['keypoint_idx'] = np.arange(pcd.shape[0])
         if len(cameras) > 0:
@@ -195,6 +210,7 @@ def add_to_dataset(dataset, obs_idx, demo, keypoint_idx, cameras, n_obs = 2, use
 def create_dataset(demos, cameras, demo_augmentation_every_n=10, n_obs=2, use_task_keypoints=False, use_pcd=False, keypoints_only=False):
     dataset = []
     episode_begin = [0]
+
     for demo in demos:
         episode_keypoints = _keypoint_discovery(demo)
         if keypoints_only:

@@ -16,11 +16,11 @@ from rlbench.action_modes.action_mode import MoveArmThenGripper
 from rlbench.action_modes.gripper_action_modes import Discrete
 from rlbench.action_modes.arm_action_modes import EndEffectorPoseViaPlanning
 from rlbench.backend.exceptions import InvalidActionError
-from diffusion_policy.env.rlbench.rlbench_utils import Mover, Actioner, task_file_to_task_class, keypoint_discovery, transform
+from diffusion_policy.env.rlbench.rlbench_utils import Mover, Actioner, task_file_to_task_class, keypoint_discovery, transform, get_object_pose_indices_from_task
 from rlbench.demo import Demo
 from pyrep.errors import IKError, ConfigurationPathError
 from pyrep.const import RenderMode
-from diffusion_policy.common.launch_utils import low_dim_obs_to_keypoints
+from diffusion_policy.common.launch_utils import object_poses_to_keypoints
 from scipy.spatial.transform import Rotation as R
 
 
@@ -53,13 +53,14 @@ class RLBenchLowDimEnv:
         )
 
 
-    def get_keypoints_gripper_from_obs(self, obs):
+    def get_keypoints_gripper_from_obs(self, obs, object_pose_indices):
         """
         Return rgb, pcd, and gripper from a given observation
         :param obs: an Observation from the env
         :return: rgb, pcd, gripper
         """
-        pcd = torch.from_numpy(low_dim_obs_to_keypoints(obs.task_low_dim_state))
+        object_poses = np.array([obs.task_low_dim_state[i:i+7] for i in object_pose_indices])
+        pcd = torch.from_numpy(object_poses_to_keypoints(object_poses))
         keypoint_idx = torch.arange(pcd.shape[0])
         agent_pose = torch.from_numpy(obs.gripper_matrix)
         return pcd, keypoint_idx, agent_pose
@@ -226,6 +227,8 @@ class RLBenchLowDimEnv:
         success_rate = 0
         total_reward = 0
 
+        object_pose_indices = get_object_pose_indices_from_task(task._task)
+
         for demo_id, demo in enumerate(demos):
             if verbose:
                 print()
@@ -255,7 +258,7 @@ class RLBenchLowDimEnv:
                         self.obs_history = self.obs_history[::-1][::self.obs_history_augmentation_every_n][::-1][-num_history:]
 
                     for obs in self.obs_history:
-                        keypoint, keypoint_idx, gripper = self.get_keypoints_gripper_from_obs(obs)
+                        keypoint, keypoint_idx, gripper = self.get_keypoints_gripper_from_obs(obs, object_pose_indices)
                         keypoint_idx = keypoint_idx.to(device).reshape(1,1,*keypoint_idx.shape)
                         keypoint = keypoint.to(device).reshape(1,1,*keypoint.shape)
                         gripper = gripper.to(device).reshape(1,1,*gripper.shape)

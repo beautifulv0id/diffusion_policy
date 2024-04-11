@@ -5,6 +5,8 @@ import numpy as np
 import random
 import torch
 from rlbench.demo import Demo
+from pyrep.const import ObjectType
+from rlbench.backend.task import Task
 
 
 ALL_RLBENCH_TASKS = [
@@ -291,3 +293,43 @@ class Actioner:
     @property
     def device(self):
         return next(self._policy.parameters()).device
+
+
+def get_object_pose_indices_from_task(task : Task):
+    task.set_initial_objects_in_scene()
+    state_sizes = []
+    mask = []
+    for obj, objtype in task._initial_objs_in_scene:
+        valid = True
+        obj_name = obj.get_name().lower()
+        if "waypoint" in obj_name:
+            valid = False
+        if "joint" in obj_name:
+            valid = False
+        if "force" in obj_name:
+            valid = False
+        if not obj.still_exists():
+            # It has been deleted
+            state_size = 7
+            if objtype == ObjectType.JOINT:
+                state_size += 1
+                valid = False
+            elif objtype == ObjectType.FORCE_SENSOR:
+                state_size += 6
+                valid = False
+            elif objtype == ObjectType.DUMMY:
+                valid = False
+        else:
+            state_size = 7
+            if obj.get_type() == ObjectType.JOINT:
+                state_size += 1
+                valid = False
+            elif obj.get_type() == ObjectType.FORCE_SENSOR:
+                state_size += 6
+                valid = False
+        state_sizes.append(state_size)
+        mask.append(valid)
+
+    state_sizes = np.array(state_sizes)
+    state_idxs = state_sizes[mask]
+    return state_idxs

@@ -1,6 +1,6 @@
-name: open_drawer
+name: slide_block_to_color_target
 
-num_objects: 5
+num_objects: 23
 num_keypoints: ${eval:'${task.num_objects} * 7'}
 shape_meta: &shape_meta
   # acceptable types: rgb, low_dim
@@ -14,7 +14,7 @@ shape_meta: &shape_meta
         - 3
       type: low_dim
     keypoint_idx:
-      shape:
+      shape: 
         - ${task.num_keypoints}
       type: low_dim
   action:
@@ -29,7 +29,7 @@ gripper_loc_bounds:
 dataset:
   _target_: diffusion_policy.dataset.rlbench_dataset.RLBenchDataset
   root: /home/felix/Workspace/diffusion_policy_felix/data/peract
-  task_name: open_drawer
+  task_name: slide_block_to_color_target
   cameras: []
   num_episodes: 1
   variation: 0
@@ -42,7 +42,7 @@ dataset:
 env_runner:
   _target_: diffusion_policy.env_runner.rlbench_lowdim_runner.RLBenchLowdimRunner
   data_root: ${task.dataset.root}
-  task_str: "open_drawer"
+  task_str: slide_block_to_color_target
   max_episodes: 5
   max_steps: 3
   max_rtt_tries: 10

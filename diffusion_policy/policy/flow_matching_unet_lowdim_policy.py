@@ -1,5 +1,5 @@
 from typing import Dict
-import math
+import time
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -10,7 +10,6 @@ from diffusion_policy.policy.base_lowdim_policy import BaseLowdimPolicy
 from diffusion_policy.model.diffusion.conditional_unet1d import ConditionalUnet1D
 from diffusion_policy.model.flow_matching.naive_film_se3 import NaiveFilmSE3FlowMatchingModel
 from diffusion_policy.model.diffusion.mask_generator import LowdimMaskGenerator
-from diffusion_policy.model.vision.transformer_lowdim_obs_relative_encoder import TransformerLowdimObsRelativeEncoder
 from diffusion_policy.common.robomimic_config_util import get_robomimic_config
 from diffusion_policy.common.common_utils import action_from_trajectory_gripper_open_ignore_collision
 from robomimic.algo.algo import PolicyAlgo
@@ -37,8 +36,8 @@ def matrix_from_rotation_vector(rot):
 class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
     def __init__(self, 
             shape_meta: dict,
-            observation_encoder: TransformerLowdimObsRelativeEncoder,
-            # action_decoder: nn.Module,
+            observation_encoder: nn.Module,
+            action_decoder: nn.Module,
             horizon : int, 
             n_action_steps : int, 
             n_obs_steps : int,
@@ -76,30 +75,22 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
             else:
                 raise RuntimeError(f"Unsupported obs type: {type}")
 
-        # get raw robomimic config
-        config = get_robomimic_config(
-            algo_name='bc_rnn',
-            hdf5_type='image',
-            task_name='square',
-            dataset_type='ph')
+        # # get raw robomimic config
+        # config = get_robomimic_config(
+        #     algo_name='bc_rnn',
+        #     hdf5_type='image',
+        #     task_name='square',
+        #     dataset_type='ph')
         
-        with config.unlocked():
-            # set config with shape_meta
-            config.observation.modalities.obs = obs_config
+        # with config.unlocked():
+        #     # set config with shape_meta
+        #     config.observation.modalities.obs = obs_config
 
-        # init global state
-        ObsUtils.initialize_obs_utils_with_config(config)
+        # # init global state
+        # ObsUtils.initialize_obs_utils_with_config(config)
 
         # create diffusion model
         obs_feature_dim = observation_encoder.output_shape()[0]
-        input_dim = 16 * horizon
-
-        action_decoder = NaiveFilmSE3FlowMatchingModel(
-            in_channels=input_dim,
-            out_channels=6,
-            embed_dim=obs_feature_dim,
-            cond_dim=obs_feature_dim
-        )
 
         self.observation_encoder = observation_encoder
         self.action_decoder = action_decoder
@@ -239,7 +230,7 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
         with torch.no_grad():
             steps = T
             t = torch.linspace(0, 1., steps=steps)
-            dt = 1/steps
+            dt = 1/(steps-1)
 
             # Euler method
             # sample H_0 first
@@ -325,7 +316,7 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
             'action': action,
             'trajectory': trajectory_pred,
             'open_gripper': gripper_state_ignore_collision_prediction[:,:,0],
-            'ignore_collision': gripper_state_ignore_collision_prediction[:,:,1]
+            'ignore_collision': gripper_state_ignore_collision_prediction[:,:,1],
         }
         return result
     
@@ -377,7 +368,9 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
         # reshape B, T, ... to B*T
         this_nobs = dict_apply(nobs, 
             lambda x: x[:,:To,...])
+        
         nobs_features = self.observation_encoder(this_nobs)
+
         global_cond = nobs_features
 
         H1 = trajectory.flatten(0,1)
@@ -430,6 +423,7 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
 
         # regress gripper open
         pred = self.gripper_state_ignore_collision_predictor(global_cond).reshape(B, T, 2)
+
         regression_loss = F.binary_cross_entropy_with_logits(pred, actions[:,:,7:9])
 
         # Predict the noise residual

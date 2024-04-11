@@ -17,3 +17,7 @@ across_attn:
   embedding_dim: ${embedding_dim}
   num_attn_heads: 3
   num_layers: 2
+embed_dim: ${embedding_dim}
+depth: 2
+num_heads: 4
+mlp_dim: 256
