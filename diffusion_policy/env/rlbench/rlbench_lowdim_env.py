@@ -22,7 +22,10 @@ from pyrep.errors import IKError, ConfigurationPathError
 from pyrep.const import RenderMode
 from diffusion_policy.common.launch_utils import object_poses_to_keypoints
 from scipy.spatial.transform import Rotation as R
-
+from pyrep.objects.dummy import Dummy
+from pyrep.objects.vision_sensor import VisionSensor
+import wandb.sdk.data_types.video as wv
+from diffusion_policy.env.rlbench.rlbench_utils import CircleCameraMotion
 
 class RLBenchLowDimEnv:
 
@@ -32,13 +35,16 @@ class RLBenchLowDimEnv:
         headless=False,
         collision_checking=False,
         obs_history_augmentation_every_n=10,
+        output_dir=None
     ):
 
         # setup required inputs
         self.data_path = data_path
+        self.output_dir = output_dir
 
         # setup RLBench environments
         self.obs_config = self.create_obs_config()
+
 
         self.action_mode = MoveArmThenGripper(
             arm_action_mode=EndEffectorPoseViaPlanning(collision_checking=collision_checking),
@@ -46,12 +52,72 @@ class RLBenchLowDimEnv:
         )
         self.obs_history = []
         self.obs_history_augmentation_every_n = obs_history_augmentation_every_n
-        self.action_mode.arm_action_mode.set_callable_each_step(lambda obs: self.obs_history.append(obs))
+        self.action_mode.arm_action_mode.set_callable_each_step(self.save_observation)
         self.env = Environment(
             self.action_mode, str(data_path), self.obs_config,
             headless=headless
         )
 
+        self._rgbs = []
+        self._recording = False
+        self._cam = None
+
+    def launch(self):
+        if self.env._pyrep is not None:
+            if self._cam is None:
+                cam = VisionSensor.create([128, 128])
+                cam.set_pose(Dummy('cam_cinematic_placeholder').get_pose())
+                cam.set_parent(Dummy('cam_cinematic_placeholder'))
+                self._cam_motion = CircleCameraMotion(cam, Dummy('cam_cinematic_base'), 0.005)
+                self._cam = cam
+            return
+        self.env.launch()
+
+    def shutdown(self):
+        if self.env._pyrep is None:
+            return
+        self.env.shutdown()
+        self._cam_motion = None
+        self._cam = None
+
+    def save_observation(self, obs):
+        """
+        Save the observation to the history
+        :param obs: an Observation from the env
+        """
+        self.obs_history.append(obs)
+        if self._recording:
+            self._rgbs.append((self._cam.capture_rgb() * 255.).astype(np.uint8))
+            self._cam_motion.step()
+
+    def start_recording(self):
+        self._recording = True
+            
+    def stop_recording(self):
+        self._recording = False
+
+    def save_video(self):
+        if len(self._rgbs) == 0:
+            return None
+        path = os.path.join(self.output_dir, "media", wv.util.generate_id() + ".mp4")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        import imageio.v2 as iio
+        writer = iio.get_writer(path, fps=30, format='FFMPEG', mode='I')
+        for image in self._rgbs:
+            writer.append_data(image)
+        writer.close()
+        self._rgbs = []
+        self._cam_motion.restore_pose()
+        return path
+    
+    def get_rgbs(self):
+        if len(self._rgbs) == 0:
+            return None
+        rgbs = np.array(self._rgbs)
+        rgbs = rgbs.transpose(0, 3, 1, 2)
+        self._rgbs = []
+        self._cam_motion.restore_pose() 
+        return np.array(rgbs)
 
     def get_keypoints_gripper_from_obs(self, obs, object_pose_indices):
         """
@@ -123,7 +189,7 @@ class RLBenchLowDimEnv:
         verbose: bool = False,
         num_history=1,
     ):
-        self.env.launch()
+        self.launch()
         task_type = task_file_to_task_class(task_str)
         task = self.env.get_task(task_type)
         task_variations = task.variation_count()
@@ -157,7 +223,7 @@ class RLBenchLowDimEnv:
                 var_success_rates[variation] = success_rate
                 var_num_valid_demos[variation] = num_valid_demos
 
-        self.env.shutdown()
+        self.shutdown()
 
         var_success_rates["mean"] = (
             sum(var_success_rates.values()) /
@@ -180,6 +246,7 @@ class RLBenchLowDimEnv:
         verbose: bool = False,
         num_history=0,
     ):
+        self.launch()
         demos = []
         num_valid_demos = 0
         for i in range(num_demos):
@@ -192,7 +259,7 @@ class RLBenchLowDimEnv:
                 print()
                 traceback.print_exc()
 
-        successful_demos = self._evaluate_task_on_demos(
+        log_data = self._evaluate_task_on_demos(
             task=task,
             task_str=task_str,
             demos=demos,
@@ -204,13 +271,51 @@ class RLBenchLowDimEnv:
             num_history=num_history,
         )
 
+        self.shutdown()
+
+        successful_demos = log_data["success_rate"]
+
+
         if num_valid_demos == 0:
             success_rate = 0.0
             valid = False
         else:
             success_rate = successful_demos / (num_valid_demos * demo_tries)
             valid = True
+
         return success_rate, valid, num_valid_demos
+
+    @torch.no_grad()
+
+    def record_demos(self,
+                    task: TaskEnvironment,
+                    task_str: str,
+                    demos: List[Demo],  
+                    max_steps: int,
+                    actioner: Actioner,
+                    max_rtt_tries: int = 1,
+                    verbose: bool = False,
+                    num_history=0):
+        video_paths = []
+        self.start_recording()
+        for demo in demos:
+            self._cam_motion.restore_pose()
+            self._evaluate_task_on_demos(
+                task=task,
+                task_str=task_str,
+                demos=[demo],
+                max_steps=max_steps,
+                actioner=actioner,
+                max_rtt_tries=max_rtt_tries,
+                demo_tries=1,
+                verbose=verbose,
+                num_history=num_history,
+            )            
+            video_path = self.save_video()
+            if video_path is not None:
+                video_paths.append(video_path)
+        self.stop_recording()
+        return video_paths
 
     @torch.no_grad()
     def _evaluate_task_on_demos(self,       
@@ -221,13 +326,14 @@ class RLBenchLowDimEnv:
                                 actioner: Actioner,
                                 max_rtt_tries: int = 1,
                                 demo_tries: int = 1,
+                                n_visualize: int = 0,
                                 verbose: bool = False,
                                 num_history=0):
+        self.launch()
         device = actioner.device
-        success_rate = 0
+        successful_demos = 0
         total_reward = 0
-
-        object_pose_indices = get_object_pose_indices_from_task(task._task)
+        video_paths = []
 
         for demo_id, demo in enumerate(demos):
             if verbose:
@@ -235,6 +341,8 @@ class RLBenchLowDimEnv:
                 print(f"Starting demo {demo_id}")
 
             for i in range(demo_tries):
+                if demo_id < n_visualize and i == 0:
+                    self.start_recording()
 
                 keypoint_idxs = torch.Tensor([]).to(device)
                 keypoints = torch.Tensor([]).to(device)
@@ -242,6 +350,7 @@ class RLBenchLowDimEnv:
 
                 # descriptions, obs = task.reset()
                 descriptions, obs = task.reset_to_demo(demo)
+                object_pose_indices = get_object_pose_indices_from_task(task._task)
                 self.obs_history.append(obs)
 
                 actioner.load_episode(task_str, demo.variation_number)
@@ -297,23 +406,29 @@ class RLBenchLowDimEnv:
 
                     # Update the observation based on the predicted action
                     try:
-                        print("Plan with RRT")
+                        if verbose:
+                            print("Plan with RRT")
                         collision_checking = self._collision_checking(task_str, step_id)
                         obs, reward, terminate, _ = move(action, collision_checking=collision_checking)
 
                         max_reward = max(max_reward, reward)
 
                         if reward == 1:
-                            success_rate += 1
+                            successful_demos += 1
                             break
 
                         if terminate:
                             print("The episode has terminated!")
 
                     except (IKError, ConfigurationPathError, InvalidActionError) as e:
-                        print(task_str, demo, step_id, success_rate, e)
+                        print(task_str, demo, step_id, successful_demos, e)
                         reward = 0
                         #break
+
+                if demo_id < n_visualize and i == 0:
+                    self.stop_recording()
+                    video_path = self.save_video()
+                    video_paths.append(video_path)
 
                 total_reward += max_reward
                 if reward == 0:
@@ -329,11 +444,17 @@ class RLBenchLowDimEnv:
                     f"{reward:.2f}",
                     "max_reward",
                     f"{max_reward:.2f}",
-                    f"SR: {success_rate / ((demo_id+1) * demo_tries)}",
+                    f"SR: {successful_demos / ((demo_id+1) * demo_tries)}",
                     f"Total reward: {total_reward:.2f}/{(demo_id+1) * demo_tries}"                )
 
-        successful_demos = success_rate
-        return successful_demos
+        self.shutdown()
+        log_data = {
+            "success_rate": successful_demos / (len(demos) * demo_tries),
+            "total_reward": total_reward,
+            "video_paths": video_paths,
+        }
+        return log_data
+    
     def _collision_checking(self, task_str, step_id):
         """Collision checking for planner."""
         # collision_checking = True
@@ -491,16 +612,17 @@ def test():
 
 
 
-    data_path = "/home/felix/Workspace/diffusion_policy_felix/data/train"
+    data_path = "/home/felix/Workspace/diffusion_policy_felix/data/peract"
     env = RLBenchLowDimEnv(
         data_path=data_path,
         headless=False,
         collision_checking=False,
-        obs_history_augmentation_every_n=2
+        obs_history_augmentation_every_n=2,
+        output_dir="/home/felix/Workspace/diffusion_policy_felix/data/dummy"
     )
 
-    n_demos = 100
-    task_str = "open_drawer"
+    n_demos = 1
+    task_str = "turn_tap"
     variation = 0
     # sr, demo_valid, success_rates = env.verify_demos(task_str, 0, n_demos, max_tries=10, demo_consistency_tries=1, verbose=True)
 
@@ -517,13 +639,13 @@ def test():
     task.set_variation(0)
 
     policy : DiffusionUnetLowDimRelativePolicy = hydra.utils.instantiate(cfg.policy)
-    checkpoint_path = "/home/felix/Workspace/diffusion_policy_felix/data/outputs/2024.03.28/17.19.38_flow_matching_unet_lowdim_policy_open_drawer/checkpoints/latest.ckpt"
+    checkpoint_path = "/home/felix/Workspace/diffusion_policy_felix/data/outputs/2024.04.12/11.31.41_flow_matching_unet_lowdim_policy_turn_tap/checkpoints/epoch=93750-val_loss=0.006.ckpt"
     checkpoint = torch.load(checkpoint_path)
     policy.load_state_dict(checkpoint["state_dicts"]['model'])
     
     actioner = Actioner(
         policy=policy,
-        instructions={"open_drawer": [[torch.rand(10)],[torch.rand(10)],[torch.rand(10)]]},
+        instructions={task_str: [[torch.rand(10)],[torch.rand(10)],[torch.rand(10)]]},
         action_dim=8,
     )
 
@@ -557,33 +679,34 @@ def test():
             action_ls = []
             trajectory_ls = []
             keypoint_ls = []
-            keypoint_ls.append(low_dim_obs_to_keypoints(demo[0].task_low_dim_state))
+            keypoint_ls.append(object_poses_to_keypoints(demo[0].misc['object_poses']))
             for i in range(len(key_frame)):
                 obs = demo[key_frame[i]]
                 action_np = np.concatenate([obs.gripper_pose, [obs.gripper_open]])
                 action = torch.from_numpy(action_np)
                 action_ls.append(action.unsqueeze(0))
 
-                keypoints = low_dim_obs_to_keypoints(obs.task_low_dim_state)
+                keypoints = object_poses_to_keypoints(obs.misc['object_poses'])
                 keypoint_ls.append(torch.from_numpy(keypoints).unsqueeze(0))
             return action_ls, keypoint_ls
         
-    replay_actioner = ReplayActionerActioner(policy, instructions={"open_drawer": [[torch.rand(10)],[torch.rand(10)],[torch.rand(10)]]},
-        action_dim=8, task_str="open_drawer", variation=0)
+    replay_actioner = ReplayActionerActioner(policy, instructions={task_str: [[torch.rand(10)],[torch.rand(10)],[torch.rand(10)]]},
+        action_dim=8, task_str=task_str, variation=0)
 
     env._evaluate_task_on_one_variation(
-        task_str="open_drawer",
+        task_str=task_str,
         task=task,
         max_steps=3,
         variation=0,
         num_demos=1,
         actioner=actioner,
         max_rtt_tries=10,
-        demo_tries=5,
+        demo_tries=1,
         verbose=True,
         num_history=policy.n_obs_steps,
     )
-    # env.env.launch()
+    env.save_video()
+    env.env.shutdown()
 
 
 if __name__ == "__main__":

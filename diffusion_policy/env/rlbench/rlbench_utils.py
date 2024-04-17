@@ -7,6 +7,8 @@ import torch
 from rlbench.demo import Demo
 from pyrep.const import ObjectType
 from rlbench.backend.task import Task
+from pyrep.objects.dummy import Dummy
+from pyrep.objects.vision_sensor import VisionSensor
 
 
 ALL_RLBENCH_TASKS = [
@@ -209,17 +211,6 @@ class Actioner:
         self._instr = None
         self._task_str = None
         self._task_id = None
-        self._gripper_bounds = np.array(        [[
-            0.10261330753564835,
-            -0.06472617387771606,
-            0.9140162467956543
-        ],
-        [
-            0.3657068908214569,
-            0.4357367157936096,
-            1.2285298109054565
-        ]]
-)
 
         self._policy.eval()
 
@@ -280,15 +271,8 @@ class Actioner:
             "agent_pose": gripper,
         }
         action = self._policy.predict_action(obs)["action"][0,0,:self._action_dim]
-        pos = action[:3].detach().cpu().numpy()
-
-        # apply gripper bounds
-        for i in range(3):
-            if pos[i] < self._gripper_bounds[0][i] or pos[i] > self._gripper_bounds[1][i]:
-                print(f"Clipping pos {i} from {pos[i]} to {self._gripper_bounds[0][i]}")
-            pos[i] = np.clip(pos[i], self._gripper_bounds[0][i], self._gripper_bounds[1][i])
-
-        return action.detach().cpu().numpy()
+        action = action.detach().cpu().numpy()
+        return action
 
     @property
     def device(self):
@@ -301,35 +285,44 @@ def get_object_pose_indices_from_task(task : Task):
     mask = []
     for obj, objtype in task._initial_objs_in_scene:
         valid = True
-        obj_name = obj.get_name().lower()
-        if "waypoint" in obj_name:
+        state_size = 7
+        if objtype != ObjectType.SHAPE:
             valid = False
-        if "joint" in obj_name:
+        if objtype == ObjectType.JOINT:
+            state_size += 1
+        elif objtype == ObjectType.FORCE_SENSOR:
+            state_size += 6
             valid = False
-        if "force" in obj_name:
-            valid = False
-        if not obj.still_exists():
-            # It has been deleted
-            state_size = 7
-            if objtype == ObjectType.JOINT:
-                state_size += 1
-                valid = False
-            elif objtype == ObjectType.FORCE_SENSOR:
-                state_size += 6
-                valid = False
-            elif objtype == ObjectType.DUMMY:
-                valid = False
-        else:
-            state_size = 7
-            if obj.get_type() == ObjectType.JOINT:
-                state_size += 1
-                valid = False
-            elif obj.get_type() == ObjectType.FORCE_SENSOR:
-                state_size += 6
-                valid = False
         state_sizes.append(state_size)
         mask.append(valid)
-
     state_sizes = np.array(state_sizes)
     state_idxs = state_sizes[mask]
     return state_idxs
+
+
+class CameraMotion(object):
+    def __init__(self, cam: VisionSensor):
+        self.cam = cam
+        self.save_pose()
+
+    def step(self):
+        raise NotImplementedError()
+
+    def save_pose(self):
+        self._prev_pose = self.cam.get_pose()
+
+    def restore_pose(self):
+        self.cam.set_pose(self._prev_pose)
+
+
+class CircleCameraMotion(CameraMotion):
+
+    def __init__(self, cam: VisionSensor, origin: Dummy,
+                 speed: float, init_rotation: float = np.deg2rad(0)):
+        super().__init__(cam)
+        self.origin = origin
+        self.speed = speed  # in radians
+        self.origin.rotate([0, 0, init_rotation])
+
+    def step(self):
+        self.origin.rotate([0, 0, self.speed])

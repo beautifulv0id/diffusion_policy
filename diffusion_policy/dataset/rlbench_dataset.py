@@ -31,7 +31,6 @@ class RLBenchDataset(BaseImageDataset):
         # assert variation == 0
 
         root = Path(root)
-        num_episodes = num_episodes
         # TODO: change this
         camera_config = CameraConfig(rgb=use_rgb, depth=use_depth, mask=use_mask, point_cloud=use_pcd)
         camera_off_config = CameraConfig(rgb=False, depth=False, mask=False, point_cloud=False)
@@ -49,8 +48,6 @@ class RLBenchDataset(BaseImageDataset):
             task_low_dim_state=True,
         )
 
-        n_val = min(max(0, round(num_episodes * val_ratio)), num_episodes-1)
-        n_train = num_episodes - n_val
         demos = get_stored_demos(amount = num_episodes,
                                      image_paths = False,
                                      dataset_root = root,
@@ -59,6 +56,10 @@ class RLBenchDataset(BaseImageDataset):
                                      obs_config = obs_config,
                                      random_selection = False, #TODO: change this
                                      from_episode_number = 0)
+        
+        num_episodes = len(demos)
+        n_val = min(max(0, round(num_episodes * val_ratio)), num_episodes-1)
+        n_train = num_episodes - n_val
         
         val_idxs = np.random.choice(num_episodes, size=n_val, replace=False)
         train_idxs = np.array([i for i in range(num_episodes) if i not in val_idxs])

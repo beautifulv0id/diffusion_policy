@@ -36,6 +36,10 @@ def get_gripper_loc_bounds(path: str, buffer: float = 0.0, task: Optional[str] =
     print("Gripper workspace size:", gripper_loc_bounds_max - gripper_loc_bounds_min)
     return gripper_loc_bounds
 
+def get_task_num_objects(path: str, task: str):
+    num_objects = json.load(open(path, "r"))
+    return num_objects[task]
+
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)

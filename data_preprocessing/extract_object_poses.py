@@ -11,15 +11,16 @@ import tap
 from rlbench.backend.const import *
 import numpy as np
 import tqdm
+import json
 
 class Arguments(tap.Tap):
     root_dir: Path
+    meta_out_dir: Path = Path("../diffusion_policy/tasks")
 
 def main(root_dir, task_name): 
     env = RLBenchLowDimEnv(data_path=root_dir, 
                             headless=True, 
-                            collision_checking=True,
-                            obs_history_augmentation_every_n=5)
+                            collision_checking=True)
     task_type = task_file_to_task_class(task_name)
     task_env = env.env.get_task(task_type)
     task = task_env._task
@@ -67,12 +68,18 @@ def main(root_dir, task_name):
 
     env.env.shutdown()
 
+    return num_objects
+
 if __name__ == '__main__':
-    main('/home/felix/Workspace/diffusion_policy_felix/data/peract', 'open_drawer')
-    data_root = "/home/felix/Workspace/diffusion_policy_felix/data/peract"
     args = Arguments().parse_args()
     root_dir = str(args.root_dir.absolute())
+    out_dir = str(args.meta_out_dir.absolute())
     tasks = [f for f in os.listdir(root_dir) if '.zip' not in f]
+    task_num_objects_map = {}   
     for task in tasks:
         print(f'Processing {task}')
-        main(root_dir, task)
+        n = main(root_dir, task)
+        task_num_objects_map[task] = n
+
+    with open(join(out_dir, 'peract_tasks_num_objects.json'), 'w') as f:
+        json.dump(task_num_objects_map, f, indent=4)

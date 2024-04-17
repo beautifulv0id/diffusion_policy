@@ -7,6 +7,7 @@ from diffusion_policy.env.rlbench.rlbench_utils import Actioner
 from diffusion_policy.env.rlbench.rlbench_lowdim_env import RLBenchLowDimEnv
 from diffusion_policy.env.rlbench.rlbench_utils import task_file_to_task_class
 from typing import List
+import wandb
 
 class RLBenchLowdimRunner(BaseLowdimRunner):
     def __init__(self, 
@@ -22,6 +23,8 @@ class RLBenchLowdimRunner(BaseLowdimRunner):
                 headless: bool = False,
                 collision_checking: bool = True,
                 action_dim: int = 8,
+                n_train_vis: int = 1,
+                n_val_vis: int = 1,
                 obs_history_augmentation_every_n: int = 1
                  ):
         super(RLBenchLowdimRunner, self).__init__(output_dir)
@@ -30,11 +33,9 @@ class RLBenchLowdimRunner(BaseLowdimRunner):
         env = RLBenchLowDimEnv(data_path=data_root, 
                                     headless=headless, 
                                     collision_checking=collision_checking,
-                                    obs_history_augmentation_every_n=obs_history_augmentation_every_n)
-        task_type = task_file_to_task_class(task_str)
-        task = env.env.get_task(task_type)
-
-        self.task = task
+                                    obs_history_augmentation_every_n=obs_history_augmentation_every_n,
+                                    output_dir=output_dir)        
+        self.task_str = task_str
         self.env = env
         self.action_dim = action_dim
         self.max_steps = max_steps
@@ -42,37 +43,55 @@ class RLBenchLowdimRunner(BaseLowdimRunner):
         self.eval_demos = eval_demos[:max_episodes]
         self.max_rtt_tries = max_rtt_tries
         self.demo_tries = demo_tries
+        self.n_train_vis = min(n_train_vis, len(demos))
+        self.n_val_vis = min(n_val_vis, len(eval_demos))
 
     def run(self, policy: BaseLowdimPolicy, mode: str = "train") -> Dict:
         actioner = Actioner(policy=policy, action_dim=self.action_dim)
 
         if mode == "train":
             demos = self.demos
+            n_vis = self.n_train_vis
         elif mode == "eval":
             demos = self.eval_demos
+            n_vis = self.n_val_vis
 
         if len(demos) == 0:
             return {}
-
-        successfull_demos = self.env._evaluate_task_on_demos(
+        
+        task_type = task_file_to_task_class(self.task_str)
+        task = self.env.env.get_task(task_type)
+        self.env.launch()
+        log_data = self.env._evaluate_task_on_demos(
             demos=demos,
             task_str=self.task_str,
-            task=self.task,
+            task=task,
             max_steps=self.max_steps,
             actioner=actioner,
             max_rtt_tries=self.max_rtt_tries,
             demo_tries=self.demo_tries,
             verbose=False,
+            n_visualize=n_vis,
             num_history=policy.n_obs_steps,
         )
 
-        success_rate = successfull_demos / (len(demos) * self.demo_tries)
-        return {mode+"_success_rate": success_rate}
+        name = mode + "_success_rate"
+        log_data[name] = log_data.pop("success_rate")
+        video_paths = log_data.pop("video_paths")
 
+        for i, video_path in enumerate(video_paths):
+            if video_path is not None:
+                sim_video = wandb.Video(video_path)
+                name = f"video/{mode}_{self.task_str}_{i}"
+                log_data[name] = sim_video
+        
+        return log_data
+    
 import hydra
 from hydra import compose, initialize
 from omegaconf import OmegaConf
 from diffusion_policy.policy.diffusion_unet_lowdim_relative_policy import DiffusionUnetLowDimRelativePolicy
+import pathlib
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
@@ -81,16 +100,28 @@ def test():
     from diffusion_policy.policy.diffusion_unet_lowdim_relative_policy import DiffusionUnetLowDimRelativePolicy
 
     with initialize(version_base=None, config_path="../config"):
-        cfg = compose(config_name="train_diffusion_unet_lowdim_relative_workspace")
+        cfg = compose(config_name="train_flow_matching_unet_lowdim_workspace.yaml", overrides=["task=open_drawer_lowdim"])
 
     OmegaConf.resolve(cfg)
     policy : DiffusionUnetLowDimRelativePolicy = hydra.utils.instantiate(cfg.policy)
-    checkpoint_path = "/home/felix/Workspace/diffusion_policy_felix/data/outputs/2024.03.25/09.01.10_diffusion_unet_lowdim_relative_policy_open_drawer/checkpoints/latest.ckpt"
+    checkpoint_path = "/home/felix/Workspace/diffusion_policy_felix/data/outputs/2024.04.16/17.50.13_flow_matching_unet_lowdim_policy_open_drawer/checkpoints/epoch=465800-val_loss=0.000.ckpt"
     checkpoint = torch.load(checkpoint_path)
 
+    dataset = hydra.utils.instantiate(cfg.task.dataset)
+    val_dataset = dataset.get_validation_dataset()
+
     policy.load_state_dict(checkpoint["state_dicts"]['model'])
-    env_runner : RLBenchLowdimRunner
-    env_runner = hydra.utils.instantiate(cfg.task.env_runner, output_dir=".")
+    env_runner = RLBenchLowdimRunner(output_dir=str(pathlib.Path(__file__).parent.parent.parent / "data"),
+                                     data_root=cfg.task.dataset.root,
+                                     task_str=cfg.task.dataset.task_name,
+                                     max_steps=3,
+                                     demos=dataset.demos, 
+                                     eval_demos=val_dataset.demos,
+                                     max_episodes=1,
+                                     headless=False)
+
+    env_runner.n_val_vis = 0
+    env_runner.n_train_vis = 0
 
     results = env_runner.run(policy)
     print(results)

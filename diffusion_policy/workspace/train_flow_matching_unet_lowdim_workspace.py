@@ -20,9 +20,10 @@ import tqdm
 import numpy as np
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
 from diffusion_policy.policy.flow_matching_unet_lowdim_policy import FlowMatchingUnetLowDimPolicy
+from diffusion_policy.common.rotation_utils import SO3_log_map
 from diffusion_policy.common.common_utils import trajectory_gripper_open_ignore_collision_from_action
 from diffusion_policy.dataset.base_dataset import BaseImageDataset
-from diffusion_policy.env_runner.rlbench_lowdim_runner import RLBenchLowDimEnv
+from diffusion_policy.env_runner.rlbench_lowdim_runner import RLBenchLowdimRunner
 from diffusion_policy.common.checkpoint_util import TopKCheckpointManager
 from diffusion_policy.common.json_logger import JsonLogger
 from diffusion_policy.common.pytorch_util import dict_apply, optimizer_to
@@ -196,7 +197,7 @@ class TrainFlowMatchingUnetLowDimWorkspace(BaseWorkspace):
                 model=self.ema_model)
 
         # configure env
-        env_runner: RLBenchLowDimEnv
+        env_runner: RLBenchLowdimRunner
         env_runner = hydra.utils.instantiate(
             cfg.task.env_runner,
             output_dir=self.output_dir,
@@ -306,7 +307,7 @@ class TrainFlowMatchingUnetLowDimWorkspace(BaseWorkspace):
                     policy.eval()
 
                     # run rollout
-                    if (self.epoch % cfg.training.rollout_every) == 0 and self.epoch > 0:
+                    if (self.epoch % cfg.training.rollout_every) == 0 and self.epoch > -1:
                         runner_log = env_runner.run(policy, mode="train")
                         runner_log.update(
                             env_runner.run(policy, mode="eval")
@@ -347,12 +348,11 @@ class TrainFlowMatchingUnetLowDimWorkspace(BaseWorkspace):
                             trajectory = result['trajectory']
                             R_pred = trajectory[:,:,:3,:3].flatten(0,1)
                             x_pred = trajectory[:,:,:3,3]
-                            R = SO3()
-                            R.update(torch.einsum('bnm,bmk->bnk', R_pred.transpose(-2,-1), R_gt).float())
-                            theta_eps = R.log_map()
-                            x_eps = x_pred - x_gt
-                            step_log['train_position_mse_error'] = torch.mean(x_eps.norm(dim=-1)).item()
-                            step_log['train_rotation_mse_error'] = torch.mean(theta_eps.norm(dim=-1)).item()
+                            R_delta = torch.matmul(R_pred.transpose(-2,-1), R_gt)
+                            theta_delta = SO3_log_map(R_delta)
+                            x_delta = x_pred - x_gt
+                            step_log['train_position_mse_error'] = torch.mean(x_delta.norm(dim=-1)).item()
+                            step_log['train_rotation_mse_error'] = torch.mean(theta_delta.norm(dim=-1)).item()
                             open_gripper_pred = result['open_gripper']
                             ignore_collisions_pred = result['ignore_collision']
                             step_log['train_gripper_open_mse_error'] = torch.nn.functional.mse_loss(open_gripper_pred, gripper_open_gt).item()

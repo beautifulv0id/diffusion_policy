@@ -25,7 +25,7 @@ dataset:
   _target_: diffusion_policy.dataset.rlbench_dataset.RLBenchDataset
   root: /home/felix/Workspace/diffusion_policy_felix/data/peract/raw/train
   task_name: open_drawer
-  num_episodes: 1
+  num_episodes: ${num_episodes}
   variation_number: 0
   n_obs: 2
   augment_obs: False

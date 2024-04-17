@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - task: slide_block_to_color_target
+  - task: turn_tap
   - encoder: GITLowdimEncoder
   - model: naive_film_se3_flow_matching_model
 
@@ -47,6 +47,7 @@ horizon: 1
 n_obs_steps: &n_obs_steps 1
 n_action_steps: 1
 embedding_dim: 60
+num_episodes: 1
 
 optimizer:
   _target_: torch.optim.AdamW
@@ -83,9 +84,9 @@ training:
   lr_warmup_steps: 500
   max_train_steps: null
   max_val_steps: null
-  num_epochs: 300000
+  num_epochs: 500000
   resume: true
-  rollout_every: 5000
+  rollout_every: 50000
   sample_every: 5
   seed: 42
   tqdm_interval_sec: 1.0

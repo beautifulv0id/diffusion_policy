@@ -1,38 +1,14 @@
 from typing import Dict
-import time
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from einops import rearrange, reduce
-from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
-from diffusion_policy.model.common.normalizer import LinearNormalizer
 from diffusion_policy.policy.base_lowdim_policy import BaseLowdimPolicy
-from diffusion_policy.model.diffusion.conditional_unet1d import ConditionalUnet1D
-from diffusion_policy.model.flow_matching.naive_film_se3 import NaiveFilmSE3FlowMatchingModel
-from diffusion_policy.model.diffusion.mask_generator import LowdimMaskGenerator
-from diffusion_policy.common.robomimic_config_util import get_robomimic_config
 from diffusion_policy.common.common_utils import action_from_trajectory_gripper_open_ignore_collision
-from robomimic.algo.algo import PolicyAlgo
-import robomimic.utils.obs_utils as ObsUtils
 from diffusion_policy.common.pytorch_util import dict_apply
-from diffusion_policy.model.common.se3_diffusion_util import marginal_prob_std, sample_from_se3_gaussian, se3_score_normal, step
-from theseus.geometry.so3 import SO3
 from scipy.spatial.transform import Rotation 
 from pytorch3d.transforms import quaternion_to_matrix
+from diffusion_policy.common.rotation_utils import SO3_log_map, SO3_exp_map, normalise_quat, get_ortho6d_from_rotation_matrix, compute_rotation_matrix_from_ortho6d, matrix_to_quaternion
 
-def rotation_vector_from_matrix(R):
-    """
-    Convert a batch of rotation matrices to rotation vectors.
-    """
-    R_ = SO3()
-    R_.update(R)
-    return R_.log_map()
-
-def matrix_from_rotation_vector(rot):
-    """
-    Convert a batch of rotation vectors to rotation matrices.
-    """
-    return SO3().exp_map(rot).to_matrix()
 class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
     def __init__(self, 
             shape_meta: dict,
@@ -46,6 +22,7 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
             gripper_loc_bounds=None,
             relative_position=True,
             relative_rotation=True,
+            rotation_parametrization='6D',
             noise_aug_std=0.1,
             velocity_scale=1.0,
             # parameters passed to step
@@ -75,20 +52,6 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
             else:
                 raise RuntimeError(f"Unsupported obs type: {type}")
 
-        # # get raw robomimic config
-        # config = get_robomimic_config(
-        #     algo_name='bc_rnn',
-        #     hdf5_type='image',
-        #     task_name='square',
-        #     dataset_type='ph')
-        
-        # with config.unlocked():
-        #     # set config with shape_meta
-        #     config.observation.modalities.obs = obs_config
-
-        # # init global state
-        # ObsUtils.initialize_obs_utils_with_config(config)
-
         # create diffusion model
         obs_feature_dim = observation_encoder.output_shape()[0]
 
@@ -112,6 +75,7 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
         self.num_inference_steps = num_inference_steps
         self.dt = delta_t
         self.velocity_scale = velocity_scale
+        self._rotation_parametrization = rotation_parametrization
         if noise_aug_std > 0:
             self.noise_aug_std = noise_aug_std
             self.data_augmentation = True
@@ -142,6 +106,48 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
         pos_max = self.gripper_loc_bounds[1].float().to(pos.device)
         return (pos + 1.0) / 2.0 * (pos_max - pos_min) + pos_min
     
+    """
+    Taken from 3D Diffuser Actor
+    """
+    def convert_rot(self, signal):
+        signal[..., 3:7] = normalise_quat(signal[..., 3:7])
+        if self._rotation_parametrization == '6D':
+            rot = quaternion_to_matrix(signal[..., 3:7])
+            res = signal[..., 7:] if signal.size(-1) > 7 else None
+            if len(rot.shape) == 4:
+                B, L, D1, D2 = rot.shape
+                rot = rot.reshape(B * L, D1, D2)
+                rot_6d = get_ortho6d_from_rotation_matrix(rot)
+                rot_6d = rot_6d.reshape(B, L, 6)
+            else:
+                rot_6d = get_ortho6d_from_rotation_matrix(rot)
+            signal = torch.cat([signal[..., :3], rot_6d], dim=-1)
+            if res is not None:
+                signal = torch.cat((signal, res), -1)
+        return signal
+    
+    """
+    Taken from 3D Diffuser Actor
+    """
+    def unconvert_rot(self, signal):
+        if self._rotation_parametrization == '6D':
+            res = signal[..., 9:] if signal.size(-1) > 9 else None
+            if len(signal.shape) == 3:
+                B, L, _ = signal.shape
+                rot = signal[..., 3:9].reshape(B * L, 6)
+                mat = compute_rotation_matrix_from_ortho6d(rot)
+                quat = matrix_to_quaternion(mat)
+                quat = quat.reshape(B, L, 4)
+            else:
+                rot = signal[..., 3:9]
+                mat = compute_rotation_matrix_from_ortho6d(rot)
+                quat = matrix_to_quaternion(mat)
+            signal = torch.cat([signal[..., :3], quat], dim=-1)
+            if res is not None:
+                signal = torch.cat((signal, res), -1)
+        return signal
+
+
     def to_rel_trajectory(self, traj, agent_pos):
         """
         Args:
@@ -218,7 +224,7 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
     # ========= inference  ============    
     def get_random_pose(self, batch_size):
         lR = torch.randn((batch_size, 3), device=self.device, dtype=self.dtype)
-        R = SO3.exp_map(lR).to_matrix()
+        R = SO3_exp_map(lR)
         t = torch.randn((batch_size, 3), device=self.device, dtype=self.dtype)
         H = torch.eye(4, device=self.device, dtype=self.dtype)[None,...].repeat(batch_size,1,1)
         H[:, :3, :3] = R
@@ -247,7 +253,7 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
 
                 ## rotation update ##
                 R_w_t = Ht[:, :3, :3]
-                R_w_tp1 = SO3.exp_map(utdt[:, :3]).to_matrix()
+                R_w_tp1 = SO3_exp_map(utdt[:, :3])
                 R_w_tp1 = torch.matmul(R_w_t, R_w_tp1)           
 
                 ## translation update ##
@@ -316,14 +322,14 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
             'action': action,
             'trajectory': trajectory_pred,
             'open_gripper': gripper_state_ignore_collision_prediction[:,:,0],
-            'ignore_collision': gripper_state_ignore_collision_prediction[:,:,1],
+            'ignore_collision': gripper_state_ignore_collision_prediction[:,:,1]
         }
         return result
     
     # ========= training  ============
     def augment_obs(self, obs):
         B = obs['agent_pose'].shape[0]
-        R = SO3().exp_map(torch.normal(mean=0, std=self.noise_aug_std, size=(B, 3), device=self.device)).to_matrix()
+        R = SO3_exp_map(torch.normal(mean=0, std=self.noise_aug_std, size=(B, 3), device=self.device))
         x = torch.normal(mean=0, std=self.noise_aug_std, size=(B, 3), device=self.device)
         H_delta = torch.eye(4, device=self.device, dtype=self.dtype).reshape(1,4,4).repeat(B, 1, 1)
         H_delta[:,:3,3] = x
@@ -389,8 +395,8 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
             ## Get rot_t ##
             R_0_w = torch.transpose(R_w_0, -1, -2)
             R_0_1 = torch.matmul(R_0_w,R_w_1)
-            lR_0_1 = rotation_vector_from_matrix(R_0_1)
-            R_0_t = matrix_from_rotation_vector(lR_0_1*t[:,None])
+            lR_0_1 = SO3_log_map(R_0_1)
+            R_0_t = SO3_exp_map(lR_0_1*t[:,None])
             R_w_t = torch.matmul(R_w_0, R_0_t)
 
             ## Get trans_t ##
@@ -411,7 +417,7 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
             ## Compute Velocity in rot ##
             R_t_w = torch.transpose(R_w_t, -1, -2)
             R_t_1 = torch.matmul(R_t_w, R_w_1)
-            lR_t_ut = rotation_vector_from_matrix(R_t_1) / torch.clip((1 - t[:, None]), 0.01, 1.)
+            lR_t_ut = SO3_log_map(R_t_1) / torch.clip((1 - t[:, None]), 0.01, 1.)
 
             ## Compute Velocity in trans ##
             x_ut = (x_1 - x_t)/ torch.clip((1 - t[:, None]), 0.01, 1.)

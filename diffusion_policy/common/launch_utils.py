@@ -145,19 +145,6 @@ def _get_action(
     return ignore_collisions, np.concatenate(
         [obs_tp1.gripper_pose[:3], quat, np.array([grip])])
 
-def low_dim_obs_to_keypoints(low_dim_obs):
-    pose = low_dim_obs.reshape(-1, 7)
-    positions = pose[:, :3]
-    rotations = R.from_quat(pose[:, 3:]).as_matrix()
-    pcd = []
-    for rot, pos in zip(rotations, positions):
-        pcd.append(pos)
-        for ax in rot:
-            pcd.append(pos + 0.05 * ax)
-            pcd.append(pos - 0.05 * ax)
-    pcd = np.array(pcd)
-    return pcd
-
 def object_poses_to_keypoints(object_poses):
     poses = object_poses.reshape(-1, 7)
     positions = poses[:, :3]
