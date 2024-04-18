@@ -333,7 +333,7 @@ class RLBenchLowDimEnv:
         device = actioner.device
         successful_demos = 0
         total_reward = 0
-        video_paths = []
+        rgbs_ls = []
 
         for demo_id, demo in enumerate(demos):
             if verbose:
@@ -427,8 +427,8 @@ class RLBenchLowDimEnv:
 
                 if demo_id < n_visualize and i == 0:
                     self.stop_recording()
-                    video_path = self.save_video()
-                    video_paths.append(video_path)
+                    rgbs = self.get_rgbs()
+                    rgbs_ls.append(rgbs)
 
                 total_reward += max_reward
                 if reward == 0:
@@ -451,7 +451,7 @@ class RLBenchLowDimEnv:
         log_data = {
             "success_rate": successful_demos / (len(demos) * demo_tries),
             "total_reward": total_reward,
-            "video_paths": video_paths,
+            "rgbs_ls": rgbs_ls,
         }
         return log_data
     

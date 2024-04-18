@@ -77,11 +77,11 @@ class RLBenchLowdimRunner(BaseLowdimRunner):
 
         name = mode + "_success_rate"
         log_data[name] = log_data.pop("success_rate")
-        video_paths = log_data.pop("video_paths")
+        rgbs_ls = log_data.pop("rgbs_ls")
 
-        for i, video_path in enumerate(video_paths):
-            if video_path is not None:
-                sim_video = wandb.Video(video_path)
+        for i, rgbs in enumerate(rgbs_ls):
+            if rgbs is not None:
+                sim_video = wandb.Video(rgbs, fps=30, format="mp4")
                 name = f"video/{mode}_{self.task_str}_{i}"
                 log_data[name] = sim_video
         

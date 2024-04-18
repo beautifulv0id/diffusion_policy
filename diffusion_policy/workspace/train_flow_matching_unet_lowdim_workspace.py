@@ -307,7 +307,8 @@ class TrainFlowMatchingUnetLowDimWorkspace(BaseWorkspace):
                     policy.eval()
 
                     # run rollout
-                    if (self.epoch % cfg.training.rollout_every) == 0 and self.epoch > -1:
+                    if (self.epoch % cfg.training.rollout_every) == 0 \
+                            and self.epoch > 0 or self.epoch == cfg.training.num_epochs-1:
                         runner_log = env_runner.run(policy, mode="train")
                         runner_log.update(
                             env_runner.run(policy, mode="eval")
@@ -394,6 +395,7 @@ class TrainFlowMatchingUnetLowDimWorkspace(BaseWorkspace):
                     self.global_step += 1
                     self.epoch += 1
                     gepoch.set_postfix(train_loss=train_loss, refresh=False)
+        wandb_run.finish()
 @hydra.main(
     version_base=None,
     config_path=str(pathlib.Path(__file__).parent.parent.joinpath("config")), 
