@@ -124,6 +124,11 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
             signal = torch.cat([signal[..., :3], rot_6d], dim=-1)
             if res is not None:
                 signal = torch.cat((signal, res), -1)
+        if self._rotation_parametrization == 'matrix':
+            trajectory = torch.eye(4, device=self.device, dtype=self.dtype).reshape(1,1,4,4).repeat(signal.shape[0], self.horizon, 1, 1)
+            trajectory[:,:,:3,3] = signal[:,:,:3]
+            trajectory[:,:,:3,:3] = quaternion_to_matrix(torch.cat([signal[:,:,6:7], signal[:,:,3:6]], dim=-1))
+            signal = trajectory
         return signal
     
     """
@@ -145,43 +150,21 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
             signal = torch.cat([signal[..., :3], quat], dim=-1)
             if res is not None:
                 signal = torch.cat((signal, res), -1)
+        if self._rotation_parametrization == 'matrix':
+            pos = signal[:,:,:3,3]
+            rot = signal[:,:,:3,:3]
+            quat = matrix_to_quaternion(rot)
+            signal = torch.cat([pos, quat], dim=-1)
         return signal
-
-
-    def to_rel_trajectory(self, traj, agent_pos):
-        """
-        Args:
-            traj (torch.Tensor): (B, t, Da)
-            agent_pos (torch.Tensor): (B, Da)
-
-        Returns:
-            torch.Tensor: (B, t, Da)
-        """
-        traj = traj - agent_pos[:, None, :]
-        return traj
-
-    def to_abs_trajectory(self, traj, agent_pos):
-        """
-        Args:
-            traj (torch.Tensor): (B, t, Da)
-            agent_pos (torch.Tensor): (B, Da)
-
-        Returns:    
-            torch.Tensor: (B, t, Da)
-        """
-        traj = traj + agent_pos[:, None, :]
-        return traj
         
     def normalize_obs(self, obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        this_obs = dict_apply(obs_dict, lambda x: x.clone())
-        this_obs['agent_pose'][:,:,:3,3] = self.normalize_pos(this_obs['agent_pose'][:,:,:3,3])
-        this_obs['keypoint_pcd'] = self.normalize_pos(this_obs['keypoint_pcd'])
+        agent_pose = obs_dict['agent_pose'].clone()
+        keypoint_pcd = obs_dict['keypoint_pcd'].clone()
+        agent_pose[:,:,:3,3] = self.normalize_pos(agent_pose[:,:,:3,3])
+        keypoint_pcd = self.normalize_pos(keypoint_pcd)
+        obs_dict['agent_pose'] = agent_pose
+        obs_dict['keypoint_pcd'] = keypoint_pcd
         return obs_dict
-
-    def normalize_trajectory(self, action: torch.Tensor) -> torch.Tensor:
-        action = action.clone()
-        action[:,:,:3,3] = self.normalize_pos(action[:,:,:3,3])
-        return action
     
     def unnormalize_action(self, action: torch.Tensor) -> torch.Tensor:
         action = action.clone()
@@ -352,9 +335,10 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
         if self.relative_position or self.relative_rotation:
             obs, trajectory = self.convert2rel(x_curr, R_curr, obs, trajectory)
 
+        # normalize 
         nobs = self.normalize_obs(obs)
-        trajectory = self.normalize_trajectory(trajectory)
-
+        trajectory = trajectory.clone()
+        trajectory[:,:,:3,3] = self.normalize_pos(trajectory[:,:,:3,3])
         # augment obs
         if self.data_augmentation:
             nobs = self.augment_obs(nobs)
