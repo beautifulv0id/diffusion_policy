@@ -858,57 +858,6 @@ def test():
     )
 
     env.verify_demos("open_drawer", -1, 10, max_tries=4, verbose=True)
-    return
-
-    task_str = "open_drawer"
-    task_type = task_file_to_task_class(task_str)
-    task = env.env.get_task(task_type)
-    task_variations = task.variation_count()
-    task.set_variation(0)
-
-    class Policy(torch.nn.Module):
-        def __init__(self):
-            super(Policy, self).__init__()
-            self.param = torch.nn.Parameter(torch.tensor([]))
-
-        def load(self, action_ls):
-            self.action_ls = action_ls
-            self.action_idx = 0
-
-        def prepare_action(self, pred):
-            return pred
-        def __call__(self, rgbs, pcds, inst, gripper):
-            action = self.action_ls[self.action_idx%len(self.action_ls)]
-            self.action_idx += 1
-            return action
-    
-    policy = Policy()
-    actioner = Actioner(
-        policy=policy,
-        instructions={"open_drawer": [[torch.rand(10)],[torch.rand(10)],[torch.rand(10)]]},
-        apply_cameras=("left_shoulder", "right_shoulder", "wrist"),
-        action_dim=7,
-        predict_trajectory=False
-    )
-
-    demo = env.get_demo(task_str, 0, 0)[0]
-    action_ls, trajectory_ls, trajectory_mask_ls = actioner.get_action_from_demo(demo)
-    policy.load(action_ls)
-
-    env._evaluate_task_on_one_variation(
-        task_str="open_drawer",
-        task=task,
-        max_steps=100,
-        variation=0,
-        num_demos=1,
-        actioner=actioner,
-        max_tries=1,
-        verbose=True,
-        dense_interpolation=False,
-        interpolation_length=50,
-        num_history=1,
-    )
-    # env.env.launch()
 
 
 if __name__ == "__main__":
