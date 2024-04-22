@@ -1,11 +1,11 @@
 defaults:
   - _self_
-  - task: turn_tap
+  - task: open_drawer
   - encoder: GITLowdimEncoder
   - model: naive_film_se3_flow_matching_model
 
 name: flow_matching_unet_lowdim_policy
-_target_: diffusion_policy.workspace.flow_matching_unet_lowdim_policy.FlowMatchingUnetLowDimPolicy
+# _target_: diffusion_policy.workspace.flow_matching_unet_lowdim_policy.FlowMatchingUnetLowDimPolicy
 
 mode: train
 
@@ -59,7 +59,7 @@ optimizer:
   weight_decay: 1.0e-06
 
 policy:
-  _target_: diffusion_policy.policy.flow_matching_unet_lowdim_policy.FlowMatchingUnetLowDimPolicy
+  _target_: diffusion_policy.policy.flow_matching_SE3_unet_lowdim_policy.FlowMatchingSE3UnetLowDimPolicy
      
   shape_meta: ${task.shape_meta}
   observation_encoder: ${encoder}
@@ -86,7 +86,7 @@ training:
   max_val_steps: null
   num_epochs: 500000
   resume: true
-  rollout_every: 50000
+  rollout_every: 10000
   sample_every: 5
   seed: 42
   tqdm_interval_sec: 1.0

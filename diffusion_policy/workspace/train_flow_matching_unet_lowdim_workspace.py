@@ -19,7 +19,7 @@ import wandb
 import tqdm
 import numpy as np
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
-from diffusion_policy.policy.flow_matching_unet_lowdim_policy import FlowMatchingUnetLowDimPolicy
+from diffusion_policy.policy.base_lowdim_policy import BaseLowdimPolicy
 from diffusion_policy.common.rotation_utils import SO3_log_map
 from diffusion_policy.common.common_utils import trajectory_gripper_open_ignore_collision_from_action
 from diffusion_policy.dataset.base_dataset import BaseImageDataset
@@ -47,9 +47,9 @@ class TrainFlowMatchingUnetLowDimWorkspace(BaseWorkspace):
         random.seed(seed)
 
         # configure model
-        self.model: FlowMatchingUnetLowDimPolicy = hydra.utils.instantiate(cfg.policy)
+        self.model: BaseLowdimPolicy = hydra.utils.instantiate(cfg.policy)
 
-        self.ema_model: FlowMatchingUnetLowDimPolicy = None
+        self.ema_model: BaseLowdimPolicy = None
         if cfg.training.use_ema:
             self.ema_model = copy.deepcopy(self.model)
 

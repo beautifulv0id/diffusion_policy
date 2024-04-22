@@ -54,7 +54,7 @@ class FILMConditionalBlock(nn.Module):
         return out
     
 
-class NaiveFilmSE3FlowMatchingModel(nn.Module):
+class NaiveFilmFlowMatchingModel(nn.Module):
     def __init__(self, 
             in_channels, 
             out_channels = 6, 
