@@ -16,6 +16,7 @@ class RLBenchDataset(BaseImageDataset):
             num_episodes=1,
             variation=0,
             cameras = ['left_shoulder', 'right_shoulder', 'overhead', 'wrist', 'front'],
+            image_size=(128, 128),
             n_obs=2,
             build_history_from_augment_obs=True, # If True, observations are taken from the autmented demo
             demo_augmentation_every_n=10,
@@ -32,10 +33,10 @@ class RLBenchDataset(BaseImageDataset):
 
         root = Path(root)
         # TODO: change this
-        camera_config = CameraConfig(rgb=use_rgb, depth=use_depth, mask=use_mask, point_cloud=use_pcd)
-        camera_off_config = CameraConfig(rgb=False, depth=False, mask=False, point_cloud=False)
-        all_cameras = [k.split("_camera")[0] for k in ObservationConfig().__dict__.keys() if k.endswith('camera')]
-        unused_cameras = [k for k in all_cameras if k not in cameras]
+        camera_config = CameraConfig(rgb=use_rgb, depth=use_depth, mask=use_mask, point_cloud=use_pcd, image_size=image_size)
+        camera_off_config = CameraConfig().set_all(False)
+        all_cameras = set(['left_shoulder', 'right_shoulder', 'overhead', 'wrist', 'front'])
+        unused_cameras = all_cameras - set(cameras)
         camera_config_map = {k: camera_config for k in cameras}
         camera_config_map.update({k: camera_off_config for k in unused_cameras})
         obs_config = ObservationConfig(
@@ -59,7 +60,6 @@ class RLBenchDataset(BaseImageDataset):
         
         num_episodes = len(demos)
         n_val = min(max(0, round(num_episodes * val_ratio)), num_episodes-1)
-        n_train = num_episodes - n_val
         
         val_idxs = np.random.choice(num_episodes, size=n_val, replace=False)
         train_idxs = np.array([i for i in range(num_episodes) if i not in val_idxs])
