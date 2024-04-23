@@ -17,7 +17,7 @@ def remove_unvalid_demos(data_path, task_str, variation):
     episode_path = os.path.join(episodes_path, "episode%d")
     unvalid_episode_path = os.path.join(episodes_path, "unvalid_episode%d")
     n_demos = len([path for path in os.listdir(episodes_path) if path.startswith("episode")])
-    sr, demo_valid, success_rates = env.verify_demos(task_str, variation, n_demos, max_tries=10, demo_consistency_tries=10, verbose=False)
+    sr, demo_valid, success_rates = env.verify_demos(task_str, variation, n_demos, max_rrt_tries=10, demo_consistency_tries=10, verbose=False)
     valid_episode_idx = 0
     for i, val in enumerate(demo_valid):
         if not val:

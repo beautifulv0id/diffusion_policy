@@ -253,23 +253,14 @@ class Actioner:
 
         return action_ls, trajectory_ls, trajectory_mask_ls
 
-    def predict(self, keypoint_idxs, keypoints, gripper):
+    def predict(self, obs):
         """
         Args:
-            keypoint_idxs: (bs, num_hist, N)
-            keypoints: (bs, num_hist, N, 3)
-            gripper: (B, nhist, 4, 4)
-
+            obs: dict
         Returns:
             action: torch.Tensor
         """
-
-        self._task_id = self._task_id.to(gripper.device)
-        obs = {
-            "keypoint_idx": keypoint_idxs,
-            "keypoint_pcd": keypoints,
-            "agent_pose": gripper,
-        }
+        self._task_id = self._task_id.to(self.device)
         action = self._policy.predict_action(obs)["action"][0,0,:self._action_dim]
         action = action.detach().cpu().numpy()
         return action
