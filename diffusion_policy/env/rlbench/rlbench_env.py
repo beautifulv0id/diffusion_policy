@@ -1,9 +1,5 @@
 import os
 import glob
-import random
-from typing import List, Dict, Any
-from pathlib import Path
-import json
 
 import open3d
 import traceback
@@ -12,6 +8,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import einops
+from typing import List
 
 from rlbench.observation_config import ObservationConfig, CameraConfig
 from rlbench.environment import Environment
@@ -20,233 +17,18 @@ from rlbench.action_modes.action_mode import MoveArmThenGripper
 from rlbench.action_modes.gripper_action_modes import Discrete
 from rlbench.action_modes.arm_action_modes import EndEffectorPoseViaPlanning
 from rlbench.backend.exceptions import InvalidActionError
+from diffusion_policy.env.rlbench.rlbench_utils import Mover, Actioner, task_file_to_task_class, keypoint_discovery, transform, get_object_pose_indices_from_task
 from rlbench.demo import Demo
 from pyrep.errors import IKError, ConfigurationPathError
 from pyrep.const import RenderMode
+from diffusion_policy.common.launch_utils import object_poses_to_keypoints
+from scipy.spatial.transform import Rotation as R
+from pyrep.objects.dummy import Dummy
+from pyrep.objects.vision_sensor import VisionSensor
+import wandb.sdk.data_types.video as wv
+from diffusion_policy.env.rlbench.rlbench_utils import CircleCameraMotion
 
-
-ALL_RLBENCH_TASKS = [
-    'basketball_in_hoop', 'beat_the_buzz', 'change_channel', 'change_clock', 'close_box',
-    'close_door', 'close_drawer', 'close_fridge', 'close_grill', 'close_jar', 'close_laptop_lid',
-    'close_microwave', 'hang_frame_on_hanger', 'insert_onto_square_peg', 'insert_usb_in_computer',
-    'lamp_off', 'lamp_on', 'lift_numbered_block', 'light_bulb_in', 'meat_off_grill', 'meat_on_grill',
-    'move_hanger', 'open_box', 'open_door', 'open_drawer', 'open_fridge', 'open_grill',
-    'open_microwave', 'open_oven', 'open_window', 'open_wine_bottle', 'phone_on_base',
-    'pick_and_lift', 'pick_and_lift_small', 'pick_up_cup', 'place_cups', 'place_hanger_on_rack',
-    'place_shape_in_shape_sorter', 'place_wine_at_rack_location', 'play_jenga',
-    'plug_charger_in_power_supply', 'press_switch', 'push_button', 'push_buttons', 'put_books_on_bookshelf',
-    'put_groceries_in_cupboard', 'put_item_in_drawer', 'put_knife_on_chopping_board', 'put_money_in_safe',
-    'put_rubbish_in_bin', 'put_umbrella_in_umbrella_stand', 'reach_and_drag', 'reach_target',
-    'scoop_with_spatula', 'screw_nail', 'setup_checkers', 'slide_block_to_color_target',
-    'slide_block_to_target', 'slide_cabinet_open_and_place_cups', 'stack_blocks', 'stack_cups',
-    'stack_wine', 'straighten_rope', 'sweep_to_dustpan', 'sweep_to_dustpan_of_size', 'take_frame_off_hanger',
-    'take_lid_off_saucepan', 'take_money_out_safe', 'take_plate_off_colored_dish_rack', 'take_shoes_out_of_box',
-    'take_toilet_roll_off_stand', 'take_umbrella_out_of_umbrella_stand', 'take_usb_out_of_computer',
-    'toilet_seat_down', 'toilet_seat_up', 'tower3', 'turn_oven_on', 'turn_tap', 'tv_on', 'unplug_charger',
-    'water_plants', 'wipe_desk'
-]
-TASK_TO_ID = {task: i for i, task in enumerate(ALL_RLBENCH_TASKS)}
-
-
-def task_file_to_task_class(task_file):
-    import importlib
-
-    name = task_file.replace(".py", "")
-    class_name = "".join([w[0].upper() + w[1:] for w in name.split("_")])
-    mod = importlib.import_module("rlbench.tasks.%s" % name)
-    mod = importlib.reload(mod)
-    task_class = getattr(mod, class_name)
-    return task_class
-
-
-def load_episodes() -> Dict[str, Any]:
-    with open(Path(__file__).parent.parent / "data_preprocessing/episodes.json") as fid:
-        return json.load(fid)
-
-
-class Mover:
-
-    def __init__(self, task, disabled=False, max_tries=1):
-        self._task = task
-        self._last_action = None
-        self._step_id = 0
-        self._max_tries = max_tries
-        self._disabled = disabled
-
-    def __call__(self, action, collision_checking=False):
-        if self._disabled:
-            return self._task.step(action)
-
-        target = action.copy()
-        if self._last_action is not None:
-            action[7] = self._last_action[7].copy()
-
-        images = []
-        try_id = 0
-        obs = None
-        terminate = None
-        reward = 0
-
-        for try_id in range(self._max_tries):
-            action_collision = np.ones(action.shape[0]+1)
-            action_collision[:-1] = action
-            if collision_checking:
-                action_collision[-1] = 0
-            obs, reward, terminate = self._task.step(action_collision)
-
-            pos = obs.gripper_pose[:3]
-            rot = obs.gripper_pose[3:7]
-            dist_pos = np.sqrt(np.square(target[:3] - pos).sum())
-            dist_rot = np.sqrt(np.square(target[3:7] - rot).sum())
-            criteria = (dist_pos < 5e-3,)
-
-            if all(criteria) or reward == 1:
-                break
-
-            print(
-                f"Too far away (pos: {dist_pos:.3f}, rot: {dist_rot:.3f}, step: {self._step_id})... Retrying..."
-            )
-
-        # we execute the gripper action after re-tries
-        action = target
-        if (
-            not reward == 1.0
-            and self._last_action is not None
-            and action[7] != self._last_action[7]
-        ):
-            action_collision = np.ones(action.shape[0]+1)
-            action_collision[:-1] = action
-            if collision_checking:
-                action_collision[-1] = 0
-            obs, reward, terminate = self._task.step(action_collision)
-
-        if try_id == self._max_tries:
-            print(f"Failure after {self._max_tries} tries")
-
-        self._step_id += 1
-        self._last_action = action.copy()
-
-        return obs, reward, terminate, images
-
-
-class Actioner:
-
-    def __init__(
-        self,
-        policy=None,
-        instructions=None,
-        apply_cameras=("left_shoulder", "right_shoulder", "wrist"),
-        action_dim=7,
-        predict_trajectory=True
-    ):
-        self._policy = policy
-        self._instructions = instructions
-        self._apply_cameras = apply_cameras
-        self._action_dim = action_dim
-        self._predict_trajectory = predict_trajectory
-
-        self._actions = {}
-        self._instr = None
-        self._task_str = None
-
-        self._policy.eval()
-
-    def load_episode(self, task_str, variation):
-        self._task_str = task_str
-        instructions = list(self._instructions[task_str][variation])
-        self._instr = random.choice(instructions).unsqueeze(0)
-        self._task_id = torch.tensor(TASK_TO_ID[task_str]).unsqueeze(0)
-        self._actions = {}
-
-    def get_action_from_demo(self, demo):
-        """
-        Fetch the desired state and action based on the provided demo.
-            :param demo: fetch each demo and save key-point observations
-            :return: a list of obs and action
-        """
-        key_frame = keypoint_discovery(demo)
-
-        action_ls = []
-        trajectory_ls = []
-        for i in range(len(key_frame)):
-            obs = demo[key_frame[i]]
-            action_np = np.concatenate([obs.gripper_pose, [obs.gripper_open]])
-            action = torch.from_numpy(action_np)
-            action_ls.append(action.unsqueeze(0))
-
-            trajectory_np = []
-            for j in range(key_frame[i - 1] if i > 0 else 0, key_frame[i]):
-                obs = demo[j]
-                trajectory_np.append(np.concatenate([
-                    obs.gripper_pose, [obs.gripper_open]
-                ]))
-            trajectory_ls.append(np.stack(trajectory_np))
-
-        trajectory_mask_ls = [
-            torch.zeros(1, key_frame[i] - (key_frame[i - 1] if i > 0 else 0)).bool()
-            for i in range(len(key_frame))
-        ]
-
-        return action_ls, trajectory_ls, trajectory_mask_ls
-
-    def predict(self, rgbs, pcds, gripper,
-                interpolation_length=None):
-        """
-        Args:
-            rgbs: (bs, num_hist, num_cameras, 3, H, W)
-            pcds: (bs, num_hist, num_cameras, 3, H, W)
-            gripper: (B, nhist, output_dim)
-            interpolation_length: an integer
-
-        Returns:
-            {"action": torch.Tensor, "trajectory": torch.Tensor}
-        """
-        output = {"action": None, "trajectory": None}
-
-        rgbs = rgbs / 2 + 0.5  # in [0, 1]
-
-        if self._instr is None:
-            raise ValueError()
-
-        self._instr = self._instr.to(rgbs.device)
-        self._task_id = self._task_id.to(rgbs.device)
-
-        # Predict trajectory
-        if self._predict_trajectory:
-            print('Predict Trajectory')
-            fake_traj = torch.full(
-                [1, interpolation_length - 1, gripper.shape[-1]], 0
-            ).to(rgbs.device)
-            traj_mask = torch.full(
-                [1, interpolation_length - 1], False
-            ).to(rgbs.device)
-            output["trajectory"] = self._policy(
-                fake_traj,
-                traj_mask,
-                rgbs[:, -1],
-                pcds[:, -1],
-                self._instr,
-                gripper[..., :7],
-                run_inference=True
-            )
-        else:
-            print('Predict Keypose')
-            pred = self._policy(
-                rgbs[:, -1],
-                pcds[:, -1],
-                self._instr,
-                gripper[:, -1, :self._action_dim],
-            )
-            # Hackish, assume self._policy is an instance of Act3D
-            output["action"] = self._policy.prepare_action(pred)
-
-        return output
-
-    @property
-    def device(self):
-        return next(self._policy.parameters()).device
-
-
+# computes pixel location of gripper in the image
 def obs_to_attn(obs, camera):
     extrinsics_44 = torch.from_numpy(
         obs.misc[f"{camera}_camera_extrinsics"]
@@ -267,7 +49,6 @@ def obs_to_attn(obs, camera):
 
     return u, v
 
-
 class RLBenchEnv:
 
     def __init__(
@@ -279,8 +60,9 @@ class RLBenchEnv:
         apply_pc=False,
         headless=False,
         apply_cameras=("left_shoulder", "right_shoulder", "wrist", "front"),
-        fine_sampling_ball_diameter=None,
-        collision_checking=False
+        collision_checking=False,
+        obs_history_augmentation_every_n=10,
+        render_img_size=[128, 128]
     ):
 
         # setup required inputs
@@ -289,23 +71,87 @@ class RLBenchEnv:
         self.apply_depth = apply_depth
         self.apply_pc = apply_pc
         self.apply_cameras = apply_cameras
-        self.fine_sampling_ball_diameter = fine_sampling_ball_diameter
 
         # setup RLBench environments
         self.obs_config = self.create_obs_config(
             image_size, apply_rgb, apply_depth, apply_pc, apply_cameras
         )
 
+
         self.action_mode = MoveArmThenGripper(
             arm_action_mode=EndEffectorPoseViaPlanning(collision_checking=collision_checking),
             gripper_action_mode=Discrete()
         )
+        self.obs_history = []
+        self.obs_history_augmentation_every_n = obs_history_augmentation_every_n
+        self.action_mode.arm_action_mode.set_callable_each_step(self.save_observation)
         self.env = Environment(
             self.action_mode, str(data_path), self.obs_config,
             headless=headless
         )
         self.image_size = image_size
+        self._render_img_size = render_img_size
+        self._rgbs = []
+        self._recording = False
+        self._cam = None
 
+    def launch(self):
+        if self.env._pyrep is not None:
+            if self._cam is None:
+                cam = VisionSensor.create(self._render_img_size)
+                cam.set_pose(Dummy('cam_cinematic_placeholder').get_pose())
+                cam.set_parent(Dummy('cam_cinematic_placeholder'))
+                self._cam_motion = CircleCameraMotion(cam, Dummy('cam_cinematic_base'), 0.005)
+                self._cam = cam
+            return
+        self.env.launch()
+
+    def shutdown(self):
+        if self.env._pyrep is None:
+            return
+        self.env.shutdown()
+        self._cam_motion = None
+        self._cam = None
+
+    def save_observation(self, obs):
+        """
+        Save the observation to the history
+        :param obs: an Observation from the env
+        """
+        self.obs_history.append(obs)
+        if self._recording:
+            self._rgbs.append((self._cam.capture_rgb() * 255.).astype(np.uint8))
+            self._cam_motion.step()
+
+    def start_recording(self):
+        self._recording = True
+            
+    def stop_recording(self):
+        self._recording = False
+
+    def save_video(self):
+        if len(self._rgbs) == 0:
+            return None
+        path = os.path.join(self.output_dir, "media", wv.util.generate_id() + ".mp4")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        import imageio.v2 as iio
+        writer = iio.get_writer(path, fps=30, format='FFMPEG', mode='I')
+        for image in self._rgbs:
+            writer.append_data(image)
+        writer.close()
+        self._rgbs = []
+        self._cam_motion.restore_pose()
+        return path
+    
+    def get_rgbs(self):
+        if len(self._rgbs) == 0:
+            return None
+        rgbs = np.array(self._rgbs)
+        rgbs = rgbs.transpose(0, 3, 1, 2)
+        self._rgbs = []
+        self._cam_motion.restore_pose() 
+        return np.array(rgbs)
+    
     def get_obs_action(self, obs):
         """
         Fetch the desired state and action based on the provided demo.
@@ -338,7 +184,8 @@ class RLBenchEnv:
         :param obs: an Observation from the env
         :return: rgb, pcd, gripper
         """
-        state_dict, gripper = self.get_obs_action(obs)
+        state_dict, _ = self.get_obs_action(obs)
+        gripper = torch.from_numpy(obs.gripper_matrix)
         state = transform(state_dict, augmentation=False)
         state = einops.rearrange(
             state,
@@ -418,11 +265,9 @@ class RLBenchEnv:
         actioner: Actioner,
         max_tries: int = 1,
         verbose: bool = False,
-        dense_interpolation=False,
-        interpolation_length=100,
         num_history=1,
     ):
-        self.env.launch()
+        self.launch()
         task_type = task_file_to_task_class(task_str)
         task = self.env.get_task(task_type)
         task_variations = task.variation_count()
@@ -447,10 +292,8 @@ class RLBenchEnv:
                     variation=variation,
                     num_demos=num_demos // len(task_variations) + 1,
                     actioner=actioner,
-                    max_tries=max_tries,
+                    max_rtt_tries=max_tries,
                     verbose=verbose,
-                    dense_interpolation=dense_interpolation,
-                    interpolation_length=interpolation_length,
                     num_history=num_history
                 )
             )
@@ -458,7 +301,7 @@ class RLBenchEnv:
                 var_success_rates[variation] = success_rate
                 var_num_valid_demos[variation] = num_valid_demos
 
-        self.env.shutdown()
+        self.shutdown()
 
         var_success_rates["mean"] = (
             sum(var_success_rates.values()) /
@@ -467,7 +310,7 @@ class RLBenchEnv:
 
         return var_success_rates
 
-    @torch.no_grad()
+
     def _evaluate_task_on_one_variation(
         self,
         task_str: str,
@@ -476,148 +319,191 @@ class RLBenchEnv:
         variation: int,
         num_demos: int,
         actioner: Actioner,
-        max_tries: int = 1,
+        max_rtt_tries: int = 1,
+        demo_tries: int = 1,
         verbose: bool = False,
-        dense_interpolation=False,
-        interpolation_length=50,
         num_history=0,
     ):
-        device = actioner.device
-
-        success_rate = 0
+        self.launch()
+        demos = []
         num_valid_demos = 0
-        total_reward = 0
-
-        for demo_id in range(num_demos):
-            if verbose:
-                print()
-                print(f"Starting demo {demo_id}")
-
+        for i in range(num_demos):
             try:
-                demo = self.get_demo(task_str, variation, episode_index=demo_id)[0]
+                demo = self.get_demo(task_str, variation, episode_index=i)[0]
+                demos.append(demo)
                 num_valid_demos += 1
             except:
-                continue
+                print(f"Invalid demo {i} for {task_str} variation {variation}")
+                print()
+                traceback.print_exc()
 
-            rgbs = torch.Tensor([]).to(device)
-            pcds = torch.Tensor([]).to(device)
-            grippers = torch.Tensor([]).to(device)
+        log_data = self._evaluate_task_on_demos(
+            task=task,
+            task_str=task_str,
+            demos=demos,
+            max_steps=max_steps,
+            actioner=actioner,
+            max_rtt_tries=max_rtt_tries,
+            demo_tries=demo_tries,
+            verbose=verbose,
+            num_history=num_history,
+        )
 
-            # descriptions, obs = task.reset()
-            descriptions, obs = task.reset_to_demo(demo)
+        self.shutdown()
 
-            actioner.load_episode(task_str, variation)
+        successful_demos = log_data["success_rate"]
 
-            move = Mover(task, max_tries=max_tries)
-            reward = 0.0
-            max_reward = 0.0
 
-            for step_id in range(max_steps):
-
-                # Fetch the current observation, and predict one action
-                rgb, pcd, gripper = self.get_rgb_pcd_gripper_from_obs(obs)
-                rgb = rgb.to(device)
-                pcd = pcd.to(device)
-                gripper = gripper.to(device)
-
-                rgbs = torch.cat([rgbs, rgb.unsqueeze(1)], dim=1)
-                pcds = torch.cat([pcds, pcd.unsqueeze(1)], dim=1)
-                grippers = torch.cat([grippers, gripper.unsqueeze(1)], dim=1)
-
-                # Prepare proprioception history
-                rgbs_input = rgbs[:, -1:][:, :, :, :3]
-                pcds_input = pcds[:, -1:]
-                if num_history < 1:
-                    gripper_input = grippers[:, -1]
-                else:
-                    gripper_input = grippers[:, -num_history:]
-                    npad = num_history - gripper_input.shape[1]
-                    gripper_input = F.pad(
-                        gripper_input, (0, 0, npad, 0), mode='replicate'
-                    )
-
-                output = actioner.predict(
-                    rgbs_input,
-                    pcds_input,
-                    gripper_input,
-                    interpolation_length=interpolation_length
-                )
-
-                if verbose:
-                    print(f"Step {step_id}")
-
-                terminate = True
-
-                # Update the observation based on the predicted action
-                try:
-                    # Execute entire predicted trajectory step by step
-                    if output.get("trajectory", None) is not None:
-                        trajectory = output["trajectory"][-1].cpu().numpy()
-                        trajectory[:, -1] = trajectory[:, -1].round()
-
-                        # execute
-                        for action in tqdm(trajectory):
-                            #try:
-                            #    collision_checking = self._collision_checking(task_str, step_id)
-                            #    obs, reward, terminate, _ = move(action_np, collision_checking=collision_checking)
-                            #except:
-                            #    terminate = True
-                            #    pass
-                            collision_checking = self._collision_checking(task_str, step_id)
-                            obs, reward, terminate, _ = move(action, collision_checking=collision_checking)
-
-                    # Or plan to reach next predicted keypoint
-                    else:
-                        print("Plan with RRT")
-                        action = output["action"]
-                        action[..., -1] = torch.round(action[..., -1])
-                        action = action[-1].detach().cpu().numpy()
-
-                        collision_checking = self._collision_checking(task_str, step_id)
-                        obs, reward, terminate, _ = move(action, collision_checking=collision_checking)
-
-                    max_reward = max(max_reward, reward)
-
-                    if reward == 1:
-                        success_rate += 1
-                        break
-
-                    if terminate:
-                        print("The episode has terminated!")
-
-                except (IKError, ConfigurationPathError, InvalidActionError) as e:
-                    print(task_str, demo, step_id, success_rate, e)
-                    reward = 0
-                    #break
-
-            total_reward += max_reward
-            if reward == 0:
-                step_id += 1
-
-            print(
-                task_str,
-                "Variation",
-                variation,
-                "Demo",
-                demo_id,
-                "Reward",
-                f"{reward:.2f}",
-                "max_reward",
-                f"{max_reward:.2f}",
-                f"SR: {success_rate}/{demo_id+1}",
-                f"SR: {total_reward:.2f}/{demo_id+1}",
-                "# valid demos", num_valid_demos,
-            )
-
-        # Compensate for failed demos
         if num_valid_demos == 0:
-            assert success_rate == 0
+            success_rate = 0.0
             valid = False
         else:
+            success_rate = successful_demos / (num_valid_demos * demo_tries)
             valid = True
 
         return success_rate, valid, num_valid_demos
 
+
+    @torch.no_grad()
+    def _evaluate_task_on_demos(self,       
+                                task: TaskEnvironment,
+                                task_str: str,
+                                demos: List[Demo],  
+                                max_steps: int,
+                                actioner: Actioner,
+                                max_rtt_tries: int = 1,
+                                demo_tries: int = 1,
+                                n_visualize: int = 0,
+                                verbose: bool = False,
+                                num_history=0):
+        self.launch()
+        device = actioner.device
+        successful_demos = 0
+        total_reward = 0
+        rgbs_ls = []
+
+        for demo_id, demo in enumerate(demos):
+            if verbose:
+                print()
+                print(f"Starting demo {demo_id}")
+
+            for i in range(demo_tries):
+                if demo_id < n_visualize and i == 0:
+                    self.start_recording()
+
+                rgbs = torch.Tensor([]).to(device)
+                pcds = torch.Tensor([]).to(device)
+                grippers = torch.Tensor([]).to(device)
+
+                # descriptions, obs = task.reset()
+                descriptions, obs = task.reset_to_demo(demo)
+                self.obs_history.append(obs)
+
+                actioner.load_episode(task_str, demo.variation_number)
+                # actioner.load_demo(demo) # TODO: remove this line
+
+                move = Mover(task, max_tries=max_rtt_tries)
+                reward = 0.0
+                max_reward = 0.0
+
+                for step_id in range(max_steps):
+
+                    # Fetch the current observation, and predict one action
+                    if step_id > 0:
+                        self.obs_history = self.obs_history[::-1][::self.obs_history_augmentation_every_n][::-1][-num_history:]
+
+                    for obs in self.obs_history:
+                        rgb, pcd, gripper = self.get_rgb_pcd_gripper_from_obs(obs)
+                        rgb = rgb.to(device)
+                        pcd = pcd.to(device)
+                        gripper = gripper.to(device)
+
+                        rgbs = torch.cat([rgbs, rgb], dim=0)
+                        pcds = torch.cat([pcds, pcd], dim=0)
+                        grippers = torch.cat([grippers, gripper], dim=0)
+
+                    self.obs_history = []
+
+                    # Prepare proprioception history
+                    gripper_input = grippers[-num_history:].unsqueeze(0)
+                    rgbs_input = rgbs[-num_history:,:,:3].unsqueeze(0) # only rgb channels, remove attns
+                    pcds_input = pcds[-num_history:].unsqueeze(0)
+                    npad = num_history - gripper_input.shape[1]
+                    b, _, n, c, h, w = rgbs_input.shape
+                    gripper_input = F.pad(
+                        gripper_input, (0, 0, npad, 0), mode='replicate'
+                    )
+                    rgbs_input = F.pad(
+                            rgbs_input.reshape(rgbs_input.shape[:2] + (-1,)),
+                            (0, 0, npad, 0), mode='replicate'
+                    ).view(b, -1, n, c, h, w)
+                    pcds_input = F.pad(
+                        pcds_input.reshape(pcds_input.shape[:2] + (-1,)),
+                        (0, 0, npad, 0), mode='replicate'
+                    ).view(b, -1, n, c, h, w)
+                    obs = {
+                        "rgbs": rgbs_input.unsqueeze(0),
+                        "pcds": pcds_input.unsqueeze(0),
+                        "grippers": gripper_input.unsqueeze(0),
+                    }
+                    action = actioner.predict(obs)
+
+                    if verbose:
+                        print(f"Step {step_id}")
+
+                    terminate = True
+
+                    # Update the observation based on the predicted action
+                    try:
+                        if verbose:
+                            print("Plan with RRT")
+                        collision_checking = self._collision_checking(task_str, step_id)
+                        obs, reward, terminate, _ = move(action, collision_checking=collision_checking)
+
+                        max_reward = max(max_reward, reward)
+
+                        if reward == 1:
+                            successful_demos += 1
+                            break
+
+                        if terminate:
+                            print("The episode has terminated!")
+
+                    except (IKError, ConfigurationPathError, InvalidActionError) as e:
+                        print(task_str, demo, step_id, successful_demos, e)
+                        reward = 0
+                        #break
+
+                if demo_id < n_visualize and i == 0:
+                    self.stop_recording()
+                    rgbs = self.get_rgbs()
+                    rgbs_ls.append(rgbs)
+
+                total_reward += max_reward
+                if reward == 0:
+                    step_id += 1
+
+                print(
+                    task_str,
+                    "Variation",
+                    demo.variation_number,
+                    "Demo",
+                    demo_id,
+                    "Reward",
+                    f"{reward:.2f}",
+                    "max_reward",
+                    f"{max_reward:.2f}",
+                    f"SR: {successful_demos / ((demo_id+1) * demo_tries)}",
+                    f"Total reward: {total_reward:.2f}/{(demo_id+1) * demo_tries}"                )
+
+        self.shutdown()
+        log_data = {
+            "success_rate": successful_demos / (len(demos) * demo_tries),
+            "total_reward": total_reward,
+            "rgbs_ls": rgbs_ls,
+        }
+        return log_data
+    
     def _collision_checking(self, task_str, step_id):
         """Collision checking for planner."""
         # collision_checking = True
@@ -646,6 +532,7 @@ class RLBenchEnv:
         variation: int,
         num_demos: int,
         max_tries: int = 1,
+        demo_consistency_tries: int = 10,
         verbose: bool = False,
     ):
         if verbose:
@@ -657,61 +544,78 @@ class RLBenchEnv:
         task = self.env.get_task(task_type)
         task.set_variation(variation)  # type: ignore
 
-        success_rate = 0.0
-        invalid_demos = 0
+        demo_success_rates = []
+        demo_valid = np.array([], dtype=bool)
 
-        for demo_id in range(num_demos):
-            if verbose:
-                print(f"Starting demo {demo_id}")
-
-            try:
-                demo = self.get_demo(task_str, variation, episode_index=demo_id)[0]
-            except:
-                print(f"Invalid demo {demo_id} for {task_str} variation {variation}")
-                print()
-                traceback.print_exc()
-                invalid_demos += 1
-
-            task.reset_to_demo(demo)
-
-            gt_keyframe_actions = []
-            for f in keypoint_discovery(demo):
-                obs = demo[f]
-                action = np.concatenate([obs.gripper_pose, [obs.gripper_open]])
-                gt_keyframe_actions.append(action)
-
-            move = Mover(task, max_tries=max_tries)
-
-            for step_id, action in enumerate(gt_keyframe_actions):
+        with tqdm(range(num_demos), desc=f"Validated demos", 
+                leave=False) as tdemos:
+            for demo_id in tdemos:
                 if verbose:
-                    print(f"Step {step_id}")
+                    print(f"Starting demo {demo_id}")
 
                 try:
-                    obs, reward, terminate, step_images = move(action)
-                    if reward == 1:
-                        success_rate += 1 / num_demos
-                        break
-                    if terminate and verbose:
-                        print("The episode has terminated!")
+                    demo = self.get_demo(task_str, variation, episode_index=demo_id)[0]
+                except:
+                    print(f"Invalid demo {demo_id} for {task_str} variation {variation}")
+                    print()
+                    traceback.print_exc()
+                    demo_valid = np.append(demo_valid, False)
+                    continue
 
-                except (IKError, ConfigurationPathError, InvalidActionError) as e:
-                    print(task_type, demo, success_rate, e)
-                    reward = 0
-                    break
+                successful_ties = 0
 
-            if verbose:
-                print(f"Finished demo {demo_id}, SR: {success_rate}")
+                for i in range(demo_consistency_tries):
+                    task.reset_to_demo(demo)
 
+                    gt_keyframe_actions = []
+                    gt_obs = []
+                    for f in keypoint_discovery(demo):
+                        obs = demo[f]
+                        gt_obs.append(obs)
+                        action = np.concatenate([obs.gripper_pose, [obs.gripper_open]])
+                        gt_keyframe_actions.append(action)
+
+                    move = Mover(task, max_tries=max_tries)
+
+                    for step_id, action in enumerate(gt_keyframe_actions):
+                        if verbose:
+                            print(f"Step {step_id}")
+
+                        try:
+                            obs, reward, terminate, step_images = move(action)
+                            if reward == 1:
+                                successful_ties += 1
+                                break
+                            if terminate and verbose:
+                                print("The episode has terminated!")
+
+                        except (IKError, ConfigurationPathError, InvalidActionError) as e:
+                            print(task_type, demo, success_rate, e)
+                            reward = 0
+                            break
+                                    
+                
+                if successful_ties == demo_consistency_tries:
+                    demo_valid = np.append(demo_valid, True)
+                else:
+                    demo_valid = np.append(demo_valid, False)
+                
+                if verbose:
+                    print(f"Finished demo {demo_id}, SR: {np.count_nonzero(demo_valid) / num_demos}")
+                demo_success_rates.append(successful_ties)
+                
+                tdemos.set_postfix(SR=np.count_nonzero(demo_valid) / num_demos, refresh=False)
         # Compensate for failed demos
-        if (num_demos - invalid_demos) == 0:
+        if (num_demos - np.count_nonzero(~demo_valid)) == 0:
             success_rate = 0.0
             valid = False
         else:
-            success_rate = success_rate * num_demos / (num_demos - invalid_demos)
+            success_rate = np.count_nonzero(demo_valid)/num_demos
             valid = True
 
         self.env.shutdown()
-        return success_rate, valid, invalid_demos
+        return success_rate, demo_valid, demo_success_rates
+
 
     def create_obs_config(
         self, image_size, apply_rgb, apply_depth, apply_pc, apply_cameras, **kwargs
@@ -761,105 +665,116 @@ class RLBenchEnv:
 
         return obs_config
 
+import hydra
+from hydra import compose, initialize
+from omegaconf import OmegaConf
 
-# Identify way-point in each RLBench Demo
-def _is_stopped(demo, i, obs, stopped_buffer, delta):
-    next_is_not_final = i == (len(demo) - 2)
-    # gripper_state_no_change = i < (len(demo) - 2) and (
-    #     obs.gripper_open == demo[i + 1].gripper_open
-    #     and obs.gripper_open == demo[i - 1].gripper_open
-    #     and demo[i - 2].gripper_open == demo[i - 1].gripper_open
-    # )
-    gripper_state_no_change = i < (len(demo) - 2) and (
-        obs.gripper_open == demo[i + 1].gripper_open
-        and obs.gripper_open == demo[max(0, i - 1)].gripper_open
-        and demo[max(0, i - 2)].gripper_open == demo[max(0, i - 1)].gripper_open
-    )
-    small_delta = np.allclose(obs.joint_velocities, 0, atol=delta)
-    stopped = (
-        stopped_buffer <= 0
-        and small_delta
-        and (not next_is_not_final)
-        and gripper_state_no_change
-    )
-    return stopped
+OmegaConf.register_new_resolver("eval", eval, replace=True)
 
-
-def keypoint_discovery(demo: Demo, stopping_delta=0.1) -> List[int]:
-    episode_keypoints = []
-    prev_gripper_open = demo[0].gripper_open
-    stopped_buffer = 0
-
-    for i, obs in enumerate(demo):
-        stopped = _is_stopped(demo, i, obs, stopped_buffer, stopping_delta)
-        stopped_buffer = 4 if stopped else stopped_buffer - 1
-        # If change in gripper, or end of episode.
-        last = i == (len(demo) - 1)
-        if i != 0 and (obs.gripper_open != prev_gripper_open or last or stopped):
-            episode_keypoints.append(i)
-        prev_gripper_open = obs.gripper_open
-
-    if (
-        len(episode_keypoints) > 1
-        and (episode_keypoints[-1] - 1) == episode_keypoints[-2]
-    ):
-        episode_keypoints.pop(-2)
-
-    return episode_keypoints
-
-
-def transform(obs_dict, scale_size=(0.75, 1.25), augmentation=False):
-    apply_depth = len(obs_dict.get("depth", [])) > 0
-    apply_pc = len(obs_dict["pc"]) > 0
-    num_cams = len(obs_dict["rgb"])
-
-    obs_rgb = []
-    obs_depth = []
-    obs_pc = []
-    for i in range(num_cams):
-        rgb = torch.tensor(obs_dict["rgb"][i]).float().permute(2, 0, 1)
-        depth = (
-            torch.tensor(obs_dict["depth"][i]).float().permute(2, 0, 1)
-            if apply_depth
-            else None
-        )
-        pc = (
-            torch.tensor(obs_dict["pc"][i]).float().permute(2, 0, 1) if apply_pc else None
-        )
-
-        if augmentation:
-            raise NotImplementedError()  # Deprecated
-
-        # normalise to [-1, 1]
-        rgb = rgb / 255.0
-        rgb = 2 * (rgb - 0.5)
-
-        obs_rgb += [rgb.float()]
-        if depth is not None:
-            obs_depth += [depth.float()]
-        if pc is not None:
-            obs_pc += [pc.float()]
-    obs = obs_rgb + obs_depth + obs_pc
-    return torch.cat(obs, dim=0)
-
-
-def test():
-
+def test_verify_demos():
+    data_path = "/home/felix/Workspace/diffusion_policy_felix/data/peract"
     env = RLBenchEnv(
-        data_path="/home/felix/Workspace/diffusion_policy_felix/data/peract/",
-        image_size=(128, 128),
-        apply_rgb=True,
-        apply_depth=False,
-        apply_pc=True,
+        data_path=data_path,
         headless=False,
-        apply_cameras=("left_shoulder", "right_shoulder", "wrist"),
-        fine_sampling_ball_diameter=None,
         collision_checking=False,
+        obs_history_augmentation_every_n=2,
+    )
+    sr, demo_valid, success_rates = env.verify_demos(
+        task_str="open_drawer",
+        variation=0,
+        num_demos=1,
+        max_rrt_tries=10,
+        demo_consistency_tries=10,
+        verbose=True,
+    )
+    print("Success rate: ", sr)
+    print("Valid demos: ", np.count_nonzero(demo_valid))
+    print("Invalid demos: ", np.count_nonzero(~demo_valid))
+    print("Success rates: ", success_rates)
+    return
+
+def test_evaluation():
+    pass
+
+def test_replay():
+    data_path = "/home/felix/Workspace/diffusion_policy_felix/data/peract"
+    env = RLBenchEnv(
+        data_path=data_path,
+        headless=True,
+        collision_checking=False,
+        obs_history_augmentation_every_n=2,
+        apply_rgb=True,
+        apply_pc=True
     )
 
-    env.verify_demos("open_drawer", -1, 10, max_tries=4, verbose=True)
+    task_str = "open_drawer"
+    task_type = task_file_to_task_class(task_str)
+    task = env.env.get_task(task_type)
+    variation = 0
+    task.set_variation(variation)
 
+    demos = env.get_demo(task_str, variation, episode_index=0)
+
+    def get_action_from_demo(self, demo):
+        """
+        Fetch the desired state and action based on the provided demo.
+            :param demo: fetch each demo and save key-point observations
+            :return: a list of obs and action
+        """
+        key_frame = keypoint_discovery(demo)
+
+        action_ls = []
+        keypoint_ls = []
+        keypoint_ls.append(object_poses_to_keypoints(demo[0].misc['object_poses']))
+        for i in range(len(key_frame)):
+            obs = demo[key_frame[i]]
+            action_np = np.concatenate([obs.gripper_pose, [obs.gripper_open]])
+            action = torch.from_numpy(action_np)
+            action_ls.append(action.unsqueeze(0))
+
+            keypoints = object_poses_to_keypoints(obs.misc['object_poses'])
+            keypoint_ls.append(torch.from_numpy(keypoints).unsqueeze(0))
+        return action_ls, keypoint_ls
+
+    class ReplayPolicy:
+        def __init__(self, demo):
+            self._actions, self._keypoints = get_action_from_demo(None, demo)
+            self.idx = 0
+            self.n_obs_steps = 2
+
+        def predict_action(self, obs):
+            return {
+                "action": self._actions.pop(0).unsqueeze(0),
+            }
+        
+        def eval(self):
+            pass
+
+        def parameters(self):
+            return iter([torch.empty(0)])
+
+    policy = ReplayPolicy(demos[0])
+        
+    replay_actioner = Actioner(
+        policy=policy,
+        instructions={task_str: [[torch.rand(10)],[torch.rand(10)],[torch.rand(10)]]},
+        action_dim=8,
+    )
+    
+    env._evaluate_task_on_demos(
+        task_str=task_str,
+        task=task,
+        max_steps=3,
+        demos=demos,
+        actioner=replay_actioner,
+        max_rtt_tries=10,
+        demo_tries=1,
+        verbose=True,
+        num_history=policy.n_obs_steps,
+    )
+    env.env.shutdown()
 
 if __name__ == "__main__":
-    test()
+    test_replay()
+    # test()
     print("Done!")
