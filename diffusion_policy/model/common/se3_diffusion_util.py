@@ -7,13 +7,13 @@ import torch
 def marginal_prob_std(t, sigma=0.5):
     return torch.sqrt((sigma ** (2 * t) - 1.) / (2. * np.log(sigma)))
 
-def sample_from_se3_gaussian(x_tar, R_tar, std):
-    x_eps = std[:,None]*torch.randn_like(x_tar)
-    theta_eps = std[:,None]*torch.randn_like(x_tar)
+def sample_from_se3_gaussian(x_mean, R_mean, std):
+    x_eps = std[:,None]*torch.randn_like(x_mean)
+    theta_eps = std[:,None]*torch.randn_like(x_mean)
     rot_eps = SO3().exp_map(theta_eps).to_matrix()
 
-    _x = x_tar + x_eps
-    _R = torch.einsum('bmn,bnk->bmk',R_tar, rot_eps)
+    _x = x_mean + x_eps
+    _R = torch.einsum('bmn,bnk->bmk',R_mean, rot_eps)
     return _x, _R
 
 def se3_log_probability_normal(x, R, x_tar, R_tar, std):
