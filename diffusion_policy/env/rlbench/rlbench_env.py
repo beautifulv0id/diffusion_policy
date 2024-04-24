@@ -17,11 +17,10 @@ from rlbench.action_modes.action_mode import MoveArmThenGripper
 from rlbench.action_modes.gripper_action_modes import Discrete
 from rlbench.action_modes.arm_action_modes import EndEffectorPoseViaPlanning
 from rlbench.backend.exceptions import InvalidActionError
-from diffusion_policy.env.rlbench.rlbench_utils import Mover, Actioner, task_file_to_task_class, keypoint_discovery, transform, get_object_pose_indices_from_task
+from diffusion_policy.env.rlbench.rlbench_utils import Mover, Actioner, task_file_to_task_class, keypoint_discovery, transform, get_actions_from_demo
 from rlbench.demo import Demo
 from pyrep.errors import IKError, ConfigurationPathError
 from pyrep.const import RenderMode
-from diffusion_policy.common.launch_utils import object_poses_to_keypoints
 from scipy.spatial.transform import Rotation as R
 from pyrep.objects.dummy import Dummy
 from pyrep.objects.vision_sensor import VisionSensor
@@ -62,7 +61,7 @@ class RLBenchEnv:
         apply_cameras=("left_shoulder", "right_shoulder", "wrist", "front"),
         collision_checking=False,
         obs_history_augmentation_every_n=10,
-        render_img_size=[128, 128]
+        render_image_size=[128, 128]
     ):
 
         # setup required inputs
@@ -90,7 +89,7 @@ class RLBenchEnv:
             headless=headless
         )
         self.image_size = image_size
-        self._render_img_size = render_img_size
+        self._render_img_size = render_image_size
         self._rgbs = []
         self._recording = False
         self._cam = None
@@ -431,7 +430,7 @@ class RLBenchEnv:
                     npad = num_history - gripper_input.shape[1]
                     b, _, n, c, h, w = rgbs_input.shape
                     gripper_input = F.pad(
-                        gripper_input, (0, 0, npad, 0), mode='replicate'
+                        gripper_input, (0, 0, 0, 0, npad, 0), mode='replicate'
                     )
                     rgbs_input = F.pad(
                             rgbs_input.reshape(rgbs_input.shape[:2] + (-1,)),
@@ -442,9 +441,9 @@ class RLBenchEnv:
                         (0, 0, npad, 0), mode='replicate'
                     ).view(b, -1, n, c, h, w)
                     obs = {
-                        "rgbs": rgbs_input.unsqueeze(0),
-                        "pcds": pcds_input.unsqueeze(0),
-                        "grippers": gripper_input.unsqueeze(0),
+                        "rgbs": rgbs_input,
+                        "pcds": pcds_input,
+                        "grippers": gripper_input,
                     }
                     action = actioner.predict(obs)
 
@@ -616,9 +615,9 @@ class RLBenchEnv:
         self.env.shutdown()
         return success_rate, demo_valid, demo_success_rates
 
-
+    @staticmethod
     def create_obs_config(
-        self, image_size, apply_rgb, apply_depth, apply_pc, apply_cameras, **kwargs
+        image_size, apply_rgb, apply_depth, apply_pc, apply_cameras, **kwargs
     ):
         """
         Set up observation config for RLBench environment.
@@ -715,30 +714,9 @@ def test_replay():
 
     demos = env.get_demo(task_str, variation, episode_index=0)
 
-    def get_action_from_demo(self, demo):
-        """
-        Fetch the desired state and action based on the provided demo.
-            :param demo: fetch each demo and save key-point observations
-            :return: a list of obs and action
-        """
-        key_frame = keypoint_discovery(demo)
-
-        action_ls = []
-        keypoint_ls = []
-        keypoint_ls.append(object_poses_to_keypoints(demo[0].misc['object_poses']))
-        for i in range(len(key_frame)):
-            obs = demo[key_frame[i]]
-            action_np = np.concatenate([obs.gripper_pose, [obs.gripper_open]])
-            action = torch.from_numpy(action_np)
-            action_ls.append(action.unsqueeze(0))
-
-            keypoints = object_poses_to_keypoints(obs.misc['object_poses'])
-            keypoint_ls.append(torch.from_numpy(keypoints).unsqueeze(0))
-        return action_ls, keypoint_ls
-
     class ReplayPolicy:
         def __init__(self, demo):
-            self._actions, self._keypoints = get_action_from_demo(None, demo)
+            self._actions = get_actions_from_demo(demo)
             self.idx = 0
             self.n_obs_steps = 2
 
@@ -772,7 +750,7 @@ def test_replay():
         verbose=True,
         num_history=policy.n_obs_steps,
     )
-    env.env.shutdown()
+    env.shutdown()
 
 if __name__ == "__main__":
     test_replay()

@@ -201,8 +201,7 @@ class TrainFlowMatchingUnetLowDimWorkspace(BaseWorkspace):
         env_runner = hydra.utils.instantiate(
             cfg.task.env_runner,
             output_dir=self.output_dir,
-            demos=dataset.demos,
-            eval_demos=val_dataset.demos)
+        )
 
         # configure logging
         wandb_run = wandb.init(
@@ -309,9 +308,9 @@ class TrainFlowMatchingUnetLowDimWorkspace(BaseWorkspace):
                     # run rollout
                     if (self.epoch % cfg.training.rollout_every) == 0 \
                             and self.epoch > 0 or self.epoch == cfg.training.num_epochs-1:
-                        runner_log = env_runner.run(policy, mode="train")
+                        runner_log = env_runner.run(policy, dataset.demos, mode="train")
                         runner_log.update(
-                            env_runner.run(policy, mode="eval")
+                            env_runner.run(policy, val_dataset.demos, mode="eval")
                         )
                         # log all
                         step_log.update(runner_log)

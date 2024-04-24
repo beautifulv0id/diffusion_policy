@@ -290,6 +290,21 @@ def get_object_pose_indices_from_task(task : Task):
     state_idxs = state_sizes[mask]
     return state_idxs
 
+def get_actions_from_demo(demo):
+    """
+    Fetch the desired state and action based on the provided demo.
+        :param demo: fetch each demo and save key-point observations
+        :return: a list of obs and action
+    """
+    key_frame = keypoint_discovery(demo)
+
+    action_ls = []
+    for i in range(len(key_frame)):
+        obs = demo[key_frame[i]]
+        action_np = np.concatenate([obs.gripper_pose, [obs.gripper_open]])
+        action = torch.from_numpy(action_np)
+        action_ls.append(action.unsqueeze(0))
+    return action_ls
 
 class CameraMotion(object):
     def __init__(self, cam: VisionSensor):

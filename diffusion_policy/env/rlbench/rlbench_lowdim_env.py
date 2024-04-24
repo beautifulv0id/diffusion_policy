@@ -693,9 +693,9 @@ def test_replay():
         verbose=True,
         num_history=policy.n_obs_steps,
     )
-    env.env.shutdown()
+    env.shutdown()
 
 if __name__ == "__main__":
-    test_evaluation()
+    test_replay()
     # test()
     print("Done!")
