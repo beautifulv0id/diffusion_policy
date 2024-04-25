@@ -1,7 +1,6 @@
 import os
 import glob
 
-import open3d
 import traceback
 from tqdm import tqdm
 import numpy as np
