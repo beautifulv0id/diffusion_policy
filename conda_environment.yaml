@@ -10,6 +10,7 @@ dependencies:
   - cudatoolkit=11.6
   - pytorch=1.12.1
   - torchvision=0.13.1
+  - pytorch-cuda=11.6
   - pytorch3d=0.7.0
   - numpy=1.23.3
   - numba==0.56.4
@@ -63,3 +64,6 @@ dependencies:
     - imagecodecs==2022.9.26
     - r3m @ https://github.com/facebookresearch/r3m/archive/b2334e726887fa0206962d7984c69c5fb09cceab.tar.gz
     - dm-control==1.0.9
+    - git+https://github.com/openai/CLIP.git
+    - theseus-ai==0.1.3
+
