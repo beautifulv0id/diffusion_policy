@@ -443,7 +443,7 @@ class RLBenchEnv:
                     obs = {
                         "rgbs": rgbs_input,
                         "pcds": pcds_input,
-                        "grippers": gripper_input,
+                        "curr_gripper": gripper_input,
                     }
                     action = actioner.predict(obs)
 

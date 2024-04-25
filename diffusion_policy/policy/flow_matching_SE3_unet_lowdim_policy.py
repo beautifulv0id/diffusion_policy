@@ -344,7 +344,7 @@ OmegaConf.register_new_resolver("eval", eval, replace=True)
 def test(cfg: OmegaConf):
     from copy import deepcopy
     OmegaConf.resolve(cfg)
-    policy : FlowMatchingUnetLowDimPolicy = hydra.utils.instantiate(cfg.policy)
+    policy : FlowMatchingSE3UnetLowDimPolicy = hydra.utils.instantiate(cfg.policy)
     policy = policy.to(cfg.training.device)
     dataset = hydra.utils.instantiate(cfg.task.dataset)
     batch = dict_apply(dataset[0], lambda x: x.unsqueeze(0).float().cuda())

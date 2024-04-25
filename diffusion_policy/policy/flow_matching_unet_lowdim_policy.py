@@ -6,9 +6,9 @@ from diffusion_policy.policy.base_lowdim_policy import BaseLowdimPolicy
 from diffusion_policy.common.common_utils import action_from_trajectory_gripper_open_ignore_collision
 from diffusion_policy.common.pytorch_util import dict_apply
 from scipy.spatial.transform import Rotation 
-from pytorch3d.transforms import quaternion_to_matrix
-from diffusion_policy.common.rotation_utils import SO3_log_map, SO3_exp_map, normalise_quat, get_ortho6d_from_rotation_matrix, compute_rotation_matrix_from_ortho6d, matrix_to_quaternion
-
+from pytorch3d.transforms import quaternion_to_matrix, matrix_to_quaternion
+from diffusion_policy.common.rotation_utils import normalise_quat, get_ortho6d_from_rotation_matrix, compute_rotation_matrix_from_ortho6d, SO3_exp_map
+from diffusion_policy.common.flow_matching_utils import sample_xt, compute_conditional_vel
 class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
     def __init__(self, 
             shape_meta: dict,
@@ -22,7 +22,7 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
             gripper_loc_bounds=None,
             relative_position=True,
             relative_rotation=True,
-            rotation_parametrization='6D',
+            rotation_parametrization='matrix',
             noise_aug_std=0.1,
             velocity_scale=1.0,
             # parameters passed to step
@@ -32,8 +32,6 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
         # parse shape_meta
         action_shape = shape_meta['action']['shape']
         assert len(action_shape) == 2
-        # TODO: make this more general
-        action_dim = 12
         obs_shape_meta = shape_meta['obs']
         obs_config = {
             'low_dim': [],
@@ -63,9 +61,9 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
             nn.Linear(128, 2*horizon),
         )
 
+        self.action_dim = 7 if rotation_parametrization == 'quat' else 9
         self.horizon = horizon
         self.obs_feature_dim = obs_feature_dim
-        self.action_dim = action_dim
         self.n_action_steps = n_action_steps
         self.n_obs_steps = n_obs_steps
         self.gripper_loc_bounds = torch.tensor(gripper_loc_bounds)
@@ -112,7 +110,8 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
     def convert_rot(self, signal):
         signal[..., 3:7] = normalise_quat(signal[..., 3:7])
         if self._rotation_parametrization == '6D':
-            rot = quaternion_to_matrix(signal[..., 3:7])
+            #TODO: check why 3D Diffuser Actor is different
+            rot = quaternion_to_matrix(torch.cat([signal[:,:,6:7], signal[:,:,3:6]], dim=-1))
             res = signal[..., 7:] if signal.size(-1) > 7 else None
             if len(rot.shape) == 4:
                 B, L, D1, D2 = rot.shape
@@ -124,11 +123,6 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
             signal = torch.cat([signal[..., :3], rot_6d], dim=-1)
             if res is not None:
                 signal = torch.cat((signal, res), -1)
-        if self._rotation_parametrization == 'matrix':
-            trajectory = torch.eye(4, device=self.device, dtype=self.dtype).reshape(1,1,4,4).repeat(signal.shape[0], self.horizon, 1, 1)
-            trajectory[:,:,:3,3] = signal[:,:,:3]
-            trajectory[:,:,:3,:3] = quaternion_to_matrix(torch.cat([signal[:,:,6:7], signal[:,:,3:6]], dim=-1))
-            signal = trajectory
         return signal
     
     """
@@ -150,12 +144,20 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
             signal = torch.cat([signal[..., :3], quat], dim=-1)
             if res is not None:
                 signal = torch.cat((signal, res), -1)
-        if self._rotation_parametrization == 'matrix':
-            pos = signal[:,:,:3,3]
-            rot = signal[:,:,:3,:3]
-            quat = matrix_to_quaternion(rot)
-            signal = torch.cat([pos, quat], dim=-1)
         return signal
+    
+    def convert_action_to_trajectory(self, action):
+        trajectory = torch.eye(4, device=self.device, dtype=self.dtype).reshape(1,1,4,4).repeat(action.shape[0], self.horizon, 1, 1)
+        trajectory[:,:,:3,3] = action[:,:,:3]
+        trajectory[:,:,:3,:3] = quaternion_to_matrix(torch.cat([action[:,:,6:7], action[:,:,3:6]], dim=-1))
+        return trajectory
+    
+    def convert_trajectory_to_action(self, trajectory):
+        action = torch.zeros(trajectory.shape[0], self.horizon, 7, device=self.device, dtype=self.dtype)
+        action[:,:,:3] = trajectory[:,:,:3,3]
+        action[:,:,3:7] = matrix_to_quaternion(trajectory[:,:,:3,:3])
+        return action
+
         
     def normalize_obs(self, obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         agent_pose = obs_dict['agent_pose'].clone()
@@ -165,12 +167,7 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
         obs_dict['agent_pose'] = agent_pose
         obs_dict['keypoint_pcd'] = keypoint_pcd
         return obs_dict
-    
-    def unnormalize_action(self, action: torch.Tensor) -> torch.Tensor:
-        action = action.clone()
-        action[:,:,:3,3] = self.unnormalize_pos(action[:,:,:3,3])
-        return action
-    
+        
     def toHomogeneous(self, x):
         return torch.cat([x, torch.ones_like(x[...,0:1])], dim=-1)
     
@@ -204,17 +201,16 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
         return this_action
     
 
-    # ========= inference  ============    
-    def get_random_pose(self, batch_size):
-        lR = torch.randn((batch_size, 3), device=self.device, dtype=self.dtype)
-        R = SO3_exp_map(lR)
-        t = torch.randn((batch_size, 3), device=self.device, dtype=self.dtype)
-        H = torch.eye(4, device=self.device, dtype=self.dtype)[None,...].repeat(batch_size,1,1)
-        H[:, :3, :3] = R
-        H[:, :3, -1] = t
-        return H
+    # ========= inference  ============        
+    def sample_noise(self, batch_size):
+        if self._rotation_parametrization == '6D':
+            noise = torch.randn((batch_size, 9), device=self.device, dtype=self.dtype)
+        elif self._rotation_parametrization == 'quat':
+            noise = torch.randn((batch_size, 7), device=self.device, dtype=self.dtype)
+        return noise
 
-    def sample(self, global_cond, batch_size=64, To=1, T=100, get_traj=False):
+
+    def sample(self, global_cond, batch_size=64, To=1, T=100):
 
         with torch.no_grad():
             steps = T
@@ -223,39 +219,20 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
 
             # Euler method
             # sample H_0 first
-            H0 = self.get_random_pose(batch_size=batch_size*To)
-
-            if get_traj:
-                trj = H0[:,None,...].repeat(1,steps,1,1)
-            Ht = H0
+            X0 = self.sample_noise(batch_size*To)
+            Xt = X0
             for s in range(0, steps):
-                ut = self.velocity_scale*self.action_decoder(Ht.view(batch_size,To,4,4), t[s]*torch.ones_like(Ht[:,0,0]), global_cond)
+                ut = self.velocity_scale*self.action_decoder(Xt.view(batch_size,To,4,4), t[s]*torch.ones_like(Xt[:,0,0]), global_cond)
                 utdt = ut*dt
 
-                utdt = utdt.reshape(batch_size*To, 6)
+                utdt = utdt.reshape(batch_size*To, self.action_dim)
 
-                ## rotation update ##
-                R_w_t = Ht[:, :3, :3]
-                R_w_tp1 = SO3_exp_map(utdt[:, :3])
-                R_w_tp1 = torch.matmul(R_w_t, R_w_tp1)           
+                ## update ##
+                Xt = Xt + utdt
+                        
+        Xt = Xt.reshape(batch_size, To, self.action_dim)
 
-                ## translation update ##
-                x_t = Ht[:, :3, -1]
-                x_utdt = utdt[:, 3:]
-                x_tp1 = x_t + x_utdt
-
-                Ht[:, :3, :3] = R_w_tp1
-                Ht[:, :3, -1] = x_tp1
-                if get_traj:
-                    trj[:,s,...] = Ht
-        
-        Ht = Ht.reshape(batch_size, To, 4, 4)
-
-        if get_traj:
-            trj = trj.reshape(batch_size, steps, To, 4, 4)
-            return Ht, trj
-        else:
-            return Ht
+        return Xt
 
     def predict_action(self, obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         """
@@ -287,15 +264,17 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
         global_cond = nobs_features
 
         # run sampling
-        trajectory_pred = self.sample(global_cond, B, T)
+        action_pred = self.sample(global_cond, B, T)
 
         # regress gripper open
         gripper_state_ignore_collision_prediction = self.gripper_state_ignore_collision_predictor(nobs_features).reshape(B, T, 2)
         gripper_state_ignore_collision_prediction = torch.sigmoid(gripper_state_ignore_collision_prediction)
         gripper_state, ignore_collision = (gripper_state_ignore_collision_prediction > 0.5).float().chunk(2, dim=-1)
         
+        trajectory_pred = self.unconvert_rot(action_pred)
+        
         # unnormalize prediction
-        trajectory_pred = self.unnormalize_action(trajectory_pred)
+        trajectory_pred[:,:,:3,3] = self.unnormalize_pos(trajectory_pred[:,:,:3,3])
 
         if self.relative_position or self.relative_rotation:
             trajectory_pred = self.convert2abs(x_curr, R_curr, trajectory_pred)
@@ -310,25 +289,22 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
         return result
     
     # ========= training  ============
-    def augment_obs(self, obs):
-        B = obs['agent_pose'].shape[0]
-        R = SO3_exp_map(torch.normal(mean=0, std=self.noise_aug_std, size=(B, 3), device=self.device))
-        x = torch.normal(mean=0, std=self.noise_aug_std, size=(B, 3), device=self.device)
-        H_delta = torch.eye(4, device=self.device, dtype=self.dtype).reshape(1,4,4).repeat(B, 1, 1)
-        H_delta[:,:3,3] = x
-        H_delta[:,:3,:3] = R
-        obs["agent_pose"] = torch.einsum('bmn,bhnk->bhmk', H_delta, obs["agent_pose"])
-        return obs
+    # def augment_obs(self, obs):
+    #     B = obs['agent_pose'].shape[0]
+    #     R = SO3_exp_map(torch.normal(mean=0, std=self.noise_aug_std, size=(B, 3), device=self.device))
+    #     x = torch.normal(mean=0, std=self.noise_aug_std, size=(B, 3), device=self.device)
+    #     H_delta = torch.eye(4, device=self.device, dtype=self.dtype).reshape(1,4,4).repeat(B, 1, 1)
+    #     H_delta[:,:3,3] = x
+    #     H_delta[:,:3,:3] = R
+    #     obs["agent_pose"] = torch.einsum('bmn,bhnk->bhmk', H_delta, obs["agent_pose"])
+    #     return obs
     
     def compute_loss(self, batch):
         # normalize input
         obs = batch['obs']
         actions = batch['action'].float()
         
-        trajectory = torch.eye(4, device=self.device, dtype=self.dtype).reshape(1,1,4,4).repeat(actions.shape[0], self.horizon, 1, 1)
-        trajectory[:,:,:3,3] = actions[:,:,:3]
-        trajectory[:,:,:3,:3] = quaternion_to_matrix(torch.cat([actions[:,:,6:7], actions[:,:,3:6]], dim=-1))
-
+        trajectory = self.convert_action_to_trajectory(actions[:,:,:7])
         x_curr = obs['agent_pose'][:,-1,:3,3].clone()
         R_curr = obs['agent_pose'][:,-1,:3,:3].clone()
 
@@ -339,6 +315,7 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
         nobs = self.normalize_obs(obs)
         trajectory = trajectory.clone()
         trajectory[:,:,:3,3] = self.normalize_pos(trajectory[:,:,:3,3])
+
         # augment obs
         if self.data_augmentation:
             nobs = self.augment_obs(nobs)
@@ -353,76 +330,36 @@ class FlowMatchingUnetLowDimPolicy(BaseLowdimPolicy):
         device = self.device
         dtype = self.dtype
         nobs = dict_apply(nobs, lambda x: x.type(dtype).to(device))
-        trajectory = trajectory.type(dtype).to(device)
+        nactions = self.convert_trajectory_to_action(trajectory)
+        nactions = self.convert_rot(nactions)
+        nactions = nactions.type(dtype).to(device)
 
         # reshape B, T, ... to B*T
         this_nobs = dict_apply(nobs, 
             lambda x: x[:,:To,...])
         
-        nobs_features = self.observation_encoder(this_nobs)
+        global_cond = self.observation_encoder(this_nobs)
 
-        global_cond = nobs_features
+        X1 = nactions.flatten(0,1)
+        X0 = self.sample_noise(B*To)
+        t = torch.rand(X0.shape[0], device=device, dtype=dtype)
 
-        H1 = trajectory.flatten(0,1)
-        H0 = self.get_random_pose(B*To)
-        t = torch.rand(H0.shape[0], device=device, dtype=dtype)
+        Xt = sample_xt(X0, X1, t)
+        vt_gt = compute_conditional_vel(X1, Xt, t)
 
-        ## Sample X at time t through the Geodesic from x0 -> x1
-        def sample_xt(x0, x1, t):
-            """
-            Function which compute the sample xt along the geodesic from x0 to x1 on SE(3).
-            """
-            ## Point to translation and rotation ##
-            t_0, R_w_0 = x0[:, :3, -1], x0[:, :3, :3]
-            t_1, R_w_1 = x1[:, :3, -1], x1[:, :3, :3]
-
-            ## Get rot_t ##
-            R_0_w = torch.transpose(R_w_0, -1, -2)
-            R_0_1 = torch.matmul(R_0_w,R_w_1)
-            lR_0_1 = SO3_log_map(R_0_1)
-            R_0_t = SO3_exp_map(lR_0_1*t[:,None])
-            R_w_t = torch.matmul(R_w_0, R_0_t)
-
-            ## Get trans_t ##
-            x_t = t_0*(1. - t[:,None]) + t_1*t[:,None]
-
-            Ht = torch.eye(4, device=device)[None,...].repeat(R_w_t.shape[0], 1, 1)
-            Ht[:, :3, :3] = R_w_t
-            Ht[:, :3, -1] = x_t
-            return Ht
-
-        Ht = sample_xt(H0, H1, t)
-
-        ## Compute velocity target at xt at time t through the geodesic x0 -> x1
-        def compute_conditional_vel(x0, H_w_1, H_w_t, t):
-            x_t, R_w_t = H_w_t[:, :3, -1], H_w_t[:, :3, :3]
-            x_1, R_w_1 = H_w_1[:, :3, -1], H_w_1[:, :3, :3]
-
-            ## Compute Velocity in rot ##
-            R_t_w = torch.transpose(R_w_t, -1, -2)
-            R_t_1 = torch.matmul(R_t_w, R_w_1)
-            lR_t_ut = SO3_log_map(R_t_1) / torch.clip((1 - t[:, None]), 0.01, 1.)
-
-            ## Compute Velocity in trans ##
-            x_ut = (x_1 - x_t)/ torch.clip((1 - t[:, None]), 0.01, 1.)
-
-            return torch.cat((lR_t_ut, x_ut), dim=1).detach()
-
-        ut = compute_conditional_vel(H0, H1, Ht, t)
-        ut = ut.reshape(B, -1)
+        vt_gt = vt_gt.reshape(B, -1)
 
         # regress gripper open
         pred = self.gripper_state_ignore_collision_predictor(global_cond).reshape(B, T, 2)
-
         regression_loss = F.binary_cross_entropy_with_logits(pred, actions[:,:,7:9])
 
-        # Predict the noise residual
-        Ht.requires_grad = True
+        # Predict velocity
+        Xt.requires_grad = True
         t.requires_grad = True
-        Ht = Ht.reshape(B, To, 4, 4)
-        vt = self.action_decoder(Ht, t, global_cond)
+        Xt = Xt.reshape(B, To, 4, 4)
+        vt_pred = self.action_decoder(Xt, t, global_cond)
 
-        loss = torch.mean((ut-vt)**2)
+        loss = torch.mean((vt_gt-vt_pred)**2)
         loss += regression_loss * 0.1
         return loss
 

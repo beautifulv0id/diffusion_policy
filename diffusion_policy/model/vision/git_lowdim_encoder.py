@@ -4,7 +4,7 @@ from diffusion_policy.model.common.module_attr_mixin import ModuleAttrMixin
 from diffusion_policy.common.pytorch_util import dict_apply, replace_submodules
 from diffusion_policy.model.common.geometry_invariant_transformer import GeometryInvariantTransformer
 from diffusion_policy.model.common.position_encodings import SinusoidalPosEmb
-from diffusion_policy.model.common.layer import RelativeCrossAttentionModule
+from diffusion_policy.model.common.layers import FFWRelativeCrossAttentionModule
 import einops
 
 # TODO: proper naming, remove relative? Change to something w/ SE3?
@@ -15,7 +15,7 @@ class GITLowdimEncoder(ModuleAttrMixin):
             query_embeddings: nn.Embedding,
             keypoint_embeddings: nn.Embedding,
             positional_embedder: SinusoidalPosEmb,
-            across_attn : RelativeCrossAttentionModule,
+            across_attn : FFWRelativeCrossAttentionModule,
             embed_dim: int = 60,
             depth: int = 2,
             num_heads: int = 4,

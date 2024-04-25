@@ -16,12 +16,12 @@ positional_embedder:
   _target_: diffusion_policy.model.common.position_encodings.SinusoidalPosEmb
   dim: ${embedding_dim}
 within_attn: 
-  _target_: diffusion_policy.model.common.layer.RelativeCrossAttentionModule
+  _target_: diffusion_policy.model.common.layers.FFWRelativeCrossAttentionModule
   embedding_dim: ${embedding_dim}
   num_attn_heads: 3
   num_layers: 2
 across_attn: 
-  _target_: diffusion_policy.model.common.layer.RelativeCrossAttentionModule
+  _target_: diffusion_policy.model.common.layers.FFWRelativeCrossAttentionModule
   embedding_dim: ${embedding_dim}
   num_attn_heads: 3
   num_layers: 2

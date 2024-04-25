@@ -9,7 +9,7 @@ from diffusion_policy.model.vision.center_crop import CenterCrop
 from diffusion_policy.model.common.module_attr_mixin import ModuleAttrMixin
 from diffusion_policy.common.pytorch_util import dict_apply, replace_submodules
 from diffusion_policy.model.common.position_encodings import RotaryPositionEncoding2D, SinusoidalPosEmb
-from diffusion_policy.model.common.layer import RelativeCrossAttentionModule
+from diffusion_policy.model.common.layers import FFWRelativeCrossAttentionModule
 import einops
 from torchvision.ops import FeaturePyramidNetwork
 
@@ -23,8 +23,8 @@ class TransformerHybridObsRelativeEncoder(ModuleAttrMixin):
             query_embeddings: nn.Embedding,
             rotary_embedder: RotaryPositionEncoding2D,
             positional_embedder: SinusoidalPosEmb,
-            within_attn : RelativeCrossAttentionModule,
-            across_attn : RelativeCrossAttentionModule,
+            within_attn : FFWRelativeCrossAttentionModule,
+            across_attn : FFWRelativeCrossAttentionModule,
             rgb_model_frozen: bool=True,
             resize_shape: Union[Tuple[int,int], Dict[str,tuple], None]=None,
             crop_shape: Union[Tuple[int,int], Dict[str,tuple], None]=None,

@@ -5,7 +5,7 @@ import torch.nn as nn
 from diffusion_policy.model.common.module_attr_mixin import ModuleAttrMixin
 from diffusion_policy.common.pytorch_util import dict_apply, replace_submodules
 from diffusion_policy.model.common.position_encodings import RotaryPositionEncoding3D, SinusoidalPosEmb
-from diffusion_policy.model.common.layer import RelativeCrossAttentionModule
+from diffusion_policy.model.common.layers import FFWRelativeCrossAttentionModule
 import einops
 from scipy.spatial import transform
 
@@ -18,8 +18,8 @@ class TransformerLowdimObsRelativeEncoder(ModuleAttrMixin):
             keypoint_embeddings: nn.Embedding,
             rotary_embedder: RotaryPositionEncoding3D,
             positional_embedder: SinusoidalPosEmb,
-            within_attn : RelativeCrossAttentionModule,
-            across_attn : RelativeCrossAttentionModule,
+            within_attn : FFWRelativeCrossAttentionModule,
+            across_attn : FFWRelativeCrossAttentionModule,
         ):
         """
         Assumes rgb input: B,To,C,H,W

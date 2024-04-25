@@ -1,3 +1,4 @@
+# Code from https://github.com/zhouxian/act3d-chained-diffuser
 from torch import nn
 from torch.nn import functional as F
 
@@ -311,7 +312,9 @@ class RelativeCrossAttentionLayer(nn.Module):
 
 
 class FeedforwardLayer(nn.Module):
-    def __init__(self, embedding_dim, hidden_dim, dropout=0.0):
+
+    def __init__(self, embedding_dim, hidden_dim, dropout=0.0,
+                 use_adaln=False):
         super().__init__()
         self.linear1 = nn.Linear(embedding_dim, hidden_dim)
         self.dropout = nn.Dropout(dropout)
@@ -319,33 +322,189 @@ class FeedforwardLayer(nn.Module):
         self.norm = nn.LayerNorm(embedding_dim)
         self.activation = F.relu
         self._reset_parameters()
+        if use_adaln:
+            self.adaln = AdaLN(embedding_dim)
 
     def _reset_parameters(self):
         for p in self.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, x):
+    def forward(self, x, diff_ts=None):
+        if diff_ts is not None:
+            x = self.adaln(x, diff_ts)
         output = self.linear2(self.dropout(self.activation(self.linear1(x))))
         output = x + self.dropout(output)
         output = self.norm(output)
         return output
 
 
-class RelativeCrossAttentionModule(nn.Module):
-    def __init__(self, embedding_dim, num_attn_heads, num_layers):
+
+class RelativeCrossAttentionLayer(nn.Module):
+
+    def __init__(self, embedding_dim, num_heads, dropout=0.0, use_adaln=False):
+        super().__init__()
+        self.multihead_attn = MultiheadCustomAttention(
+            embedding_dim, num_heads, dropout=dropout
+        )
+        self.norm = nn.LayerNorm(embedding_dim)
+        self.dropout = nn.Dropout(dropout)
+        if use_adaln:
+            self.adaln = AdaLN(embedding_dim)
+
+    def forward(self, query, value, diff_ts=None,
+                query_pos=None, value_pos=None, pad_mask=None):
+        if diff_ts is not None:
+            adaln_query = self.adaln(query, diff_ts)
+        else:
+            adaln_query = query
+        attn_output, _ = self.multihead_attn(
+            query=adaln_query,
+            key=value,
+            value=value,
+            rotary_pe=None if query_pos is None else (query_pos, value_pos),
+            key_padding_mask=pad_mask
+        )
+        output = query + self.dropout(attn_output)
+        output = self.norm(output)
+        return output
+
+
+
+class SelfAttentionLayer(nn.Module):
+
+    def __init__(self, embedding_dim, num_heads, dropout=0.0, use_adaln=False):
+        super().__init__()
+        self.multihead_attn = MultiheadCustomAttention(
+            embedding_dim, num_heads, dropout=dropout
+        )
+        self.norm = nn.LayerNorm(embedding_dim)
+        self.dropout = nn.Dropout(dropout)
+        if use_adaln:
+            self.adaln = AdaLN(embedding_dim)
+
+    def forward(self, query, diff_ts=None,
+                query_pos=None, value_pos=None, pad_mask=None):
+        if diff_ts is not None:
+            adaln_query = self.adaln(query, diff_ts)
+        else:
+            adaln_query = query
+        attn_output, _ = self.multihead_attn(
+            query=adaln_query,
+            key=adaln_query,
+            value=adaln_query,
+        )
+        output = query + self.dropout(attn_output)
+        output = self.norm(output)
+        return output
+
+
+class FFWRelativeCrossAttentionModule(nn.Module):
+
+    def __init__(self, embedding_dim, num_attn_heads, num_layers,
+                 use_adaln=True):
         super().__init__()
 
+        self.num_layers = num_layers
         self.attn_layers = nn.ModuleList()
         self.ffw_layers = nn.ModuleList()
         for _ in range(num_layers):
-            self.attn_layers.append(RelativeCrossAttentionLayer(embedding_dim, num_attn_heads))
-            self.ffw_layers.append(FeedforwardLayer(embedding_dim, embedding_dim))
+            self.attn_layers.append(RelativeCrossAttentionLayer(
+                embedding_dim, num_attn_heads, use_adaln=use_adaln
+            ))
+            self.ffw_layers.append(FeedforwardLayer(
+                embedding_dim, embedding_dim, use_adaln=use_adaln
+            ))
 
-    def forward(self, query, value, query_pos=None, value_pos=None):
+    def forward(self, query, value, diff_ts=None,
+                query_pos=None, value_pos=None):
         output = []
-        for i in range(len(self.attn_layers)):
-            query, _ = self.attn_layers[i](query, value, query_pos, value_pos)
-            query = self.ffw_layers[i](query)
+        for i in range(self.num_layers):
+            query = self.attn_layers[i](
+                query, value, diff_ts, query_pos, value_pos
+            )
+            query = self.ffw_layers[i](query, diff_ts)
+            output.append(query)
+        return output
+
+
+class FFWRelativeSelfAttentionModule(nn.Module):
+
+    def __init__(self, embedding_dim, num_attn_heads, num_layers,
+                 use_adaln=True):
+        super().__init__()
+
+        self.num_layers = num_layers
+        self.attn_layers = nn.ModuleList()
+        self.ffw_layers = nn.ModuleList()
+        for _ in range(num_layers):
+            self.attn_layers.append(RelativeCrossAttentionLayer(
+                embedding_dim, num_attn_heads, use_adaln=use_adaln
+            ))
+            self.ffw_layers.append(FeedforwardLayer(
+                embedding_dim, embedding_dim, use_adaln=use_adaln
+            ))
+
+    def forward(self, query, diff_ts=None,
+                query_pos=None, context=None, context_pos=None):
+        output = []
+        for i in range(self.num_layers):
+            query = self.attn_layers[i](
+                query, query, diff_ts, query_pos, query_pos
+            )
+            query = self.ffw_layers[i](query, diff_ts)
+            output.append(query)
+        return output
+
+
+class FFWRelativeSelfCrossAttentionModule(nn.Module):
+
+    def __init__(self, embedding_dim, num_attn_heads,
+                 num_self_attn_layers, num_cross_attn_layers, use_adaln=True):
+        super().__init__()
+
+        self.num_layers = num_self_attn_layers
+        self.self_attn_layers = nn.ModuleList()
+        self.cross_attn_layers = nn.ModuleList()
+        self.ffw_layers = nn.ModuleList()
+
+        cross_inds = np.linspace(
+            0,
+            num_self_attn_layers,
+            num_cross_attn_layers + 1,
+            dtype=np.int32
+        ).tolist()
+        for ind in range(num_self_attn_layers):
+            self.self_attn_layers.append(RelativeCrossAttentionLayer(
+                embedding_dim, num_attn_heads, use_adaln=use_adaln
+            ))
+            if ind in cross_inds:
+                self.cross_attn_layers.append(RelativeCrossAttentionLayer(
+                    embedding_dim, num_attn_heads, use_adaln=use_adaln
+                ))
+            else:
+                self.cross_attn_layers.append(None)
+            self.ffw_layers.append(FeedforwardLayer(
+                embedding_dim, embedding_dim, use_adaln=use_adaln
+            ))
+
+    def forward(self, query, context, diff_ts=None,
+                query_pos=None, context_pos=None):
+        output = []
+        for i in range(self.num_layers):
+            # Cross attend to the context first
+            if self.cross_attn_layers[i] is not None:
+                if context_pos is None:
+                    cur_query_pos = None
+                else:
+                    cur_query_pos = query_pos
+                query = self.cross_attn_layers[i](
+                    query, context, diff_ts, cur_query_pos, context_pos
+                )
+            # Self attend next
+            query = self.self_attn_layers[i](
+                query, query, diff_ts, query_pos, query_pos
+            )
+            query = self.ffw_layers[i](query, diff_ts)
             output.append(query)
         return output
