@@ -56,15 +56,11 @@ class RGB2FeaturePyramid(nn.Module):
     def forward(self, rgb):
         ncam = rgb.shape[1]
         # Pass each view independently through backbone
-        rgb = einops.rearrange(rgb, "bt ncam c h w -> (bt ncam) c h w")
         rgb = self.normalize(rgb)
         rgb_features = self.backbone(rgb)
 
         # Pass visual features through feature pyramid network
         rgb_features = self.feature_pyramid(rgb_features)
-
-        for k,v in rgb_features.items():
-            rgb_features[k] = einops.rearrange(v, "(bt ncam) c h w -> bt ncam c h w", ncam=ncam)
         return rgb_features
     
 # Example usage
@@ -79,7 +75,7 @@ def test():
                 print(" "*3*indent+k+":", x[k].numpy().shape)
 
     
-    rgb = torch.randn(2, 4, 3, 256, 256)
+    rgb = torch.randn(2, 3, 256, 256)
     encoder = RGB2FeaturePyramid()
     features = encoder(rgb)
     
