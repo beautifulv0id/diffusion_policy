@@ -1,7 +1,7 @@
 import os
 import glob
 
-import open3d
+from pytorch3d.transforms import quaternion_to_matrix
 import traceback
 from tqdm import tqdm
 import numpy as np
@@ -23,6 +23,8 @@ from pyrep.errors import IKError, ConfigurationPathError
 from pyrep.const import RenderMode
 from scipy.spatial.transform import Rotation as R
 from pyrep.objects.dummy import Dummy
+from pyrep.objects.shape import Shape
+from pyrep.const import PrimitiveShape
 from pyrep.objects.vision_sensor import VisionSensor
 import wandb.sdk.data_types.video as wv
 from diffusion_policy.env.rlbench.rlbench_utils import CircleCameraMotion
@@ -47,6 +49,45 @@ def obs_to_attn(obs, camera):
     v = int((proj_3[1] / proj_3[2]).round())
 
     return u, v
+
+def create_axis(color = [1, 0, 0], name = 'x', size=[0.01, 0.01, 0.1], parent=None):
+    axis = Shape.create(type=PrimitiveShape.CYLINDER, 
+                                        size=size,
+                                        static=True,
+                                        respondable=False,
+                                        color=color,
+                                        renderable=True,
+                                        orientation=[0, 0, 0],)
+    
+    if parent is not None:
+        if name == 'x':
+            axis.set_position([size[2] / 2, 0, 0], relative_to=parent)
+            axis.set_orientation([0, np.pi / 2, 0], relative_to=parent)
+        elif name == 'y':
+            axis.set_position([0, size[2] / 2, 0], relative_to=parent)
+            axis.set_orientation([-np.pi / 2, 0, 0], relative_to=parent)
+        elif name == 'z':
+            axis.set_position([0, 0, size[2] / 2], relative_to=parent)
+            axis.set_orientation([0, 0, 0], relative_to=parent)
+        axis.set_parent(parent)
+        
+    axis.set_name(name)
+    return axis
+
+
+def create_coordinate_frame(size=[0.01, 0.01, 0.1]):
+    # Create a coordinate frame
+    sphere = Shape.create(type=PrimitiveShape.SPHERE,
+                            size=[0.01, 0.01, 0.01],
+                            static=True,
+                            respondable=False,
+                            color=[1, 1, 1],
+                            renderable=True,
+                            orientation=[0, 0, 0])
+    create_axis(color=[1, 0, 0], name='x', size=size, parent=sphere)
+    create_axis(color=[0, 1, 0], name='y', size=size, parent=sphere)
+    create_axis(color=[0, 0, 1], name='z', size=size, parent=sphere)
+    return sphere
 
 class RLBenchEnv:
 
@@ -93,21 +134,39 @@ class RLBenchEnv:
         self._rgbs = []
         self._recording = False
         self._cam = None
+        self._gripper_dummmy = None
+    
+    def create_gripper_dummy(self) -> Dummy:
+        gripper_shapes = [shape.copy() for shape in self.env._robot.gripper.get_visuals()]
+        gripper_dummy = Dummy.create()
+        pose = R.from_euler('xyz', [0, 0, 0]).as_quat()
+        pose = np.concatenate([Dummy('waypoint1').get_position(), pose])
+        gripper_dummy.set_pose(pose)
 
+        gripper_shapes[0].set_parent(gripper_dummy)
+        gripper_shapes[0].set_transparency(0.5)
+        gripper_shapes[1].set_parent(gripper_shapes[0])
+        gripper_shapes[1].set_transparency(0.5)
+        gripper_shapes[2].set_parent(gripper_shapes[0])
+        gripper_shapes[2].set_transparency(0.5)
+
+        gripper_shapes[0].set_position([0, 0, -0.09], relative_to=gripper_dummy)
+        gripper_shapes[0].set_orientation([np.pi/2, 0, 0], relative_to=gripper_dummy)
+
+        return gripper_dummy
     def launch(self):
-        if self.env._pyrep is not None:
-            if self._cam is None:
-                cam = VisionSensor.create(self._render_img_size)
-                cam.set_pose(Dummy('cam_cinematic_placeholder').get_pose())
-                cam.set_parent(Dummy('cam_cinematic_placeholder'))
-                self._cam_motion = CircleCameraMotion(cam, Dummy('cam_cinematic_base'), 0.005)
-                self._cam = cam
-            return
-        self.env.launch()
+        if self.env._pyrep is None:
+            self.env.launch()
+        if self._cam is None:
+            cam = VisionSensor.create(self._render_img_size)
+            cam.set_pose(Dummy('cam_cinematic_placeholder').get_pose())
+            cam.set_parent(Dummy('cam_cinematic_placeholder'))
+            self._cam_motion = CircleCameraMotion(cam, Dummy('cam_cinematic_base'), 0.005, init_rotation=np.deg2rad(0))
+            self._cam = cam
+        if self._gripper_dummmy is None:
+            self._gripper_dummmy = self.create_gripper_dummy() 
 
     def shutdown(self):
-        if self.env._pyrep is None:
-            return
         self.env.shutdown()
         self._cam_motion = None
         self._cam = None
@@ -230,9 +289,7 @@ class RLBenchEnv:
         action = action.cpu().numpy()
         position = action[:3]
         quaternion = action[3:7]
-        rotation = open3d.geometry.get_rotation_matrix_from_quaternion(
-            np.array((quaternion[3], quaternion[0], quaternion[1], quaternion[2]))
-        )
+        rotation = quaternion_to_matrix(torch.tensor([quaternion[3], quaternion[0], quaternion[1], quaternion[2]])).numpy()
         gripper_matrix = np.eye(4)
         gripper_matrix[:3, :3] = rotation
         gripper_matrix[:3, 3] = position
@@ -441,11 +498,14 @@ class RLBenchEnv:
                         (0, 0, npad, 0), mode='replicate'
                     ).view(b, -1, n, c, h, w)
                     obs = {
-                        "rgbs": rgbs_input,
-                        "pcds": pcds_input,
-                        "curr_gripper": gripper_input,
+                        "rgb": rgbs_input[:,-1], #TODO: fix this
+                        "pcd": pcds_input[:,-1],
+                        "agent_pose": gripper_input,
                     }
                     action = actioner.predict(obs)
+
+                    self._gripper_dummmy.set_pose(action[:7])
+                    self._gripper_dummmy.set_renderable(True)
 
                     if verbose:
                         print(f"Step {step_id}")
@@ -495,7 +555,6 @@ class RLBenchEnv:
                     f"SR: {successful_demos / ((demo_id+1) * demo_tries)}",
                     f"Total reward: {total_reward:.2f}/{(demo_id+1) * demo_tries}"                )
 
-        self.shutdown()
         log_data = {
             "success_rate": successful_demos / (len(demos) * demo_tries),
             "total_reward": total_reward,
@@ -703,7 +762,8 @@ def test_replay():
         collision_checking=False,
         obs_history_augmentation_every_n=2,
         apply_rgb=True,
-        apply_pc=True
+        apply_pc=True,
+        render_image_size=[1280, 720]
     )
 
     task_str = "open_drawer"
@@ -738,8 +798,9 @@ def test_replay():
         instructions={task_str: [[torch.rand(10)],[torch.rand(10)],[torch.rand(10)]]},
         action_dim=8,
     )
-    
-    env._evaluate_task_on_demos(
+
+
+    logs = env._evaluate_task_on_demos(
         task_str=task_str,
         task=task,
         max_steps=3,
@@ -747,12 +808,21 @@ def test_replay():
         actioner=replay_actioner,
         max_rtt_tries=10,
         demo_tries=1,
+        n_visualize=1,
         verbose=True,
         num_history=policy.n_obs_steps,
     )
-    env.shutdown()
+
+    def write_video(rgbs, path):
+        import imageio.v2 as iio
+        writer = iio.get_writer(path, fps=30, format='FFMPEG', mode='I')
+        for image in rgbs:
+            writer.append_data(image.transpose(1, 2, 0))
+        writer.close()
+
+    write_video(logs["rgbs_ls"][0], "/home/felix/Workspace/diffusion_policy_felix/data/videos/rlbench_runner_test.mp4")
+
 
 if __name__ == "__main__":
     test_replay()
-    # test()
     print("Done!")

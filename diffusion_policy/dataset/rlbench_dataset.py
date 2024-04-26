@@ -72,6 +72,7 @@ class RLBenchDataset(BaseImageDataset):
                                         n_obs=n_obs if not build_history_from_augment_obs else 1, 
                                         use_task_keypoints=use_task_keypoints,
                                         use_pcd=use_pcd,
+                                        use_rgb=use_rgb,
                                         keypoints_only=keypoints_only)
         
         val_dataset, val_demo_begin = create_dataset(val_demos,
@@ -80,6 +81,7 @@ class RLBenchDataset(BaseImageDataset):
                                         n_obs=n_obs if not build_history_from_augment_obs else 1, 
                                         use_task_keypoints=use_task_keypoints,
                                         use_pcd=use_pcd,
+                                        use_rgb=use_rgb,
                                         keypoints_only=keypoints_only)
         
         self.demos = train_demos
@@ -127,21 +129,25 @@ class RLBenchDataset(BaseImageDataset):
     def get_normalizer(self):
         pass
 
-import hydra
-from omegaconf import OmegaConf
-import pathlib
-OmegaConf.register_new_resolver("eval", eval, replace=True)
-import pickle 
-
-@hydra.main(
-    version_base=None,
-    config_path=str(pathlib.Path(__file__).parent.parent.joinpath(
-        'config')),
-    config_name='train_diffusion_unet_lowdim_relative_workspace.yaml'
-)
-def test(cfg: OmegaConf):
-    OmegaConf.resolve(cfg)
-    dataset : RLBenchDataset = hydra.utils.instantiate(cfg.task.dataset)
+def test():
+    dataset = RLBenchDataset(
+        root = "/home/felix/Workspace/diffusion_policy_felix/data/peract",
+        task_name="open_drawer",
+        num_episodes=1,
+        variation=0,
+        cameras = ['left_shoulder', 'right_shoulder', 'overhead', 'wrist', 'front'],
+        image_size=(128, 128),
+        n_obs=2,
+        build_history_from_augment_obs=True,
+        demo_augmentation_every_n=10,
+        use_task_keypoints=False,
+        use_pcd = True,
+        use_rgb = True,
+        use_depth = False,
+        use_mask = False,
+        keypoints_only=False,
+        val_ratio=0.0
+    )
 
     def print_dict(x, indent=0):
         for k in x.keys():

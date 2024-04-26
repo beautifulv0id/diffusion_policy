@@ -67,7 +67,6 @@ class RLBenchRunner(BaseLowdimRunner):
         
         task_type = task_file_to_task_class(self.task_str)
         task = self.env.env.get_task(task_type)
-        self.env.launch()
         log_data = self.env._evaluate_task_on_demos(
             demos=demos[:self.max_episodes],
             task_str=self.task_str,
@@ -76,7 +75,7 @@ class RLBenchRunner(BaseLowdimRunner):
             actioner=actioner,
             max_rtt_tries=self.max_rtt_tries,
             demo_tries=self.demo_tries,
-            verbose=False,
+            verbose=True,
             n_visualize=n_vis,
             num_history=policy.n_obs_steps,
         )
