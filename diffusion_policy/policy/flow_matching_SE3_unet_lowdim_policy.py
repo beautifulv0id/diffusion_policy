@@ -18,8 +18,6 @@ class FlowMatchingSE3UnetLowDimPolicy(BaseLowdimPolicy):
             horizon : int, 
             n_action_steps : int, 
             n_obs_steps : int,
-            num_inference_steps=1000,
-            delta_t=0.01,
             gripper_loc_bounds=None,
             relative_position=True,
             relative_rotation=True,
@@ -69,8 +67,6 @@ class FlowMatchingSE3UnetLowDimPolicy(BaseLowdimPolicy):
         self.relative_position = relative_position
         self.relative_rotation = relative_rotation
         self.kwargs = kwargs
-        self.num_inference_steps = num_inference_steps
-        self.dt = delta_t
         self.velocity_scale = velocity_scale
         if noise_aug_std > 0:
             self.noise_aug_std = noise_aug_std
@@ -260,10 +256,8 @@ class FlowMatchingSE3UnetLowDimPolicy(BaseLowdimPolicy):
         B = obs['agent_pose'].shape[0]
         R = SO3_exp_map(torch.normal(mean=0, std=self.noise_aug_std, size=(B, 3), device=self.device))
         x = torch.normal(mean=0, std=self.noise_aug_std, size=(B, 3), device=self.device)
-        H_delta = torch.eye(4, device=self.device, dtype=self.dtype).reshape(1,4,4).repeat(B, 1, 1)
-        H_delta[:,:3,3] = x
-        H_delta[:,:3,:3] = R
-        obs["agent_pose"] = torch.einsum('bmn,bhnk->bhmk', H_delta, obs["agent_pose"])
+        obs["agent_pose"][...,:3,:3] = torch.einsum('bmn,bhnk->bhmk', R, obs["agent_pose"][...,:3,:3])
+        obs["agent_pose"][...,:3,3] = obs["agent_pose"][...,:3,3] + x
         return obs
     
     def compute_loss(self, batch):

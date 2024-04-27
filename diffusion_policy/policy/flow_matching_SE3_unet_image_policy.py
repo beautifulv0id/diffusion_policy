@@ -277,10 +277,8 @@ class FlowMatchingSE3UnetImagePolicy(BaseImagePolicy):
         B = obs['agent_pose'].shape[0]
         R = SO3_exp_map(torch.normal(mean=0, std=self.noise_aug_std, size=(B, 3), device=self.device))
         x = torch.normal(mean=0, std=self.noise_aug_std, size=(B, 3), device=self.device)
-        H_delta = torch.eye(4, device=self.device, dtype=self.dtype).reshape(1,4,4).repeat(B, 1, 1)
-        H_delta[:,:3,3] = x
-        H_delta[:,:3,:3] = R
-        obs["agent_pose"] = torch.einsum('bmn,bhnk->bhmk', H_delta, obs["agent_pose"])
+        obs["agent_pose"][...,:3,:3] = torch.einsum('bmn,bhnk->bhmk', R, obs["agent_pose"][...,:3,:3])
+        obs["agent_pose"][...,:3,3] = obs["agent_pose"][...,:3,3] + x
         return obs
     
     def compute_loss(self, batch):

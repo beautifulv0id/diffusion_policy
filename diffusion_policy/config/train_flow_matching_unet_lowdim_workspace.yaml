@@ -67,8 +67,6 @@ policy:
   horizon: ${horizon}
   n_action_steps: ${n_action_steps}
   n_obs_steps: ${n_obs_steps}
-  num_inference_steps: 10
-  delta_t: 0.01
   gripper_loc_bounds: ${task.gripper_loc_bounds}
   relative_position: True
   relative_rotation: False

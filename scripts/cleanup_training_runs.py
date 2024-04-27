@@ -20,7 +20,7 @@ def bad_run(path):
     else:
         log = read_json_log(os.path.join(path, "logs.json.txt"), required_keys="global_step")
         if "global_step" in log:
-            if max(log["global_step"]) < 10000:
+            if max(log["global_step"]) < 100000:
                 valid = False
         else:
             valid = False
@@ -28,12 +28,15 @@ def bad_run(path):
 
 def delete_wandb_run(path):
     try:
-        with open(os.path.join(path, "wandb", "wandb-resume.json"), "r") as f:
-            run = json.load(f)['run_id']
-        api = wandb.Api()
-        run = api.run(f"{entity}/{project}/{run}")
-        run.delete()
-        print(f"Deleted wandb run {run}")
+        if os.path.exists(os.path.join(path, "wandb", "wandb-resume.json")):
+            with open(os.path.join(path, "wandb", "wandb-resume.json"), "r") as f:
+                run = json.load(f)['run_id']
+            api = wandb.Api()
+            run = api.run(f"{entity}/{project}/{run}")
+            run.delete()
+            print(f"Deleted wandb run {run}")
+        else:
+            print(f"Could not find wandb resume file in {path}")
     except Exception as e:
         print(f"Could not delete wandb run: {e}")
 

@@ -1,6 +1,6 @@
 _target_: diffusion_policy.model.flow_matching.naive_film.NaiveFilmFlowMatchingModel
-in_channels: ${eval:'${n_obs_steps}*16'}
-out_channels: 6
+in_channels: ${eval:'${horizon}*16'}
+out_channels: ${eval:'${horizon}*6'}
 embed_dim: ${embedding_dim}
 mid_dim: 128
 num_blocks: 1
