@@ -1,28 +1,19 @@
-name: open_drawer
-
-#
-observation_type: low_dim
-num_objects: 5
-num_keypoints: ${eval:'${task.num_objects} * 7'}
-
-
+name: open_drawer_image
 
 shape_meta: &shape_meta 
   obs:
+    rgb:
+      shape: [3, 128, 128]
+      type: rgb
     agent_pose:
       shape: [4,4]
       type: low_dim
-    keypoint_pcd:
-      shape: 
-        - ${task.num_keypoints}
-        - 3
-      type: low_dim
-    keypoint_idx:
-      shape:
-        - ${task.num_keypoints}
-      type: low_dim
+    pcd:
+      shape: [3, 128, 128]
+      type: pcd
   action:
     shape: [4,4]
+
 
 gripper_loc_bounds: 
   _target_: diffusion_policy.common.common_utils.get_gripper_loc_bounds
@@ -30,11 +21,13 @@ gripper_loc_bounds:
   buffer: 0.0
   task: ${name}
 
+cameras: ['left_shoulder', 'right_shoulder', 'wrist', 'front']
+
 dataset:
   _target_: diffusion_policy.dataset.rlbench_dataset.RLBenchDataset
   root: /home/felix/Workspace/diffusion_policy_felix/data/peract
   task_name: open_drawer
-  cameras: []
+  cameras: ${task.cameras}
   num_episodes: ${num_episodes}
   variation: 0
   demo_augmentation_every_n: 1
@@ -42,9 +35,11 @@ dataset:
   build_history_from_augment_obs: True
   keypoints_only: True
   val_ratio: 0.2
+  use_pcd: true
+  use_rgb: true
 
 env_runner:
-  _target_: diffusion_policy.env_runner.rlbench_lowdim_runner.RLBenchLowdimRunner
+  _target_: diffusion_policy.env_runner.rlbench_runner.RLBenchRunner
   data_root: ${task.dataset.root}
   task_str: "open_drawer"
   max_episodes: 1
@@ -55,3 +50,9 @@ env_runner:
   collision_checking: True
   action_dim: 8
   headless: True
+  apply_cameras: ${task.cameras}
+  apply_rgb: true
+  apply_pc: true
+  n_train_vis: 3
+  n_val_vis: 3
+

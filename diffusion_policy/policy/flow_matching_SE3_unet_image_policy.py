@@ -2,23 +2,25 @@ from typing import Dict
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from diffusion_policy.policy.base_lowdim_policy import BaseLowdimPolicy
+import einops
+from diffusion_policy.policy.base_image_policy import BaseImagePolicy
 from diffusion_policy.common.common_utils import action_from_trajectory_gripper_open_ignore_collision
 from diffusion_policy.common.pytorch_util import dict_apply
+from typing import Union, Dict, Optional
 from scipy.spatial.transform import Rotation 
 from pytorch3d.transforms import quaternion_to_matrix
 from diffusion_policy.common.rotation_utils import SO3_exp_map
 from diffusion_policy.common.flow_matching_utils import sample_xt_SE3, compute_conditional_vel_SE3
-
-class FlowMatchingSE3UnetLowDimPolicy(BaseLowdimPolicy):
+from diffusion_policy.model.vision.transformer_feature_pointcloud_encoder import TransformerFeaturePointCloudEncoder
+class FlowMatchingSE3UnetImagePolicy(BaseImagePolicy):
     def __init__(self, 
             shape_meta: dict,
-            observation_encoder: nn.Module,
+            observation_encoder: Union[nn.Module, TransformerFeaturePointCloudEncoder],
             action_decoder: nn.Module,
             horizon : int, 
             n_action_steps : int, 
             n_obs_steps : int,
-            num_inference_steps=1000,
+            num_inference_steps=10,
             delta_t=0.01,
             gripper_loc_bounds=None,
             relative_position=True,
@@ -36,8 +38,7 @@ class FlowMatchingSE3UnetLowDimPolicy(BaseLowdimPolicy):
         obs_config = {
             'low_dim': [],
             'rgb': [],
-            'depth': [],
-            'scan': []
+            'pcd': [],
         }
         obs_key_shapes = dict()
         for key, attr in obs_shape_meta.items():
@@ -47,6 +48,10 @@ class FlowMatchingSE3UnetLowDimPolicy(BaseLowdimPolicy):
             type = attr.get('type', 'low_dim')
             if type == 'low_dim':
                 obs_config['low_dim'].append(key)
+            elif type == 'rgb':
+                obs_config['rgb'].append(key)
+            elif type == 'pcd':
+                obs_config['pcd'].append(key)
             else:
                 raise RuntimeError(f"Unsupported obs type: {type}")
 
@@ -110,11 +115,13 @@ class FlowMatchingSE3UnetLowDimPolicy(BaseLowdimPolicy):
         
     def normalize_obs(self, obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         agent_pose = obs_dict['agent_pose'].clone()
-        keypoint_pcd = obs_dict['keypoint_pcd'].clone()
+        pcd = obs_dict['pcd'].clone()
         agent_pose[:,:,:3,3] = self.normalize_pos(agent_pose[:,:,:3,3])
-        keypoint_pcd = self.normalize_pos(keypoint_pcd)
+        pcd = einops.rearrange(pcd, 'b ncam c h w -> b ncam h w c')
+        pcd = self.normalize_pos(pcd)
+        pcd = einops.rearrange(pcd, 'b ncam h w c -> b ncam c h w')
         obs_dict['agent_pose'] = agent_pose
-        obs_dict['keypoint_pcd'] = keypoint_pcd
+        obs_dict['pcd'] = pcd
         return obs_dict
         
     def toHomogeneous(self, x):
@@ -128,7 +135,11 @@ class FlowMatchingSE3UnetLowDimPolicy(BaseLowdimPolicy):
         if self.relative_rotation:
             H[:,:3,3] = torch.einsum('bmn,bn->bm', R_curr.transpose(-1,-2), H[:,:3,3])
             H[:,:3,:3] = R_curr.transpose(-1,-2) 
-        this_obs['keypoint_pcd'] = torch.einsum('bmn,bhkn->bhkm', H, self.toHomogeneous(this_obs['keypoint_pcd']))[..., :3]
+        pcd = this_obs['pcd']
+        pcd = einops.rearrange(pcd, 'b ncam c h w -> b ncam h w c')
+        pcd = torch.einsum('bmn,bchwn->bchwm', H, self.toHomogeneous(pcd))[..., :3]
+        pcd = einops.rearrange(pcd, 'b ncam h w c -> b ncam c h w')
+        this_obs['pcd'] = pcd
         this_obs['agent_pose'] = torch.einsum('bmn,bhnk->bhmk', H, this_obs['agent_pose'])
         if action is not None:
             this_action = torch.einsum('bmn,bhnk->bhmk', H, action)
@@ -144,7 +155,11 @@ class FlowMatchingSE3UnetLowDimPolicy(BaseLowdimPolicy):
         this_action = torch.einsum('bmn,bhnk->bhmk', H, action)
         if obs is not None:
             this_obs = dict_apply(obs, lambda x: x.clone())
-            this_obs['keypoint_pcd'] = torch.einsum('bmn,bhkn->bhkm', H, self.toHomogeneous(this_obs['keypoint_pcd']))[..., :3]
+            pcd = this_obs['pcd']
+            pcd = einops.rearrange(pcd, 'b ncam c h w -> b ncam h w c')
+            pcd = torch.einsum('bmn,bchwn->bchwm', H, self.toHomogeneous(pcd))[..., :3]
+            pcd = einops.rearrange(pcd, 'b ncam h w c -> b ncam c h w')
+            this_obs['pcd'] = pcd
             this_obs['agent_pose'] = torch.einsum('bmn,bhnk->bhmk', H, this_obs['agent_pose'])
             return this_action, this_obs
         return this_action
@@ -210,6 +225,8 @@ class FlowMatchingSE3UnetLowDimPolicy(BaseLowdimPolicy):
         """
         assert 'past_action' not in obs_dict # not implemented yet
         # normalize input
+
+        obs_dict = dict_apply(obs_dict, lambda x: x.type(self.dtype).to(self.device))
 
         x_curr = obs_dict['agent_pose'][:,-1,:3,3].clone()
         R_curr = obs_dict['agent_pose'][:,-1,:3,:3].clone()
@@ -307,8 +324,8 @@ class FlowMatchingSE3UnetLowDimPolicy(BaseLowdimPolicy):
         global_cond = nobs_features
 
         H1 = trajectory.flatten(0,1)
-        H0 = self.get_random_pose(B*To)
-        t = torch.rand(H0.shape[0], device=device, dtype=dtype)
+        H0 = self.get_random_pose(B*T)
+        t = torch.rand(B, device=device, dtype=dtype)
 
         Ht = sample_xt_SE3(H0, H1, t)
         ut = compute_conditional_vel_SE3(H1, Ht, t)
@@ -322,7 +339,7 @@ class FlowMatchingSE3UnetLowDimPolicy(BaseLowdimPolicy):
         # Predict the noise residual
         Ht.requires_grad = True
         t.requires_grad = True
-        Ht = Ht.reshape(B, To, 4, 4)
+        Ht = Ht.reshape(B, T, 4, 4)
         vt = self.action_decoder(Ht, t, global_cond)
 
         loss = torch.mean((ut-vt)**2)
@@ -339,12 +356,12 @@ OmegaConf.register_new_resolver("eval", eval, replace=True)
     version_base=None,
     config_path=str(pathlib.Path(__file__).parent.parent.joinpath(
         'config')),
-    config_name='train_flow_matching_unet_lowdim_workspace.yaml'
+    config_name='train_flow_matching_unet_image_workspace.yaml'
 )
 def test(cfg: OmegaConf):
     from copy import deepcopy
     OmegaConf.resolve(cfg)
-    policy : FlowMatchingUnetLowDimPolicy = hydra.utils.instantiate(cfg.policy)
+    policy : FlowMatchingSE3UnetImagePolicy = hydra.utils.instantiate(cfg.policy)
     policy = policy.to(cfg.training.device)
     dataset = hydra.utils.instantiate(cfg.task.dataset)
     batch = dict_apply(dataset[0], lambda x: x.unsqueeze(0).float().cuda())

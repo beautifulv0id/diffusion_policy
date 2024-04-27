@@ -1,0 +1,115 @@
+defaults:
+  - _self_
+  - task: open_drawer_image
+  - encoder: transformer_feature_pointcloud_encoder
+  - model: naive_film_se3_flow_matching_model
+
+name: flow_matching_unet_image_policy
+
+mode: train
+
+checkpoint:
+  topk:
+    monitor_key: val_loss
+    mode: min
+    k: 1
+    format_str: 'epoch={epoch:04d}-val_loss={val_loss:.3f}.ckpt'
+  save_last_ckpt: True
+  save_last_snapshot: False
+
+dataloader:
+  batch_size: 64
+  num_workers: 1
+  shuffle: True
+  pin_memory: True
+  persistent_workers: True
+
+val_dataloader:
+  batch_size: 64
+  num_workers: 1
+  shuffle: False
+  pin_memory: True
+  persistent_workers: True
+
+#dataset_obs_steps: 2
+ema:
+  _target_: diffusion_policy.model.diffusion.ema_model.EMAModel
+  inv_gamma: 1.0
+  max_value: 0.9999
+  min_value: 0.0
+  power: 0.75
+  update_after_step: 0
+
+task_name: ${task.name}
+exp_name: "default"
+horizon: 1
+n_obs_steps: &n_obs_steps 2
+n_action_steps: 1
+embedding_dim: 192
+num_episodes: 1
+
+optimizer:
+  _target_: torch.optim.AdamW
+  betas:
+  - 0.95
+  - 0.999
+  eps: 1.0e-08
+  lr: 0.0001
+  weight_decay: 1.0e-06
+
+policy:
+  _target_: diffusion_policy.policy.flow_matching_SE3_unet_image_policy.FlowMatchingSE3UnetImagePolicy
+     
+  shape_meta: ${task.shape_meta}
+  observation_encoder: ${encoder}
+  action_decoder: ${model}
+  horizon: ${horizon}
+  n_action_steps: ${n_action_steps}
+  n_obs_steps: ${n_obs_steps}
+  num_inference_steps: 10
+  delta_t: 0.01
+  gripper_loc_bounds: ${task.gripper_loc_bounds}
+  relative_position: False
+  relative_rotation: False
+  noise_aug_std: 0.0
+    
+
+training:
+  checkpoint_every: 50
+  debug: false
+  device: cuda:0
+  gradient_accumulate_every: 1
+  lr_scheduler: cosine
+  lr_warmup_steps: 500
+  max_train_steps: null
+  max_val_steps: null
+  num_epochs: 500000
+  resume: true
+  rollout_every: 10000
+  sample_every: 5
+  seed: 42
+  tqdm_interval_sec: 1.0
+  use_ema: true
+  val_every: 1
+
+logging:
+  project: diffusion_policy_debug
+  resume: True
+  mode: online
+  name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_name}
+  id: null
+  group: null
+  tags: ["${name}", "${task_name}", "${exp_name}"]
+
+multi_run:
+  run_dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+  wandb_name_base: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_name}
+
+hydra:
+  job:
+    override_dirname: ${name}
+  run:
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+  sweep:
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+    subdir: ${hydra.job.num}

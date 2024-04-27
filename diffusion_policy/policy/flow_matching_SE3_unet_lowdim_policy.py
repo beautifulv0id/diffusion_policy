@@ -307,8 +307,8 @@ class FlowMatchingSE3UnetLowDimPolicy(BaseLowdimPolicy):
         global_cond = nobs_features
 
         H1 = trajectory.flatten(0,1)
-        H0 = self.get_random_pose(B*To)
-        t = torch.rand(H0.shape[0], device=device, dtype=dtype)
+        H0 = self.get_random_pose(B*T)
+        t = torch.rand(B, device=device, dtype=dtype)
 
         Ht = sample_xt_SE3(H0, H1, t)
         ut = compute_conditional_vel_SE3(H1, Ht, t)
@@ -322,7 +322,7 @@ class FlowMatchingSE3UnetLowDimPolicy(BaseLowdimPolicy):
         # Predict the noise residual
         Ht.requires_grad = True
         t.requires_grad = True
-        Ht = Ht.reshape(B, To, 4, 4)
+        Ht = Ht.reshape(B, T, 4, 4)
         vt = self.action_decoder(Ht, t, global_cond)
 
         loss = torch.mean((ut-vt)**2)

@@ -1,0 +1,8 @@
+_target_: diffusion_policy.model.vision.transformer_feature_pointcloud_encoder.TransformerFeaturePointCloudEncoder
+shape_meta: ${task.shape_meta}
+backbone: "resnet18"
+embedding_dim: ${embedding_dim}
+nhist: ${n_obs_steps}
+image_size: [128, 128]
+feature_layer: res1
+gripper_loc_bounds: ${task.gripper_loc_bounds}
