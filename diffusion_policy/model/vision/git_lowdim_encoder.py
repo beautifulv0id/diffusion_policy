@@ -38,7 +38,7 @@ class GITLowdimEncoder(ModuleAttrMixin):
         for key, attr in obs_shape_meta.items():
             shape = tuple(attr['shape'])
             type = attr.get('type', 'low_dim')
-            key_shape_map[key] = (n_obs_steps,) + shape
+            key_shape_map[key] = (n_obs_steps,) + shape if key == 'agent_pose' else shape
             if type == 'low_dim':
                 low_dim_keys.append(key)
             else:
@@ -140,10 +140,16 @@ class GITLowdimEncoder(ModuleAttrMixin):
         obs_shape_meta = self.shape_meta['obs']
         batch_size = 1
         To = self.n_obs_steps
+        agent_pose_shape = tuple(obs_shape_meta.pop('agent_pose')['shape'])
+        agent_pose = torch.zeros(
+            (batch_size,To) + agent_pose_shape, 
+            dtype=self.dtype,
+            device=self.device)
+        example_obs_dict['agent_pose'] = agent_pose
         for key, attr in obs_shape_meta.items():
             shape = tuple(attr['shape'])
             this_obs = torch.zeros(
-                (batch_size,To) + shape, 
+                (batch_size,) + shape, 
                 dtype=self.dtype,
                 device=self.device)
             example_obs_dict[key] = this_obs

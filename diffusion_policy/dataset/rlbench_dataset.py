@@ -113,9 +113,13 @@ class RLBenchDataset(BaseImageDataset):
                     else:
                         merged_dict[k] = merge_dicts([d[k] for d in dict_list])
                 return merged_dict
+            
             data = merge_dicts(data)
-
+            
         data["action"] = data["action"][-1:]
+        for k in data['obs'].keys():
+            if k != "agent_pose":
+                data['obs'][k] = data['obs'][k][-1]
         torch_data = dict_apply(data, torch.from_numpy)
         return torch_data
     
@@ -131,8 +135,8 @@ class RLBenchDataset(BaseImageDataset):
 
 def test():
     dataset = RLBenchDataset(
-        root = "/home/felix/Workspace/diffusion_policy_felix/data/peract",
-        task_name="open_drawer",
+        root = "/home/felix/Workspace/diffusion_policy_felix/data/keypoint/train",
+        task_name="open_drawer_keypoint",
         num_episodes=1,
         variation=0,
         cameras = ['left_shoulder', 'right_shoulder', 'overhead', 'wrist', 'front'],
@@ -140,7 +144,7 @@ def test():
         n_obs=2,
         build_history_from_augment_obs=True,
         demo_augmentation_every_n=10,
-        use_low_dim_pcd=False,
+        use_low_dim_pcd=True,
         use_pcd = True,
         use_rgb = True,
         use_depth = False,

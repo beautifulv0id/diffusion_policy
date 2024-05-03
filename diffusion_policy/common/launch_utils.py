@@ -171,7 +171,12 @@ def add_to_dataset(dataset, obs_idx, demo, keypoint_idx, cameras, n_obs = 2, use
         full_obs_dict = extract_obs(obs, cameras, pcd=use_pcd)
         obs_dict = {}
         obs_dict['agent_pose'] = full_obs_dict['gripper_matrix']
-    
+        if use_rgb:
+            obs_dict['rgb'] = np.stack([full_obs_dict['%s_rgb' % camera] for camera in cameras]) 
+        if use_pcd:
+            obs_dict['pcd'] = np.stack([full_obs_dict['%s_point_cloud' % camera] for camera in cameras])
+        if use_low_dim_pcd:
+            obs_dict['low_dim_pcd'] = full_obs_dict['low_dim_pcd']
         data.append({
             "obs": obs_dict,
         })
@@ -185,15 +190,6 @@ def add_to_dataset(dataset, obs_idx, demo, keypoint_idx, cameras, n_obs = 2, use
                 data_dict[k] = stack_list_of_dicts([d[k] for d in data])
         return data_dict
     data = stack_list_of_dicts(data)
-    if len(cameras) > 0:
-        if use_rgb is True:
-            data['obs']['rgb'] = np.stack([full_obs_dict['%s_rgb' % camera] for camera in cameras]) 
-        if use_pcd is True:
-            data['obs']['pcd'] = np.stack([full_obs_dict['%s_point_cloud' % camera] for camera in cameras])
-    if use_low_dim_pcd:
-        low_dim_pcd = full_obs_dict['low_dim_pcd']
-        data['obs']['low_dim_pcd'] = low_dim_pcd
-
     data['action'] = action.reshape(1, -1)
     dataset.append(data)
 

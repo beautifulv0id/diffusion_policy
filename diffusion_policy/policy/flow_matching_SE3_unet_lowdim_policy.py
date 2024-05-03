@@ -124,7 +124,7 @@ class FlowMatchingSE3UnetLowDimPolicy(BaseLowdimPolicy):
         if self.relative_rotation:
             H[:,:3,3] = torch.einsum('bmn,bn->bm', R_curr.transpose(-1,-2), H[:,:3,3])
             H[:,:3,:3] = R_curr.transpose(-1,-2) 
-        this_obs['low_dim_pcd'] = torch.einsum('bmn,bhkn->bhkm', H, self.toHomogeneous(this_obs['low_dim_pcd']))[..., :3]
+        this_obs['low_dim_pcd'] = torch.einsum('bmn,bkn->bkm', H, self.toHomogeneous(this_obs['low_dim_pcd']))[..., :3]
         this_obs['agent_pose'] = torch.einsum('bmn,bhnk->bhmk', H, this_obs['agent_pose'])
         if action is not None:
             this_action = torch.einsum('bmn,bhnk->bhmk', H, action)
@@ -140,7 +140,7 @@ class FlowMatchingSE3UnetLowDimPolicy(BaseLowdimPolicy):
         this_action = torch.einsum('bmn,bhnk->bhmk', H, action)
         if obs is not None:
             this_obs = dict_apply(obs, lambda x: x.clone())
-            this_obs['low_dim_pcd'] = torch.einsum('bmn,bhkn->bhkm', H, self.toHomogeneous(this_obs['low_dim_pcd']))[..., :3]
+            this_obs['low_dim_pcd'] = torch.einsum('bmn,bkn->bkm', H, self.toHomogeneous(this_obs['low_dim_pcd']))[..., :3]
             this_obs['agent_pose'] = torch.einsum('bmn,bhnk->bhmk', H, this_obs['agent_pose'])
             return this_action, this_obs
         return this_action
@@ -222,10 +222,8 @@ class FlowMatchingSE3UnetLowDimPolicy(BaseLowdimPolicy):
         dtype = self.dtype
         nobs = dict_apply(nobs, lambda x: x.type(dtype).to(device))
 
-        # condition through global feature
-        this_nobs = dict_apply(nobs, lambda x: x[:,:To,...]) # We need to keep the observation shape
         # (B, D)
-        nobs_features = self.observation_encoder(this_nobs)
+        nobs_features = self.observation_encoder(nobs)
         global_cond = nobs_features
 
         # run sampling
@@ -291,12 +289,8 @@ class FlowMatchingSE3UnetLowDimPolicy(BaseLowdimPolicy):
         dtype = self.dtype
         nobs = dict_apply(nobs, lambda x: x.type(dtype).to(device))
         trajectory = trajectory.type(dtype).to(device)
-
-        # reshape B, T, ... to B*T
-        this_nobs = dict_apply(nobs, 
-            lambda x: x[:,:To,...])
         
-        nobs_features = self.observation_encoder(this_nobs)
+        nobs_features = self.observation_encoder(nobs)
 
         global_cond = nobs_features
 
