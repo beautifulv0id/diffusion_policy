@@ -1,11 +1,15 @@
 # TODOs 📔
-- [ ] fix data augmentation
+- [ ] cleanup flow matching policy
+- [ ] check why workspace cropping + refill throws error (what happens if ws is zero?)
+- [ ] check encoder from 3D diffusion policy
 - [ ] maybe add visualization where gripper should be
 - [ ] try out self attention vor feature pcd encoding
 - [ ] Install correct torchvision version according to https://pypi.org/project/torchvision/
   - error message: ```/home/felix/miniforge3/envs/robodiff/lib/python3.9/site-packages/torchvision/io/image.py:13: UserWarning: Failed to load image Python extension: libtorch_cuda_cu.so: cannot open shared object file: No such file or directory```
+- [x] fix data augmentation
 - [x]  check why multirun crashed
     - probably because Pyrep is killed and started again
     - cant do multiruns I guess 
 - [x] Write a batch script that launches jobs
 - [x] cull pcd based on workspace size 
+  - [x] leads to unequal shapes, refill deltas 

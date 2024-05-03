@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 import einops
 from diffusion_policy.model.common.module_attr_mixin import ModuleAttrMixin
 from diffusion_policy.model.common.layers import FFWRelativeCrossAttentionModule
@@ -111,23 +112,6 @@ class TransformerFeaturePointCloudEncoder(ModuleAttrMixin):
         visual_features = self.visual_feature_pyramid(rgbs)[self.feature_layer]
         visual_features = einops.rearrange(visual_features, "(bt ncam) c h w -> bt ncam c h w", ncam=ncam)
         return visual_features
-    
-    def crop_to_workspace(self, visual_features, pcds):
-        pos_min = self.gripper_loc_bounds[0].float().to(pcds.device)
-        pos_max = self.gripper_loc_bounds[1].float().to(pcds.device)
-
-        visual_features = einops.rearrange(visual_features, "bt ncam c h w -> bt (ncam h w) c")
-        pcds = einops.rearrange(pcds, "bt ncam c h w -> bt (ncam h w) c")
-
-        mask = (pcds[..., :3] > pos_min) & (pcds[..., :3] < pos_max)
-        mask = mask.all(dim=-1)
-
-        pcds = pcds[mask]
-        visual_features = visual_features[mask]
-
-        return visual_features, pcds
-
-    
     def forward(self, obs_dict):
         rgbs = obs_dict['rgb']
         pcds = obs_dict['pcd']
@@ -141,7 +125,6 @@ class TransformerFeaturePointCloudEncoder(ModuleAttrMixin):
 
         visual_features = einops.rearrange(visual_features, "bt ncam c h w -> bt (ncam h w) c")
         pcds = einops.rearrange(pcds, "bt ncam c h w -> bt (ncam h w) c")
-
 
         # encode gripper
         gripper_features, gripper_pos = self._encode_gripper(curr_gripper, visual_features, pcds)
@@ -167,7 +150,7 @@ class TransformerFeaturePointCloudEncoder(ModuleAttrMixin):
         example_output = self.forward(example_obs_dict)
         output_shape = example_output.shape[1:]
         return output_shape
-    
+
 # Example usage
 @torch.no_grad()
 def test():
@@ -205,16 +188,36 @@ def test():
             1
         ]])
 
-    features, pos = encoder(obs_dict)
-    
+    visual_features = encoder.encode_rgbs(rgb)
+    pcd = encoder.interpolate_pcds(pcd, visual_features.shape[-2:])   
+
+    visual_features = einops.rearrange(visual_features, "bt ncam c h w -> bt (ncam h w) c")
+    pcd = einops.rearrange(pcd, "bt ncam c h w -> bt (ncam h w) c")
+
+    features, pos = encoder._encode_gripper(curr_gripper, visual_features, pcd)
+    features = encoder._encode_current_gripper(features)
+
     print("Features shape:")
     print(features.shape)
     print("Position shape:")
     print(pos.shape)
 
-    print("Output shape:")
-    print(encoder.output_shape())
+    features = encoder(obs_dict)
+    print("Features shape:")
+    print(features.shape)
+
 
 if __name__ == "__main__":
+    import numpy as np
+
+    # a = torch.tensor([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
+    # m = torch.tensor([[True, False, False], [False, True, True], [True, False, True]])
+    # print(mask_and_fill_remaining(a, m))
+
+    # a = torch.randn(2, 4, 3)
+    # m = a > 0
+    # print(m)
+    # print(fill_mask(m))
+    # print(mask_and_fill_remaining(a, m))
     test()
     print("All tests passed!")
