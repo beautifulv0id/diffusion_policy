@@ -10,7 +10,7 @@ from diffusion_policy.common.pytorch_util import dict_apply
 from typing import Union, Dict, Optional
 from scipy.spatial.transform import Rotation 
 from pytorch3d.transforms import quaternion_to_matrix
-from diffusion_policy.common.rotation_utils import SO3_exp_map
+from diffusion_policy.common.rotation_utils import SO3_exp_map, sample_random_se3
 from diffusion_policy.common.flow_matching_utils import sample_xt_SE3, compute_conditional_vel_SE3
 from diffusion_policy.model.vision.transformer_feature_pointcloud_encoder import TransformerFeaturePointCloudEncoder
 
@@ -106,12 +106,16 @@ class FlowMatchingSE3UnetImagePolicy(BaseImagePolicy):
 
         self.encoder = observation_encoder
         self.action_decoder = action_decoder
-        self.gripper_state_ignore_collision_predictor = nn.Sequential(
+        self.ignore_collision_predictor = nn.Sequential(
             nn.Linear(obs_feature_dim, 128),
-            nn.Sigmoid(),
-            nn.Linear(128, 2*horizon),
+            nn.ReLU(),
+            nn.Linear(128, horizon),
         )
-
+        self.open_gripper_predictor = nn.Sequential(
+            nn.Linear(obs_feature_dim, 128),
+            nn.ReLU(),
+            nn.Linear(128, horizon),
+        )
         self.horizon = horizon
         self.obs_feature_dim = obs_feature_dim
         self.n_action_steps = n_action_steps
@@ -277,7 +281,6 @@ class FlowMatchingSE3UnetImagePolicy(BaseImagePolicy):
         obs = dict_apply(obs, lambda x: x.clone().type(self.dtype).to(self.device))
 
         gripper = obs['agent_pose']
-        gripper_abs = gripper.clone()
         pcd = obs['pcd']
         rgb = obs['rgb']
         encoder = self.encoder
@@ -293,6 +296,7 @@ class FlowMatchingSE3UnetImagePolicy(BaseImagePolicy):
 
         # normalize input
         gripper[:,:,:3,3] = self.normalize_pos(gripper[:,:,:3,3])
+        gripper_abs = gripper.clone()
         pcd = self.normalize_pos(pcd)
 
         if self.relative_position:
@@ -312,24 +316,25 @@ class FlowMatchingSE3UnetImagePolicy(BaseImagePolicy):
         trajectory_pred = self.sample(gripper_features, B, T, self.num_inference_steps)
 
         # regress gripper open
-        gripper_state_ignore_collision_prediction = self.gripper_state_ignore_collision_predictor(gripper_features).reshape(B, T, 2)
-        gripper_state_ignore_collision_prediction = torch.sigmoid(gripper_state_ignore_collision_prediction)
-        gripper_state, ignore_collision = (gripper_state_ignore_collision_prediction > 0.5).float().chunk(2, dim=-1)
+        gripper_state_prediction = torch.sigmoid(self.open_gripper_predictor(gripper_features))
+        gripper_state = (gripper_state_prediction > 0.5).float()
+        ignore_collision_prediction = torch.sigmoid(self.ignore_collision_predictor(gripper_features))
+        ignore_collision = (ignore_collision_prediction > 0.5).float()
         
-        # unnormalize prediction
-        trajectory_pred[:,:,:3,3] = self.unnormalize_pos(trajectory_pred[:,:,:3,3])
-
         if self.relative_rotation:
             trajectory_pred = self.convert2abs_rot(gripper_abs, trajectory_pred)
         if self.relative_position:
             trajectory_pred = self.convert2abs_pos(gripper_abs, trajectory_pred)
+
+        # unnormalize prediction
+        trajectory_pred[:,:,:3,3] = self.unnormalize_pos(trajectory_pred[:,:,:3,3])
         
         action = action_from_trajectory_gripper_open_ignore_collision(trajectory_pred, gripper_state, ignore_collision)
         result = {
             'action': action,
             'trajectory': trajectory_pred,
-            'open_gripper': gripper_state_ignore_collision_prediction[:,:,0],
-            'ignore_collision': gripper_state_ignore_collision_prediction[:,:,1]
+            'open_gripper': gripper_state_prediction,
+            'ignore_collision': ignore_collision_prediction
         }
         return result
     
@@ -347,6 +352,7 @@ class FlowMatchingSE3UnetImagePolicy(BaseImagePolicy):
     def compute_loss(self, batch):
         obs = dict_apply(batch['obs'], lambda x: x.clone().type(self.dtype).to(self.device))
         actions = batch['action'].clone().type(self.dtype).to(self.device)
+
         if self.data_augmentation:
             obs = self.apply_noise(obs)
 
@@ -354,7 +360,6 @@ class FlowMatchingSE3UnetImagePolicy(BaseImagePolicy):
         pcd = obs['pcd']
         rgb = obs['rgb']
         gripper = obs['agent_pose']
-        gripper_abs = gripper.clone()
         encoder = self.encoder
 
         # encode observation
@@ -373,17 +378,24 @@ class FlowMatchingSE3UnetImagePolicy(BaseImagePolicy):
 
         # prepare targets
         trajectory = self.convert_action(actions) # pos+quat -> SE3
-        regression_targets = actions[:,:,7:9]
-
-        # convert to relative
-        if self.relative_position:
-            gripper, pcd, trajectory = self.convert2rel_pos(gripper_abs, pcd, trajectory)
-        if self.relative_rotation:
-            gripper, pcd, trajectory = self.convert2rel_rot(gripper_abs, pcd, trajectory)
+        open_gripper = actions[:,:,7]
+        ignore_collision = actions[:,:,8]
 
         B = trajectory.shape[0]
         T = self.horizon
         assert (T == trajectory.shape[1])
+
+        # if True:
+        #     H = sample_random_se3(B, 0.01, 0.01, self.device, self.dtype)
+        #     pcd = torch.einsum('bmn,bln->blm', H, self.toHomogeneous(pcd))[...,:3]
+        #     gripper = torch.einsum('bmn,bhnk->bhmk', H, gripper)
+        #     trajectory = torch.einsum('bmn,bhnk->bhmk', H, trajectory)
+        
+        # convert to relative
+        if self.relative_position:
+            gripper, pcd, trajectory = self.convert2rel_pos(gripper, pcd, trajectory)
+        if self.relative_rotation:
+            gripper, pcd, trajectory = self.convert2rel_rot(gripper, pcd, trajectory)
         
         # encode gripper
         gripper_features, _ = self.encoder._encode_gripper(gripper, visual_features, pcd)
@@ -404,11 +416,14 @@ class FlowMatchingSE3UnetImagePolicy(BaseImagePolicy):
         vt = self.action_decoder(Ht, t, gripper_features)
 
         # regress gripper open
-        pred = self.gripper_state_ignore_collision_predictor(gripper_features).reshape(B, T, 2)
-        regression_loss = F.binary_cross_entropy_with_logits(pred, regression_targets)
+        gripper_open_pred = self.open_gripper_predictor(gripper_features)
+        ignore_collision_pred = self.ignore_collision_predictor(gripper_features)
+
+        open_gripper_loss = F.binary_cross_entropy_with_logits(gripper_open_pred, open_gripper)
+        ignore_collision_loss = F.binary_cross_entropy_with_logits(ignore_collision_pred, ignore_collision)
 
         loss = torch.mean((ut-vt)**2)
-        loss += regression_loss * 0.1
+        loss += 0.1 * (open_gripper_loss + ignore_collision_loss)
         return loss
 
 import hydra

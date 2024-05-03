@@ -82,45 +82,42 @@ class GITLowdimEncoder(ModuleAttrMixin):
             assert data.shape[1:] == self.key_shape_map[key], f"Expected shape {self.key_shape_map[key]} but got {data.shape[1:]} for key {key}"
             if key == 'agent_pose':
                 agent_pose = data
-            elif key == 'keypoint_pcd':
-                keypoint_pcd = data
-            elif key == 'keypoint_idx':
-                keypoint_features = self.keypoint_emb(data.int())
+            elif key == 'low_dim_pcd':
+                low_dim_pcd = data
             else:
                 low_dim_features.append(data)
+        keypoint_features = self.keypoint_emb(torch.arange(low_dim_pcd.shape[-2]).to(low_dim_pcd.device)).unsqueeze(0).repeat(batch_size, 1, 1)
         if len(low_dim_features) > 0:
             low_dim_features = torch.cat(low_dim_features, dim=1)
-        return agent_pose, keypoint_pcd, keypoint_features, low_dim_features
+        return agent_pose, low_dim_pcd, keypoint_features, low_dim_features
     
     def forward(self, obs_dict):
         batch_size = obs_dict[self.low_dim_keys[0]].shape[0]
         N = self.n_obs_steps
         
         # process lowdim input
-        # (B,N,D), (B,N,D,H,W)
-        agent_pose, keypoint_pcd, keypoint_features, low_dim_features = \
+        # (B,N,D), (B,H,N,D)
+        agent_pose, low_dim_pcd, keypoint_features, low_dim_features = \
             self.process_low_dim_features(obs_dict)
                 
         # compoute context features
-        # (N,B*N,D)
-        context_features = einops.rearrange(keypoint_features, 'b n m d -> (b n) m d')
-        # (B*N,M,D)
-        context_pos = einops.repeat(keypoint_pcd, 'b n m d -> (b n) m d')
+        # (B,N,D)
+        context_features = keypoint_features
+        # (B,N,3)
+        context_pos = low_dim_pcd
 
         # compute query features
         # (1,B*N,D)
-        query = einops.repeat(self.query_emb.weight, "n d -> (b n) 1 d", b=batch_size)
+        query = einops.repeat(self.query_emb.weight, "n d -> b n d", b=batch_size)
         # (B*N,1,D)
-        query_pose = einops.repeat(agent_pose, "b n i j -> (b n) 1 i j")
+        query_pose = einops.repeat(agent_pose, "b n i j -> b n i j")
 
         # cross attention within observation
         extras = {'x_poses': query_pose, 'z_poses': context_pos,
               'x_types':'se3', 'z_types':'3D'}
         obs_embs = self.re_inv_cross_attn_within(x=query, z=context_features, extras=extras)
-        # (B*N,D)
-        obs_embs = obs_embs.squeeze(1)
         # (N,B,D)
-        obs_embs = einops.rearrange(obs_embs, '(b n) d -> n b d', b=batch_size)
+        obs_embs = einops.rearrange(obs_embs, 'b n d -> n b d')
         # (N,1,D)
         obs_pos_embs = self.positional_embedder(torch.arange(self.n_obs_steps, dtype=obs_embs.dtype, device=obs_embs.device)).unsqueeze(1)
         # (N,B,D)

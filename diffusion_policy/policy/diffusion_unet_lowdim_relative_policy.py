@@ -162,7 +162,7 @@ class DiffusionUnetLowDimRelativePolicy(BaseLowdimPolicy):
     def normalize_obs(self, obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         this_obs = dict_apply(obs_dict, lambda x: x.clone())
         this_obs['agent_pose'][:,:,:3,3] = self.normalize_pos(this_obs['agent_pose'][:,:,:3,3])
-        this_obs['keypoint_pcd'] = self.normalize_pos(this_obs['keypoint_pcd'])
+        this_obs['low_dim_pcd'] = self.normalize_pos(this_obs['low_dim_pcd'])
         return obs_dict
 
     def normalize_trajectory(self, action: torch.Tensor) -> torch.Tensor:
@@ -186,7 +186,7 @@ class DiffusionUnetLowDimRelativePolicy(BaseLowdimPolicy):
         if self.relative_rotation:
             H[:,:3,3] = torch.einsum('bmn,bn->bm', R_curr.transpose(-1,-2), H[:,:3,3])
             H[:,:3,:3] = R_curr.transpose(-1,-2) 
-        this_obs['keypoint_pcd'] = torch.einsum('bmn,bhkn->bhkm', H, self.toHomogeneous(this_obs['keypoint_pcd']))[..., :3]
+        this_obs['low_dim_pcd'] = torch.einsum('bmn,bhkn->bhkm', H, self.toHomogeneous(this_obs['low_dim_pcd']))[..., :3]
         this_obs['agent_pose'] = torch.einsum('bmn,bhnk->bhmk', H, this_obs['agent_pose'])
         if action is not None:
             this_action = torch.einsum('bmn,bhnk->bhmk', H, action)
@@ -202,7 +202,7 @@ class DiffusionUnetLowDimRelativePolicy(BaseLowdimPolicy):
         this_action = torch.einsum('bmn,bhnk->bhmk', H, action)
         if obs is not None:
             this_obs = dict_apply(obs, lambda x: x.clone())
-            this_obs['keypoint_pcd'] = torch.einsum('bmn,bhkn->bhkm', H, self.toHomogeneous(this_obs['keypoint_pcd']))[..., :3]
+            this_obs['low_dim_pcd'] = torch.einsum('bmn,bhkn->bhkm', H, self.toHomogeneous(this_obs['low_dim_pcd']))[..., :3]
             this_obs['agent_pose'] = torch.einsum('bmn,bhnk->bhmk', H, this_obs['agent_pose'])
             return this_action, this_obs
         return this_action
@@ -396,7 +396,7 @@ def test(cfg: OmegaConf):
 
     assert(torch.allclose(aobs['agent_pose'], obs['agent_pose'])), "agent_pose not equal with max diff: %f" % (aobs['agent_pose'] - obs['agent_pose']).abs().max()
     assert(torch.allclose(atrajectory, trajectory)), "action not equal with max diff: %f" % (atrajectory - trajectory).abs().max()
-    assert (torch.allclose(aobs['keypoint_pcd'], obs['keypoint_pcd'])), "keypoint_pcd not equal with max diff: %f" % (aobs['keypoint_pcd'] - obs['keypoint_pcd']).abs().max()
+    assert (torch.allclose(aobs['low_dim_pcd'], obs['low_dim_pcd'])), "low_dim_pcd not equal with max diff: %f" % (aobs['low_dim_pcd'] - obs['low_dim_pcd']).abs().max()
     policy.compute_loss(batch)
     policy.predict_action(obs)
     print("Test passed")

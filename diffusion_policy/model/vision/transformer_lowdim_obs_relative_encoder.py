@@ -80,15 +80,14 @@ class TransformerLowdimObsRelativeEncoder(ModuleAttrMixin):
             assert data.shape[1:] == self.key_shape_map[key]
             if key == 'agent_pose':
                 agent_pose = data
-            elif key == 'keypoint_pcd':
-                keypoint_pcd = data
-            elif key == 'keypoint_idx':
-                keypoint_features = self.keypoint_emb(data.int())
+            elif key == 'low_dim_pcd':
+                low_dim_pcd = data
             else:
                 low_dim_features.append(data)
+        keypoint_features = self.keypoint_emb(torch.arange(low_dim_pcd.shape[-2]))
         if len(low_dim_features) > 0:
             low_dim_features = torch.cat(low_dim_features, dim=1)
-        return agent_pose, keypoint_pcd, keypoint_features, low_dim_features
+        return agent_pose, low_dim_pcd, keypoint_features, low_dim_features
     
     def forward(self, obs_dict):
         batch_size = obs_dict[self.low_dim_keys[0]].shape[0]
@@ -96,24 +95,23 @@ class TransformerLowdimObsRelativeEncoder(ModuleAttrMixin):
         
         # process lowdim input
         # (B,N,D), (B,N,D,H,W)
-        agent_pose, keypoint_pcd, keypoint_features, low_dim_features = \
+        agent_pose, low_dim_pcd, keypoint_features, low_dim_features = \
             self.process_low_dim_features(obs_dict)
-        
         agent_pos = agent_pose[:, :, :3, 3]
         
         # compoute context features
         # (N,B*N,D)
-        context_features = einops.rearrange(keypoint_features, 'b n m d -> m (b n) d')
+        context_features = einops.rearrange(keypoint_features, 'b m d -> m b d')
         # (B*N,M,D)
-        context_pos = einops.repeat(keypoint_pcd, 'b n m d -> (b n) m d')
+        context_pos = low_dim_pcd
         # (B*N,M,D,2)
         context_pos = self.rotary_embed(context_pos)
 
         # compute query features
         # (1,B*N,D)
-        query = einops.repeat(self.query_emb.weight, "n d -> 1 (b n) d", b=batch_size)
+        query = einops.repeat(self.query_emb.weight, "n d -> n b d", b=batch_size)
         # (B*N,1,D)
-        query_pos = einops.repeat(agent_pos, "b n d -> (b n) 1 d")
+        query_pos = einops.repeat(agent_pos, "b n d -> b n d")
         # (B*N,1,D,2)
         query_pos = self.rotary_embed(query_pos).type(query.dtype)
 
@@ -121,10 +119,6 @@ class TransformerLowdimObsRelativeEncoder(ModuleAttrMixin):
         # (L,B*N,D)
         obs_embs = self.re_cross_attn_within(query=query, value=context_features, 
                                              query_pos=query_pos, value_pos=context_pos)
-        # (B*N,D)
-        obs_embs = obs_embs[-1].squeeze(0)
-        # (N,B,D)
-        obs_embs = einops.rearrange(obs_embs, '(b n) d -> n b d', b=batch_size)
         # (N,1,D)
         obs_pos_embs = self.positional_embedder(torch.arange(self.n_obs_steps, dtype=obs_embs.dtype, device=obs_embs.device)).unsqueeze(1)
         # (N,B,D)

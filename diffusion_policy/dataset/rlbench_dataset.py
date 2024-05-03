@@ -20,7 +20,7 @@ class RLBenchDataset(BaseImageDataset):
             n_obs=2,
             build_history_from_augment_obs=True, # If True, observations are taken from the autmented demo
             demo_augmentation_every_n=10,
-            use_task_keypoints=True,
+            use_low_dim_pcd=False,
             use_pcd = False,
             use_rgb = False,
             use_depth = False,
@@ -70,7 +70,7 @@ class RLBenchDataset(BaseImageDataset):
                                         cameras=cameras, 
                                         demo_augmentation_every_n=demo_augmentation_every_n, 
                                         n_obs=n_obs if not build_history_from_augment_obs else 1, 
-                                        use_task_keypoints=use_task_keypoints,
+                                        use_low_dim_pcd=use_low_dim_pcd,
                                         use_pcd=use_pcd,
                                         use_rgb=use_rgb,
                                         keypoints_only=keypoints_only)
@@ -79,7 +79,7 @@ class RLBenchDataset(BaseImageDataset):
                                         cameras=cameras, 
                                         demo_augmentation_every_n=demo_augmentation_every_n, 
                                         n_obs=n_obs if not build_history_from_augment_obs else 1, 
-                                        use_task_keypoints=use_task_keypoints,
+                                        use_low_dim_pcd=use_low_dim_pcd,
                                         use_pcd=use_pcd,
                                         use_rgb=use_rgb,
                                         keypoints_only=keypoints_only)
@@ -140,7 +140,7 @@ def test():
         n_obs=2,
         build_history_from_augment_obs=True,
         demo_augmentation_every_n=10,
-        use_task_keypoints=False,
+        use_low_dim_pcd=False,
         use_pcd = True,
         use_rgb = True,
         use_depth = False,

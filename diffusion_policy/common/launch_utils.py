@@ -53,6 +53,7 @@ def extract_obs(obs: Observation,
     grip_pose = obs.gripper_pose
     joint_pos = obs.joint_positions
     object_poses = obs.misc.pop('object_poses', None)
+    low_dim_pcd = obs.misc.pop('low_dim_pcd', None)
     obs.gripper_pose = None
     obs.gripper_matrix = None
     obs.wrist_camera_matrix = None
@@ -124,6 +125,7 @@ def extract_obs(obs: Observation,
     obs_dict['gripper_matrix'] = obs.gripper_matrix
     obs_dict['gripper_pose'] = obs.gripper_pose
     obs_dict['object_poses'] = object_poses
+    obs_dict['low_dim_pcd'] = low_dim_pcd
     return obs_dict
 
 # taken from https://github.com/stepjam/ARM/blob/main/arm/utils.py
@@ -158,7 +160,7 @@ def object_poses_to_keypoints(object_poses):
     pcd = np.array(pcd)
     return pcd
 
-def add_to_dataset(dataset, obs_idx, demo, keypoint_idx, cameras, n_obs = 2, use_task_keypoints=False, use_pcd=False, use_rgb=False):
+def add_to_dataset(dataset, obs_idx, demo, keypoint_idx, cameras, n_obs = 2, use_low_dim_pcd=False, use_pcd=False, use_rgb=False):
     observations = [demo[max(0, obs_idx - i)] for i in range(n_obs)]
     obs_tp1 = demo[keypoint_idx]
     obs_tm1 = demo[max(0, keypoint_idx - 1)]
@@ -169,10 +171,6 @@ def add_to_dataset(dataset, obs_idx, demo, keypoint_idx, cameras, n_obs = 2, use
         full_obs_dict = extract_obs(obs, cameras, pcd=use_pcd)
         obs_dict = {}
         obs_dict['agent_pose'] = full_obs_dict['gripper_matrix']
-        if use_task_keypoints:
-            pcd = object_poses_to_keypoints(full_obs_dict['object_poses'])
-            obs_dict['keypoint_pcd'] = pcd
-            obs_dict['keypoint_idx'] = np.arange(pcd.shape[0])
     
         data.append({
             "obs": obs_dict,
@@ -192,10 +190,14 @@ def add_to_dataset(dataset, obs_idx, demo, keypoint_idx, cameras, n_obs = 2, use
             data['obs']['rgb'] = np.stack([full_obs_dict['%s_rgb' % camera] for camera in cameras]) 
         if use_pcd is True:
             data['obs']['pcd'] = np.stack([full_obs_dict['%s_point_cloud' % camera] for camera in cameras])
+    if use_low_dim_pcd:
+        low_dim_pcd = full_obs_dict['low_dim_pcd']
+        data['obs']['low_dim_pcd'] = low_dim_pcd
+
     data['action'] = action.reshape(1, -1)
     dataset.append(data)
 
-def create_dataset(demos, cameras, demo_augmentation_every_n=10, n_obs=2, use_task_keypoints=False, use_rgb=False, use_pcd=False, keypoints_only=False):
+def create_dataset(demos, cameras, demo_augmentation_every_n=10, n_obs=2, use_low_dim_pcd=False, use_rgb=False, use_pcd=False, keypoints_only=False):
     dataset = []
     episode_begin = [0]
 
@@ -204,7 +206,7 @@ def create_dataset(demos, cameras, demo_augmentation_every_n=10, n_obs=2, use_ta
         if keypoints_only:
             last_keypoint = 0
             for i in range(len(episode_keypoints)):
-                add_to_dataset(dataset, last_keypoint, demo, episode_keypoints[i], cameras, n_obs, use_task_keypoints, use_rgb, use_pcd)
+                add_to_dataset(dataset, last_keypoint, demo, episode_keypoints[i], cameras, n_obs, use_low_dim_pcd, use_rgb, use_pcd)
                 last_keypoint = episode_keypoints[i]
                 episode_begin.append(episode_begin[-1])
             episode_begin[-1] = len(dataset)
@@ -218,7 +220,7 @@ def create_dataset(demos, cameras, demo_augmentation_every_n=10, n_obs=2, use_ta
                 episode_keypoints = episode_keypoints[1:]
             if len(episode_keypoints) == 0:
                 break            
-            add_to_dataset(dataset, i, demo, episode_keypoints[0], cameras, n_obs, use_task_keypoints, use_rgb, use_pcd)
+            add_to_dataset(dataset, i, demo, episode_keypoints[0], cameras, n_obs, use_low_dim_pcd, use_rgb, use_pcd)
             episode_begin.append(episode_begin[-1])
         episode_begin[-1] = len(dataset)
     return dataset, episode_begin

@@ -40,7 +40,7 @@ dataset:
   val_ratio: 0.2
 
 env_runner:
-  _target_: diffusion_policy.env_runner.rlbench_lowdim_runner.RLBenchLowdimRunner
+  _target_: diffusion_policy.env_runner.rlbench_runner.RLBenchRunner
   data_root: ${task.dataset.root}
   task_str: ${task.name}
   max_episodes: 5

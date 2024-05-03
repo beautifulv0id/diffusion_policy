@@ -30,6 +30,7 @@ class RLBenchRunner(BaseLowdimRunner):
                 apply_depth=False,
                 apply_pc=False,
                 apply_cameras=("left_shoulder", "right_shoulder", "wrist", "front"),
+                apply_low_dim_pcd=False,
                  ):
         super(RLBenchRunner, self).__init__(output_dir)
         self.task_str = task_str
@@ -42,6 +43,7 @@ class RLBenchRunner(BaseLowdimRunner):
                             apply_depth=apply_depth,
                             apply_pc=apply_pc,
                             apply_cameras=apply_cameras,
+                            apply_low_dim_pcd=apply_low_dim_pcd,
                             collision_checking=collision_checking,
                             obs_history_augmentation_every_n=obs_history_augmentation_every_n)        
         self.task_str = task_str

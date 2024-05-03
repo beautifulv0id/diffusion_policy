@@ -89,6 +89,37 @@ def create_coordinate_frame(size=[0.01, 0.01, 0.1]):
     create_axis(color=[0, 0, 1], name='z', size=size, parent=sphere)
     return sphere
 
+def create_keypoint(pos, size=[0.002, 0.002, 0.02]):
+    z = Shape.create(type=PrimitiveShape.CYLINDER, 
+                                        size=size,
+                                        static=True,
+                                        respondable=False,
+                                        color=[0, 0, 1],
+                                        renderable=True,
+                                        orientation=[0, 0, 0],)
+    z.set_position(pos)
+    x = Shape.create(type=PrimitiveShape.CYLINDER,
+                                        size=size,
+                                        static=True,
+                                        respondable=False,
+                                        color=[1, 0, 0],
+                                        renderable=True,
+                                        orientation=[0, 0, 0],)
+    x.set_position(pos)
+    x.set_orientation([0, np.pi / 2, 0])
+    x.set_parent(z)
+    y = Shape.create(type=PrimitiveShape.CYLINDER,
+                                        size=size,
+                                        static=True,
+                                        respondable=False,
+                                        color=[0, 1, 0],
+                                        renderable=True,
+                                        orientation=[0, 0, 0],)
+    y.set_position(pos)
+    y.set_orientation([-np.pi / 2, 0, 0])
+    y.set_parent(z)
+    return x, y, z
+
 class RLBenchEnv:
 
     def __init__(
@@ -98,6 +129,7 @@ class RLBenchEnv:
         apply_rgb=False,
         apply_depth=False,
         apply_pc=False,
+        apply_low_dim_pcd=False,
         headless=False,
         apply_cameras=("left_shoulder", "right_shoulder", "wrist", "front"),
         collision_checking=False,
@@ -111,6 +143,7 @@ class RLBenchEnv:
         self.apply_depth = apply_depth
         self.apply_pc = apply_pc
         self.apply_cameras = apply_cameras
+        self.apply_low_dim_pcd = apply_low_dim_pcd
 
         # setup RLBench environments
         self.obs_config = self.create_obs_config(
@@ -135,6 +168,7 @@ class RLBenchEnv:
         self._recording = False
         self._cam = None
         self._gripper_dummmy = None
+        self._keypoints = None
     
     def create_gripper_dummy(self) -> Dummy:
         gripper_shapes = [shape.copy() for shape in self.env._robot.gripper.get_visuals()]
@@ -154,6 +188,7 @@ class RLBenchEnv:
         gripper_shapes[0].set_orientation([np.pi/2, 0, 0], relative_to=gripper_dummy)
 
         return gripper_dummy
+    
     def launch(self):
         if self.env._pyrep is None:
             self.env.launch()
@@ -171,6 +206,26 @@ class RLBenchEnv:
         self._cam_motion = None
         self._cam = None
 
+    def add_keypoints(self, positions):
+        if self._keypoints is not None:
+            for keypoint in self._keypoints:
+                keypoint.remove()
+        keypoints = []
+        for pos in positions:
+            # shape = Shape.create(type=PrimitiveShape.SPHERE, 
+            #             size=[0.01, 0.01, 0.01],
+            #             static=True,
+            #             respondable=False,
+            #             color=[1, 0, 0],
+            #             renderable=True,
+            #             orientation=[0, 0, 0])
+
+            # shape.set_position(pos)
+            # create_keypoint(pos)
+            keypoints.extend(create_keypoint(pos))
+        self._keypoints = keypoints
+
+
     def save_observation(self, obs):
         """
         Save the observation to the history
@@ -178,7 +233,37 @@ class RLBenchEnv:
         """
         self.obs_history.append(obs)
         if self._recording:
-            self._rgbs.append((self._cam.capture_rgb() * 255.).astype(np.uint8))
+            self.add_keypoints(obs.misc["low_dim_pcd"])
+            rgb = (self._cam.capture_rgb() * 255.).astype(np.uint8)
+
+            # depth = self._cam.capture_depth()
+            # low_dim_pcd = obs.misc["low_dim_pcd"]
+            # for point in low_dim_pcd:
+            #     # project the point to the image
+            #     extrinsics_44 = torch.from_numpy(self._cam.get_matrix()).float()
+            #     extrinsics_44 = torch.linalg.inv(extrinsics_44)
+            #     intrinsics_33 = torch.from_numpy(self._cam.get_intrinsic_matrix()).float()
+            #     intrinsics_34 = F.pad(intrinsics_33, (0, 1, 0, 0))
+            #     point_41 = F.pad(torch.tensor(point).float(), (0, 1), value=1).unsqueeze(1)
+            #     points_cam_41 = extrinsics_44 @ point_41
+            #     proj_31 = intrinsics_34 @ points_cam_41
+            #     proj_3 = proj_31.float().squeeze(1)
+            #     u = int((proj_3[0] / proj_3[2]).round())
+            #     v = int((proj_3[1] / proj_3[2]).round())
+            #     if u < 0 or u > self._render_img_size[1] - 1 or v < 0 or v > self._render_img_size[0] - 1:
+            #         continue
+
+            #     # check if keypoint is hidden
+            #     near = self._cam.get_near_clipping_plane()
+            #     far = self._cam.get_far_clipping_plane()
+            #     geometry_depth = depth[v, u]
+            #     point_depth = (points_cam_41[2] - near) / (far - near)
+            #     if geometry_depth < point_depth:
+            #         continue
+            #     rgb[v - 1:v + 1, u - 1:u + 1] = [255, 0, 0]
+                # rgb[point[1] - 1:point[1] + 1, point[0] - 1:point[0] + 1] = [255, 0, 0]
+
+            self._rgbs.append(rgb)
             self._cam_motion.step()
 
     def start_recording(self):
@@ -231,41 +316,57 @@ class RLBenchEnv:
             if self.apply_pc:
                 pc = getattr(obs, "{}_point_cloud".format(cam))
                 state_dict["pc"] += [pc]
+        
+        if self.apply_low_dim_pcd:
+            low_dim_pcd = obs.misc["low_dim_pcd"]
+            state_dict["low_dim_pcd"] = low_dim_pcd
+
+        
 
         # fetch action
         action = np.concatenate([obs.gripper_pose, [obs.gripper_open]])
         return state_dict, torch.from_numpy(action).float()
 
-    def get_rgb_pcd_gripper_from_obs(self, obs):
+    def get_rgb_pcd_low_dim_pcd_gripper_from_obs(self, obs):
         """
         Return rgb, pcd, and gripper from a given observation
         :param obs: an Observation from the env
         :return: rgb, pcd, gripper
         """
         state_dict, _ = self.get_obs_action(obs)
+        low_dim_pcd = torch.from_numpy(state_dict.pop("low_dim_pcd", None))
         gripper = torch.from_numpy(obs.gripper_matrix)
-        state = transform(state_dict, augmentation=False)
-        state = einops.rearrange(
-            state,
-            "(m n ch) h w -> n m ch h w",
-            ch=3,
-            n=len(self.apply_cameras),
-            m=2
-        )
-        rgb = state[:, 0].unsqueeze(0)  # 1, N, C, H, W
-        pcd = state[:, 1].unsqueeze(0)  # 1, N, C, H, W
         gripper = gripper.unsqueeze(0)  # 1, D
 
-        attns = torch.Tensor([])
-        for cam in self.apply_cameras:
-            u, v = obs_to_attn(obs, cam)
-            attn = torch.zeros(1, 1, 1, self.image_size[0], self.image_size[1])
-            if not (u < 0 or u > self.image_size[1] - 1 or v < 0 or v > self.image_size[0] - 1):
-                attn[0, 0, 0, v, u] = 1
-            attns = torch.cat([attns, attn], 1)
-        rgb = torch.cat([rgb, attns], 2)
+        if self.apply_rgb and self.apply_pc:
+            state = transform(state_dict, augmentation=False)
+            state = einops.rearrange(
+                state,
+                "(m n ch) h w -> n m ch h w",
+                ch=3,
+                n=len(self.apply_cameras),
+                m=2
+            )
+            rgb = state[:, 0].unsqueeze(0)  # 1, N, C, H, W
+            pcd = state[:, 1].unsqueeze(0)  # 1, N, C, H, W
 
-        return rgb, pcd, gripper
+            attns = torch.Tensor([])
+            for cam in self.apply_cameras:
+                u, v = obs_to_attn(obs, cam)
+                attn = torch.zeros(1, 1, 1, self.image_size[0], self.image_size[1])
+                if not (u < 0 or u > self.image_size[1] - 1 or v < 0 or v > self.image_size[0] - 1):
+                    attn[0, 0, 0, v, u] = 1
+                attns = torch.cat([attns, attn], 1)
+            rgb = torch.cat([rgb, attns], 2)
+        else:
+            rgb = None
+            pcd = None
+        
+        if self.apply_low_dim_pcd:
+            low_dim_pcd = low_dim_pcd.unsqueeze(0)  # 1, N, 3
+
+
+        return rgb, pcd, low_dim_pcd, gripper
 
     def get_obs_action_from_demo(self, demo):
         """
@@ -449,6 +550,7 @@ class RLBenchEnv:
 
                 rgbs = torch.Tensor([]).to(device)
                 pcds = torch.Tensor([]).to(device)
+                low_dim_pcds = torch.Tensor([]).to(device)
                 grippers = torch.Tensor([]).to(device)
 
                 # descriptions, obs = task.reset()
@@ -469,39 +571,60 @@ class RLBenchEnv:
                         self.obs_history = self.obs_history[::-1][::self.obs_history_augmentation_every_n][::-1][-num_history:]
 
                     for obs in self.obs_history:
-                        rgb, pcd, gripper = self.get_rgb_pcd_gripper_from_obs(obs)
-                        rgb = rgb.to(device)
-                        pcd = pcd.to(device)
-                        gripper = gripper.to(device)
+                        rgb, pcd, low_dim_pcd, gripper = self.get_rgb_pcd_low_dim_pcd_gripper_from_obs(obs)
+                        if self.apply_rgb:
+                            rgb = rgb.to(device)
+                            rgbs = torch.cat([rgbs, rgb], dim=0)
+                        if self.apply_pc:
+                            pcd = pcd.to(device)
+                            pcds = torch.cat([pcds, pcd], dim=0)
+                        if self.apply_low_dim_pcd:
+                            low_dim_pcd = low_dim_pcd.to(device)
+                            low_dim_pcds = torch.cat([low_dim_pcds, low_dim_pcd], dim=0)
 
-                        rgbs = torch.cat([rgbs, rgb], dim=0)
-                        pcds = torch.cat([pcds, pcd], dim=0)
+                        gripper = gripper.to(device)
                         grippers = torch.cat([grippers, gripper], dim=0)
 
                     self.obs_history = []
 
                     # Prepare proprioception history
                     gripper_input = grippers[-num_history:].unsqueeze(0)
-                    rgbs_input = rgbs[-num_history:,:,:3].unsqueeze(0) # only rgb channels, remove attns
-                    pcds_input = pcds[-num_history:].unsqueeze(0)
+
                     npad = num_history - gripper_input.shape[1]
-                    b, _, n, c, h, w = rgbs_input.shape
                     gripper_input = F.pad(
                         gripper_input, (0, 0, 0, 0, npad, 0), mode='replicate'
                     )
-                    rgbs_input = F.pad(
-                            rgbs_input.reshape(rgbs_input.shape[:2] + (-1,)),
+                    if self.apply_rgb:
+                        rgbs_input = rgbs[-num_history:,:,:3].unsqueeze(0) # only rgb channels, remove attns
+                        b, _, n, c, h, w = rgbs_input.shape
+                        rgbs_input = F.pad(
+                                rgbs_input.reshape(rgbs_input.shape[:2] + (-1,)),
+                                (0, 0, npad, 0), mode='replicate'
+                        ).view(b, -1, n, c, h, w)
+
+                    if self.apply_pc:
+                        pcds_input = pcds[-num_history:].unsqueeze(0)
+                        b, _, n, c, h, w = pcds_input.shape
+                        pcds_input = F.pad(
+                            pcds_input.reshape(pcds_input.shape[:2] + (-1,)),
                             (0, 0, npad, 0), mode='replicate'
-                    ).view(b, -1, n, c, h, w)
-                    pcds_input = F.pad(
-                        pcds_input.reshape(pcds_input.shape[:2] + (-1,)),
-                        (0, 0, npad, 0), mode='replicate'
-                    ).view(b, -1, n, c, h, w)
-                    obs = {
-                        "rgb": rgbs_input[:,-1], #TODO: fix this
-                        "pcd": pcds_input[:,-1],
-                        "agent_pose": gripper_input,
-                    }
+                        ).view(b, -1, n, c, h, w)
+
+                    if self.apply_low_dim_pcd:
+                        low_dim_pcds_input = low_dim_pcds[-num_history:].unsqueeze(0)
+                        low_dim_pcds_input = F.pad(
+                            low_dim_pcds_input,
+                            (0, 0, 0, 0, npad, 0), mode='replicate'
+                        )
+
+                    obs = dict()
+                    if self.apply_rgb:
+                        obs["rgb"] = rgbs_input[:,-1]
+                    if self.apply_pc:
+                        obs["pcd"] = pcds_input[:,-1]
+                    if self.apply_low_dim_pcd:
+                        obs["low_dim_pcd"] = low_dim_pcds_input[-1]
+                    obs["agent_pose"] = gripper_input
                     action = actioner.predict(obs)
 
                     self._gripper_dummmy.set_pose(action[:7])
@@ -755,7 +878,7 @@ def test_evaluation():
     pass
 
 def test_replay():
-    data_path = "/home/felix/Workspace/diffusion_policy_felix/data/peract"
+    data_path = "/home/felix/Workspace/diffusion_policy_felix/data/keypoint/train"
     env = RLBenchEnv(
         data_path=data_path,
         headless=True,
@@ -763,10 +886,11 @@ def test_replay():
         obs_history_augmentation_every_n=2,
         apply_rgb=True,
         apply_pc=True,
+        apply_low_dim_pcd=True,
         render_image_size=[1280, 720]
     )
 
-    task_str = "open_drawer"
+    task_str = "open_drawer_keypoint"
     task_type = task_file_to_task_class(task_str)
     task = env.env.get_task(task_type)
     variation = 0

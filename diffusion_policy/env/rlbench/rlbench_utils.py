@@ -29,7 +29,8 @@ ALL_RLBENCH_TASKS = [
     'take_lid_off_saucepan', 'take_money_out_safe', 'take_plate_off_colored_dish_rack', 'take_shoes_out_of_box',
     'take_toilet_roll_off_stand', 'take_umbrella_out_of_umbrella_stand', 'take_usb_out_of_computer',
     'toilet_seat_down', 'toilet_seat_up', 'tower3', 'turn_oven_on', 'turn_tap', 'tv_on', 'unplug_charger',
-    'water_plants', 'wipe_desk'
+    'water_plants', 'wipe_desk', 
+    'open_drawer_keypoint'
 ]
 TASK_TO_ID = {task: i for i, task in enumerate(ALL_RLBENCH_TASKS)}
 

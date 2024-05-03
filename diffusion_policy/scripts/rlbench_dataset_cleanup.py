@@ -1,9 +1,9 @@
-from diffusion_policy.env.rlbench.rlbench_lowdim_env import RLBenchLowDimEnv
+from diffusion_policy.env.rlbench.rlbench_env import RLBenchEnv
 import os
 import click
 
 def remove_unvalid_demos(data_path, task_str, variation):
-    env = RLBenchLowDimEnv(
+    env = RLBenchEnv(
         data_path=data_path,
         headless=True,
         collision_checking=False,

@@ -23,7 +23,7 @@ from diffusion_policy.policy.base_lowdim_policy import BaseLowdimPolicy
 from diffusion_policy.common.rotation_utils import SO3_log_map
 from diffusion_policy.common.common_utils import trajectory_gripper_open_ignore_collision_from_action
 from diffusion_policy.dataset.base_dataset import BaseImageDataset
-from diffusion_policy.env_runner.rlbench_lowdim_runner import RLBenchLowdimRunner
+from diffusion_policy.env_runner.rlbench_runner import RLBenchRunner
 from diffusion_policy.common.checkpoint_util import TopKCheckpointManager
 from diffusion_policy.common.json_logger import JsonLogger
 from diffusion_policy.common.pytorch_util import dict_apply, optimizer_to
@@ -197,7 +197,7 @@ class TrainFlowMatchingUnetLowDimWorkspace(BaseWorkspace):
                 model=self.ema_model)
 
         # configure env
-        env_runner: RLBenchLowdimRunner
+        env_runner: RLBenchRunner
         env_runner = hydra.utils.instantiate(
             cfg.task.env_runner,
             output_dir=self.output_dir,

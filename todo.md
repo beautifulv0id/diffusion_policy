@@ -1,11 +1,20 @@
 # TODOs 📔
-- [ ] cleanup flow matching policy
-- [ ] check why workspace cropping + refill throws error (what happens if ws is zero?)
+- [ ] 
+- [ ] why does FM + image not work?
+- [ ] data augmentation
+  - [ ] world frame rotation/translation
+- [ ] CLIP/Dino feature analysis
+  - [ ] plot cosine distance vs. camera angle of same feature
+- [ ] steps to full RGB + affordance mask
+  - [ ] take only features from a sphere around keypoints
+    - [x] equip open drawer w/ meaningful keypoints
 - [ ] check encoder from 3D diffusion policy
 - [ ] maybe add visualization where gripper should be
-- [ ] try out self attention vor feature pcd encoding
+- [ ] try out self attention for feature pcd encoding/decoding
 - [ ] Install correct torchvision version according to https://pypi.org/project/torchvision/
   - error message: ```/home/felix/miniforge3/envs/robodiff/lib/python3.9/site-packages/torchvision/io/image.py:13: UserWarning: Failed to load image Python extension: libtorch_cuda_cu.so: cannot open shared object file: No such file or directory```
+- [x] cleanup flow matching policy
+- [x] check why workspace cropping + refill throws error (what happens if ws is zero?)
 - [x] fix data augmentation
 - [x]  check why multirun crashed
     - probably because Pyrep is killed and started again
