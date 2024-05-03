@@ -623,7 +623,7 @@ class RLBenchEnv:
                     if self.apply_pc:
                         obs["pcd"] = pcds_input[:,-1]
                     if self.apply_low_dim_pcd:
-                        obs["low_dim_pcd"] = low_dim_pcds_input[-1]
+                        obs["low_dim_pcd"] = low_dim_pcds_input[:,-1]
                     obs["agent_pose"] = gripper_input
                     action = actioner.predict(obs)
 
