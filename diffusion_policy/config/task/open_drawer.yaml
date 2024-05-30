@@ -15,6 +15,17 @@ shape_meta: &shape_meta
         - ${task.num_keypoints}
         - 3
       type: low_dim
+    keypoint_poses:
+      shape: 
+        - ${task.num_objects}
+        - 4
+        - 4
+      type: low_dim
+    low_dim_state:
+      shape: 
+        - ${n_obs_steps}
+        - 3
+      type: low_dim
   action:
     shape: [4,4]
 
@@ -33,10 +44,11 @@ dataset:
   variation: 0
   demo_augmentation_every_n: 1
   n_obs: ${n_obs_steps}
-  build_history_from_augment_obs: True
   keypoints_only: True
   val_ratio: 0.2
   use_low_dim_pcd: true
+  use_pose: true
+  use_low_dim_state: true
 
 env_runner:
   _target_: diffusion_policy.env_runner.rlbench_runner.RLBenchRunner
@@ -51,3 +63,4 @@ env_runner:
   action_dim: 8
   headless: True
   apply_low_dim_pcd: true
+  apply_pose: true

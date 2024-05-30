@@ -2,30 +2,6 @@ from theseus.geometry.so3 import SO3
 import torch
 import torch.nn.functional as F
 
-def sample_random_se3(batch_size, std_R = 1.0, std_x = 1.0, device='cpu', dtype=torch.float32):
-    lR = torch.randn((batch_size, 3), device=device, dtype=dtype) * std_R
-    R = SO3_exp_map(lR)
-    t = torch.randn((batch_size, 3), device=device, dtype=dtype) * std_x
-    H = torch.eye(4, device=device, dtype=dtype)[None,...].repeat(batch_size,1,1)
-    H[:, :3, :3] = R
-    H[:, :3, -1] = t
-    return H
-
-
-def SO3_log_map(R):
-    """
-    Convert a batch of rotation matrices to rotation vectors.
-    """
-    R_ = SO3()
-    R_.update(R)
-    return R_.log_map()
-
-def SO3_exp_map(rot):
-    """
-    Convert a batch of rotation vectors to rotation matrices.
-    """
-    return SO3().exp_map(rot).to_matrix()
-
 """
 Below is taken from 3D Diffuser Actor
 """

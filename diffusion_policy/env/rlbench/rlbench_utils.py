@@ -30,7 +30,7 @@ ALL_RLBENCH_TASKS = [
     'take_toilet_roll_off_stand', 'take_umbrella_out_of_umbrella_stand', 'take_usb_out_of_computer',
     'toilet_seat_down', 'toilet_seat_up', 'tower3', 'turn_oven_on', 'turn_tap', 'tv_on', 'unplug_charger',
     'water_plants', 'wipe_desk', 
-    'open_drawer_keypoint'
+    'open_drawer_keypoint', 'stack_blocks'
 ]
 TASK_TO_ID = {task: i for i, task in enumerate(ALL_RLBENCH_TASKS)}
 
@@ -262,13 +262,18 @@ class Actioner:
             action: torch.Tensor
         """
         self._task_id = self._task_id.to(self.device)
-        action = self._policy.predict_action(obs)["action"][0,0,:self._action_dim]
-        action = action.detach().cpu().numpy()
-        return action
+        pred_dict = self._policy.predict_action(obs)
+        action = pred_dict['extra']['rlbench_action']
+        action = action[0,-1]
+        return action.detach().cpu().numpy()
 
     @property
     def device(self):
         return next(self._policy.parameters()).device
+    
+    @property
+    def dtype(self):
+        return next(self._policy.parameters()).dtype
 
 
 def get_object_pose_indices_from_task(task : Task):

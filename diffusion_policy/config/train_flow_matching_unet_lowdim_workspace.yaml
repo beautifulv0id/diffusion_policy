@@ -1,11 +1,12 @@
 defaults:
   - _self_
-  - task: open_drawer
-  - encoder: GITLowdimEncoder
-  - model: naive_film_se3_flow_matching_model
+  - task: put_item_in_drawer
+  # - encoder: GITLowdimEncoder 
+  # - encoder: transformer_lowdim_obs_relative_encoder
+  - encoder: lowdim_pose_embedder # transformer_self_attn_lowdim_encoder
+  - model: flow_matching_git # naive_film_se3_flow_matching_model
 
 name: flow_matching_unet_lowdim_policy
-# _target_: diffusion_policy.workspace.flow_matching_unet_lowdim_policy.FlowMatchingUnetLowDimPolicy
 
 mode: train
 
@@ -17,20 +18,6 @@ checkpoint:
     format_str: 'epoch={epoch:04d}-val_loss={val_loss:.3f}.ckpt'
   save_last_ckpt: True
   save_last_snapshot: False
-
-dataloader:
-  batch_size: 64
-  num_workers: 1
-  shuffle: True
-  pin_memory: True
-  persistent_workers: True
-
-val_dataloader:
-  batch_size: 64
-  num_workers: 1
-  shuffle: False
-  pin_memory: True
-  persistent_workers: True
 
 #dataset_obs_steps: 2
 ema:
@@ -44,7 +31,7 @@ ema:
 task_name: ${task.name}
 exp_name: "default"
 horizon: 1
-n_obs_steps: &n_obs_steps 3
+n_obs_steps: &n_obs_steps 2
 n_action_steps: 1
 embedding_dim: 60
 num_episodes: 1
@@ -60,21 +47,35 @@ optimizer:
 
 policy:
   _target_: diffusion_policy.policy.flow_matching_SE3_unet_lowdim_policy.FlowMatchingSE3UnetLowDimPolicy
-     
   shape_meta: ${task.shape_meta}
   observation_encoder: ${encoder}
-  action_decoder: ${model}
+  model: ${model}
   horizon: ${horizon}
   n_action_steps: ${n_action_steps}
   n_obs_steps: ${n_obs_steps}
+  num_inference_steps: 10
   gripper_loc_bounds: ${task.gripper_loc_bounds}
-  relative_position: True
+  relative_position: False
   relative_rotation: False
-  noise_aug_std: 0.0
-    
+  data_augmentation: False
+  rotation_std: 0.2
+  position_std: 0.02
+dataloader:
+  batch_size: 512
+  num_workers: 0
+  shuffle: True
+  pin_memory: False
+  persistent_workers: False
 
+val_dataloader:
+  batch_size: 512
+  num_workers: 0
+  shuffle: False
+  pin_memory: False
+  persistent_workers: False
+    
 training:
-  checkpoint_every: 50
+  checkpoint_every: 500
   debug: false
   device: cuda:0
   gradient_accumulate_every: 1
@@ -82,9 +83,9 @@ training:
   lr_warmup_steps: 500
   max_train_steps: null
   max_val_steps: null
-  num_epochs: 500000
+  num_epochs: 50000
   resume: true
-  rollout_every: 10000
+  rollout_every: 50000
   sample_every: 5
   seed: 42
   tqdm_interval_sec: 1.0

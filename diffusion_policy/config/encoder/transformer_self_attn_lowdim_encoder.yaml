@@ -1,4 +1,4 @@
-_target_: diffusion_policy.model.vision.transformer_lowdim_obs_relative_encoder.TransformerLowdimObsRelativeEncoder
+_target_: diffusion_policy.model.vision.transformer_self_attn_lowdim_encoder.TransformerSelfAttnLowdimEncoder
 shape_meta: ${task.shape_meta}
 n_obs_steps: ${n_obs_steps}
 query_embeddings: 
@@ -16,7 +16,7 @@ positional_embedder:
   _target_: diffusion_policy.model.common.position_encodings.SinusoidalPosEmb
   dim: ${embedding_dim}
 within_attn: 
-  _target_: diffusion_policy.model.common.layers.FFWRelativeCrossAttentionModule
+  _target_: diffusion_policy.model.common.layers.FFWRelativeSelfAttentionModule
   embedding_dim: ${embedding_dim}
   num_attn_heads: 5
   num_layers: 4
@@ -24,4 +24,4 @@ across_attn:
   _target_: diffusion_policy.model.common.layers.FFWRelativeCrossAttentionModule
   embedding_dim: ${embedding_dim}
   num_attn_heads: 5
-  num_layers: 4
+  num_layers: 1

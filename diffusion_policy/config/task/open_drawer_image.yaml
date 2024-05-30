@@ -21,7 +21,8 @@ gripper_loc_bounds:
   buffer: 0.0
   task: ${name}
 
-cameras: ['left_shoulder', 'right_shoulder', 'wrist', 'front']
+# cameras: ['left_shoulder', 'right_shoulder', 'wrist', 'front']
+cameras: ['wrist', 'front']
 
 dataset:
   _target_: diffusion_policy.dataset.rlbench_dataset.RLBenchDataset
@@ -32,7 +33,6 @@ dataset:
   variation: 0
   demo_augmentation_every_n: 1
   n_obs: ${n_obs_steps}
-  build_history_from_augment_obs: True
   keypoints_only: True
   val_ratio: 0.2
   use_pcd: true

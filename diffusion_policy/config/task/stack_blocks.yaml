@@ -1,22 +1,33 @@
 name: stack_blocks
 
-num_objects: 13
+num_objects: 9
 num_keypoints: ${eval:'${task.num_objects} * 7'}
 shape_meta: &shape_meta
   # acceptable types: rgb, low_dim
   obs:
     agent_pose:
-      shape: [4,4]
+      shape: 
+        - ${n_obs_steps}
+        - 4
+        - 4
       type: low_dim
-    keypoint_pcd:
+    low_dim_pcd:
       shape: 
         - ${task.num_keypoints}
         - 3
       type: low_dim
-    keypoint_idx:
+    keypoint_poses:
       shape: 
-        - ${task.num_keypoints}
+        - ${task.num_objects}
+        - 4
+        - 4
       type: low_dim
+    low_dim_state:
+      shape: 
+        - ${n_obs_steps}
+        - 3
+      type: low_dim
+
   action:
     shape: [4,4]
 
@@ -26,18 +37,23 @@ gripper_loc_bounds:
   buffer: 0.0
   task: ${name}
 
+obs_augmentation_every_n: 10
+
 dataset:
-  _target_: diffusion_policy.dataset.rlbench_dataset.RLBenchDataset
-  root: /home/felix/Workspace/diffusion_policy_felix/data/peract
+  _target_: diffusion_policy.dataset.rlbench_dataset.RLBenchLowdimDataset
+  root: /home/felix/Workspace/diffusion_policy_felix/data/keypoint/train
   task_name: stack_blocks
   cameras: []
   num_episodes: ${num_episodes}
   variation: 0
-  demo_augmentation_every_n: 1
   n_obs: ${n_obs_steps}
-  build_history_from_augment_obs: True
-  keypoints_only: True
+  demo_augmentation_every_n: 10
+  obs_augmentation_every_n: ${task.obs_augmentation_every_n}
+  keypoints_only: False
   val_ratio: 0.2
+  use_low_dim_pcd: true
+  use_pose: true
+  use_low_dim_state: true
 
 env_runner:
   _target_: diffusion_policy.env_runner.rlbench_runner.RLBenchRunner
@@ -47,7 +63,11 @@ env_runner:
   max_steps: ${eval:'50 if "${task.dataset.keypoints_only}" else 500'}
   max_rtt_tries: 3
   demo_tries: 1
-  obs_history_augmentation_every_n: 1
+  obs_history_augmentation_every_n: ${task.dataset.obs_augmentation_every_n}
   collision_checking: True
   action_dim: 8
   headless: True
+  apply_low_dim_pcd: true
+  apply_pose: true
+  adaptor:
+    _target_: diffusion_policy.common.adaptors.Peract2Robomimic

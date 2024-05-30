@@ -35,7 +35,6 @@ dataset:
   variation: 0
   demo_augmentation_every_n: 1
   n_obs: ${n_obs_steps}
-  build_history_from_augment_obs: True
   keypoints_only: True
   val_ratio: 0.2
 

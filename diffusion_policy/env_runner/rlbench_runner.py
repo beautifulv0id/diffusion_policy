@@ -1,6 +1,6 @@
 from typing import Dict
 from diffusion_policy.policy.base_lowdim_policy import BaseLowdimPolicy
-from diffusion_policy.env_runner.base_lowdim_runner import BaseLowdimRunner
+from diffusion_policy.env_runner.base_image_runner import BaseImageRunner
 from rlbench.task_environment import TaskEnvironment
 from rlbench.demo import Demo
 from diffusion_policy.env.rlbench.rlbench_utils import Actioner
@@ -9,7 +9,7 @@ from diffusion_policy.env.rlbench.rlbench_utils import task_file_to_task_class
 from typing import List
 import wandb
 
-class RLBenchRunner(BaseLowdimRunner):
+class RLBenchRunner(BaseImageRunner):
     def __init__(self, 
                  output_dir,
                  data_root, #TODO: or pass demos?
@@ -31,9 +31,13 @@ class RLBenchRunner(BaseLowdimRunner):
                 apply_pc=False,
                 apply_cameras=("left_shoulder", "right_shoulder", "wrist", "front"),
                 apply_low_dim_pcd=False,
+                apply_pose=False,
+                adaptor=None,
                  ):
         super(RLBenchRunner, self).__init__(output_dir)
         self.task_str = task_str
+
+        assert any([apply_rgb, apply_pc, apply_low_dim_pcd]), "At least one of apply_rgb, apply_pc, apply_low_dim_pcd must be True"
 
         env = RLBenchEnv(data_path=data_root, 
                             image_size=image_size,
@@ -44,8 +48,11 @@ class RLBenchRunner(BaseLowdimRunner):
                             apply_pc=apply_pc,
                             apply_cameras=apply_cameras,
                             apply_low_dim_pcd=apply_low_dim_pcd,
+                            apply_pose=apply_pose,
                             collision_checking=collision_checking,
-                            obs_history_augmentation_every_n=obs_history_augmentation_every_n)        
+                            obs_history_augmentation_every_n=obs_history_augmentation_every_n,
+                            adaptor=adaptor,
+                            ) 
         self.task_str = task_str
         self.env = env
         self.action_dim = action_dim
@@ -104,14 +111,14 @@ OmegaConf.register_new_resolver("eval", eval, replace=True)
 
 def test():
     import torch
-    from diffusion_policy.policy.diffusion_unet_lowdim_relative_policy import DiffusionUnetLowDimRelativePolicy
+    from diffusion_policy.policy.flowmatching_policy import SE3FlowMatchingPolicy
 
     with initialize(version_base=None, config_path="../config"):
-        cfg = compose(config_name="train_flow_matching_unet_lowdim_workspace.yaml", overrides=["task=open_drawer_lowdim"])
+        cfg = compose(config_name="julen.yaml", overrides=["task=put_item_in_drawer"])
 
     OmegaConf.resolve(cfg)
-    policy : DiffusionUnetLowDimRelativePolicy = hydra.utils.instantiate(cfg.policy)
-    checkpoint_path = "/home/felix/Workspace/diffusion_policy_felix/data/outputs/2024.04.16/17.50.13_flow_matching_unet_lowdim_policy_open_drawer/checkpoints/epoch=465800-val_loss=0.000.ckpt"
+    policy : SE3FlowMatchingPolicy = hydra.utils.instantiate(cfg.policy)
+    checkpoint_path = "/home/felix/Workspace/diffusion_policy_felix/data/outputs/2024.05.17/13.08.18_train__put_item_in_drawer/checkpoints/epoch=4800-train_loss=0.001.ckpt"
     checkpoint = torch.load(checkpoint_path)
 
     dataset = hydra.utils.instantiate(cfg.task.dataset)
@@ -121,17 +128,17 @@ def test():
     env_runner = RLBenchRunner(output_dir=str(pathlib.Path(__file__).parent.parent.parent / "data"),
                                 data_root=cfg.task.dataset.root,
                                 task_str=cfg.task.dataset.task_name,
-                                max_steps=3,
-                                demos=dataset.demos, 
-                                eval_demos=val_dataset.demos,
+                                max_steps=50,
                                 render_image_size=[1280, 720],
                                 max_episodes=1,
+                                apply_low_dim_pcd=True,
+                                apply_pose=True,
                                 headless=False)
 
     env_runner.n_val_vis = 0
     env_runner.n_train_vis = 0
 
-    results = env_runner.run(policy)
+    results = env_runner.run(policy, demos=dataset.demos)
     print(results)
 
 
@@ -186,5 +193,6 @@ def test_replay():
     print(results)
 
 if __name__ == "__main__":
-    test_replay()
+    # test_replay()
+    test()
     print("Done!")

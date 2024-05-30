@@ -80,3 +80,28 @@ def optimizer_to(optimizer, device):
             if isinstance(v, torch.Tensor):
                 state[k] = v.to(device=device)
     return optimizer
+
+def normalizer_to(normalizer, device, dtype):
+    for k, v in normalizer.params_dict.items():
+        normalizer.params_dict[k] = v.to(device=device, dtype=dtype)
+    return normalizer
+
+def print_dict(x, indent=0, print_values=False):
+    for k in x.keys():
+        if isinstance(x[k], dict):
+            print(" "*3*indent+k+":")
+            print_dict(x[k], indent+1, print_values=print_values)
+        else:
+            if isinstance(x[k], torch.Tensor):
+                print(" "*3*indent+k+":", x[k].detach().cpu().numpy().shape, x[k].dtype)
+                if print_values:
+                    print( x[k][0].detach().cpu().numpy())
+            else:
+                print(" "*3*indent+k+":", x[k])
+
+def compare_dicts(a, b):
+    for k in a.keys():
+        if isinstance(a[k], dict):
+            compare_dicts(a[k], b[k])
+        else:
+            assert torch.allclose(a[k], b[k], rtol=1e-3), f"{a[k]} != {b[k]}, {k} not equal"

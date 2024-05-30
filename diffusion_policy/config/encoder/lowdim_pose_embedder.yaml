@@ -1,0 +1,12 @@
+_target_: diffusion_policy.model.vision.lowdim_pose_embedder.LowDimPoseEmbedder
+shape_meta: ${task.shape_meta}
+n_obs_steps: ${n_obs_steps}
+query_embeddings: 
+  _target_: torch.nn.Embedding
+  num_embeddings: ${n_obs_steps}
+  embedding_dim: ${embedding_dim}
+keypoint_embeddings: 
+  _target_: torch.nn.Embedding
+  num_embeddings: ${task.num_objects}
+  embedding_dim: ${embedding_dim}
+dim_out: ${embedding_dim}

@@ -4,7 +4,7 @@ from pathlib import Path
 import json
 import torch
 import numpy as np
-from scipy.spatial.transform import Rotation
+from pytorch3d.transforms import quaternion_to_matrix, matrix_to_quaternion, standardize_quaternion
 
 Instructions = Dict[str, Dict[int, torch.Tensor]]
 
@@ -75,10 +75,7 @@ def trajectory_gripper_open_ignore_collision_from_action(action : torch.Tensor):
 
     pos = action[:, :, :3]
     quat = action[:, :, 3:7]
-    rot = torch.from_numpy(
-        Rotation.from_quat(quat.reshape(-1,4).cpu()).as_matrix().reshape(B, T, 3, 3)
-        ).to(device=device, dtype=dtype)
-    
+    rot = quaternion_to_matrix(torch.cat([quat[..., [3]], quat[..., :3]], dim=-1))   
     trajectory = torch.eye(4).unsqueeze(0).repeat(B, T, 1, 1).to(device=device, dtype=dtype)
     trajectory[:, :, :3, :3] = rot
     trajectory[:, :, :3, 3] = pos
@@ -91,15 +88,13 @@ def trajectory_gripper_open_ignore_collision_from_action(action : torch.Tensor):
 def action_from_trajectory_gripper_open_ignore_collision(trajectory : torch.Tensor, gripper_open : torch.Tensor, ignore_collision : torch.Tensor):
     B, T, _, _ = trajectory.shape
     device, dtype = trajectory.device, trajectory.dtype
-    gripper_open = gripper_open.reshape(B, T, 1)
-    ignore_collision = ignore_collision.reshape(B, T, 1)
+    gripper_open = gripper_open.reshape(B, T, 1) > 0.5
+    ignore_collision = ignore_collision.reshape(B, T, 1) > 0.5
 
     pos = trajectory[:, :, :3, 3]
     rot = trajectory[:, :, :3, :3]
-    quat = torch.from_numpy(
-        Rotation.from_matrix(rot.reshape(-1,3,3).detach().cpu()).as_quat().reshape(B, T, 4)
-        ).to(device=device, dtype=dtype)
-
+    quat = standardize_quaternion(matrix_to_quaternion(rot))
+    quat = torch.cat([quat[..., 1:], quat[..., [0]]], dim=-1)
     action = torch.cat([pos, quat, gripper_open, ignore_collision], dim=-1)
     return action
     
