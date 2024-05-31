@@ -97,4 +97,16 @@ def action_from_trajectory_gripper_open_ignore_collision(trajectory : torch.Tens
     quat = torch.cat([quat[..., 1:], quat[..., [0]]], dim=-1)
     action = torch.cat([pos, quat, gripper_open, ignore_collision], dim=-1)
     return action
-    
+
+def create_rlbench_action(rot: torch.Tensor, pos: torch.Tensor, gripper_open: torch.Tensor = None, ignore_collision: torch.Tensor = None):
+    B, T, _ = pos.shape
+    quat = standardize_quaternion(matrix_to_quaternion(rot))
+    quat = torch.cat([quat[..., 1:4], quat[..., [0]]], dim=-1)
+    action = torch.cat([pos, quat], dim=-1)
+    if gripper_open is not None:
+        gripper_open = gripper_open.reshape(B, T, 1) > 0.5
+        action = torch.cat([action, gripper_open], dim=-1)
+    if ignore_collision is not None:
+        ignore_collision = ignore_collision.reshape(B, T, 1) > 0.5
+        action = torch.cat([action, ignore_collision], dim=-1)
+    return action

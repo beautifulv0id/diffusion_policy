@@ -24,6 +24,7 @@ class RLBenchRunner(BaseImageRunner):
                 n_train_vis: int = 1,
                 n_val_vis: int = 1,
                 obs_history_augmentation_every_n: int = 1,
+                n_obs_steps: int = 2,
                 image_size=(128, 128),
                 render_image_size=(128, 128),
                 apply_rgb=False,
@@ -52,6 +53,7 @@ class RLBenchRunner(BaseImageRunner):
                             collision_checking=collision_checking,
                             obs_history_augmentation_every_n=obs_history_augmentation_every_n,
                             adaptor=adaptor,
+                            n_obs_steps=n_obs_steps,
                             ) 
         self.task_str = task_str
         self.env = env
@@ -86,7 +88,6 @@ class RLBenchRunner(BaseImageRunner):
             demo_tries=self.demo_tries,
             verbose=True,
             n_visualize=n_vis,
-            num_history=policy.n_obs_steps,
         )
 
         name = mode + "_success_rate"

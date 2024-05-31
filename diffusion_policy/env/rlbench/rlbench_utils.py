@@ -9,6 +9,7 @@ from pyrep.const import ObjectType
 from rlbench.backend.task import Task
 from pyrep.objects.dummy import Dummy
 from pyrep.objects.vision_sensor import VisionSensor
+from diffusion_policy.common.common_utils import create_rlbench_action
 
 
 ALL_RLBENCH_TASKS = [
@@ -261,11 +262,15 @@ class Actioner:
         Returns:
             action: torch.Tensor
         """
-        self._task_id = self._task_id.to(self.device)
+        # self._task_id = self._task_id.to(self.device)
         pred_dict = self._policy.predict_action(obs)
-        action = pred_dict['extra']['rlbench_action']
-        action = action[0,-1]
-        return action.detach().cpu().numpy()
+        rot = pred_dict['action']['act_r']
+        pos = pred_dict['action']['act_p']
+        gripper_open = pred_dict['action'].get('act_gr', None)
+        ignore_collision = pred_dict['action'].get('act_ic', None)
+        rlbench_action = create_rlbench_action(rot, pos, gripper_open, ignore_collision)
+        rlbench_action = rlbench_action[0,-1]
+        return rlbench_action.detach().cpu().numpy()
 
     @property
     def device(self):

@@ -43,18 +43,18 @@ def _keypoint_discovery(demo: Demo,
 
 def extract_obs(obs: Observation,
 				cameras,
-                mask = False,
-                depth = False,
-                pcd = False,
+                use_rgb = False,
+                use_mask = False,
+                use_pcd = False,
+                use_depth = False,
+                use_low_dim_pcd = False,
+                use_pose = False,
+                use_low_dim_state = False,
                 channels_last: bool = False):
     grip_mat = obs.gripper_matrix
-    grip_pose = obs.gripper_pose
-    joint_pos = obs.joint_positions
-    object_poses = obs.misc.get('object_poses', None)
     low_dim_pcd = obs.misc.get('low_dim_pcd', None)
     keypoint_poses = obs.misc.get('low_dim_poses', None)
-    obs.gripper_pose = None
-    obs.gripper_matrix = None
+    # obs.gripper_pose = None
     obs.wrist_camera_matrix = None
     obs.joint_positions = None
     obs.joint_velocities = None
@@ -63,18 +63,22 @@ def extract_obs(obs: Observation,
             obs.gripper_joint_positions, 0., 0.04)
         
     remove_keys =  ['joint_velocities', 'joint_positions', 'joint_forces',
-               'gripper_open', 'gripper_pose',
-               'gripper_joint_positions', 'gripper_touch_forces']
+               'gripper_open', 'gripper_pose', 'gripper_matrix', 'ignore_collisions',
+               'gripper_joint_positions', 'gripper_touch_forces', 'misc']
     
-    if mask is False:
+    if use_rgb is False:
+        for camera in cameras:
+            obs.misc['%s_rgb' % camera] = None
+            obs.__dict__['%s_rgb' % camera] = None
+    if use_mask is False:
         for camera in cameras:
             obs.misc['%s_mask' % camera] = None
             obs.__dict__['%s_mask' % camera] = None
-    if depth is False:
+    if use_depth is False:
         for camera in cameras:
             obs.misc['%s_depth' % camera] = None
             obs.__dict__['%s_depth' % camera] = None
-    if pcd is False:
+    if use_pcd is False:
         for camera in cameras:
             obs.misc['%s_point_cloud' % camera] = None
             obs.__dict__['%s_point_cloud' % camera] = None
@@ -106,27 +110,26 @@ def extract_obs(obs: Observation,
         # add extra dim to depth data
         obs_dict = {k: v if v.ndim == 3 else np.expand_dims(v, -1)
                     for k, v in obs_dict.items()}
-    obs_dict['low_dim_state'] = np.array(robot_state, dtype=np.float32)
 
     # binary variable indicating if collisions are allowed or not while planning paths to reach poses
-    obs_dict['ignore_collisions'] = np.array([obs.ignore_collisions], dtype=np.float32)
     for (k, v) in [(k, v) for k, v in obs_dict.items() if 'point_cloud' in k]:
         obs_dict[k] = v.astype(np.float32)
 
+    obs_dict['robot0_eef_rot'] = grip_mat[...,:3,:3]
+    obs_dict['robot0_eef_pos'] = grip_mat[...,:3,3]
+    if use_rgb:
+        obs_dict['rgb'] = np.stack([obs_dict['%s_rgb' % camera] for camera in cameras]) 
+    if use_pcd:
+        obs_dict['pcd'] = np.stack([obs_dict['%s_point_cloud' % camera] for camera in cameras])
+    if use_low_dim_pcd:
+        obs_dict['low_dim_pcd'] = low_dim_pcd
+    if use_pose:
+        for i, kp in enumerate(keypoint_poses):
+            obs_dict[f'kp{i}_pos'] = kp[:3,3]
+            obs_dict[f'kp{i}_rot'] = kp[:3,:3]
+    if use_low_dim_state:
+        obs_dict['low_dim_state'] = np.array(robot_state, dtype=np.float32)
 
-    for camera_name in cameras:
-          obs_dict['%s_camera_extrinsics' % camera_name] = obs.misc['%s_camera_extrinsics' % camera_name]
-          obs_dict['%s_camera_intrinsics' % camera_name] = obs.misc['%s_camera_intrinsics' % camera_name]
-
-    obs.gripper_matrix = grip_mat
-    obs.joint_positions = joint_pos
-    obs.gripper_pose = grip_pose
-
-    obs_dict['gripper_matrix'] = obs.gripper_matrix
-    obs_dict['gripper_pose'] = obs.gripper_pose
-    obs_dict['object_poses'] = object_poses
-    obs_dict['low_dim_pcd'] = low_dim_pcd
-    obs_dict['keypoint_poses'] = keypoint_poses
     return obs_dict
 
 # taken from https://github.com/stepjam/ARM/blob/main/arm/utils.py
@@ -136,7 +139,9 @@ def normalize_quaternion(quat):
         quat = -quat
     return quat
 
-def create_sample(demo, 
+
+def create_obs_action(demo, 
+                  curr_obs_idx,
                   episode_keypoints, 
                   curr_kp_idx, 
                   cameras, 
@@ -144,34 +149,19 @@ def create_sample(demo,
                   use_low_dim_pcd=False, 
                   use_pcd=False, 
                   use_rgb=False, 
+                  use_mask=False,
+                  use_depth=False,
                   use_pose=False, 
                   use_low_dim_state=False,
                   obs_augmentation_every_n=10):
-    curr_obs_idx = episode_keypoints[max(0, curr_kp_idx - 1)]
     observations = [demo[max(0, curr_obs_idx - i * obs_augmentation_every_n)] for i in range(n_obs)]
     obs_tp1 = demo[episode_keypoints[curr_kp_idx]]
-    obs_tm1 = demo[episode_keypoints[curr_kp_idx - 1]]
+    obs_tm1 = demo[episode_keypoints[curr_kp_idx - 1]] if curr_kp_idx > 0 else demo[0]
     ignore_collisions = np.array(obs_tm1.ignore_collisions, dtype=np.float32)
     gripper_open = np.array(obs_tp1.gripper_open, dtype=np.float32)
-    action = np.concatenate([obs_tp1.gripper_pose[:3], normalize_quaternion(obs_tp1.gripper_pose[3:]), [gripper_open], [ignore_collisions]])
     data = []
     for _, obs in enumerate(observations):
-        full_obs_dict = extract_obs(obs, cameras, pcd=use_pcd)
-        obs_dict = {}
-        obs_dict['robot0_eef_rot'] = full_obs_dict['gripper_matrix'][...,:3,:3]
-        obs_dict['robot0_eef_pos'] = full_obs_dict['gripper_matrix'][...,:3,3]
-        if use_rgb:
-            obs_dict['rgb'] = np.stack([full_obs_dict['%s_rgb' % camera] for camera in cameras]) 
-        if use_pcd:
-            obs_dict['pcd'] = np.stack([full_obs_dict['%s_point_cloud' % camera] for camera in cameras])
-        if use_low_dim_pcd:
-            obs_dict['low_dim_pcd'] = full_obs_dict['low_dim_pcd']
-        if use_pose:
-            for i, kp in enumerate(full_obs_dict['keypoint_poses']):
-                obs_dict[f'kp{i}_pos'] = kp[:3,3]
-                obs_dict[f'kp{i}_rot'] = kp[:3,:3]
-        if use_low_dim_state:
-            obs_dict['low_dim_state'] = full_obs_dict['low_dim_state']
+        obs_dict = extract_obs(obs, cameras=cameras, use_rgb=use_rgb, use_mask=use_mask, use_pcd=use_pcd, use_depth=use_depth, use_low_dim_pcd=use_low_dim_pcd, use_pose=use_pose, use_low_dim_state=use_low_dim_state)
         data.append({
             "obs": obs_dict,
         })
@@ -195,7 +185,7 @@ def create_sample(demo,
 
 def create_dataset(demos, cameras, demo_augmentation_every_n=10, 
                    obs_augmentation_every_n=10, n_obs=2, 
-                   use_low_dim_pcd=False, use_rgb=False, use_pcd=False, 
+                   use_low_dim_pcd=False, use_rgb=False, use_pcd=False, use_mask=False, use_depth=False,
                    keypoints_only=False, use_pose=False, use_low_dim_state=False):
     dataset = []
     episode_begin = [0]
@@ -203,26 +193,26 @@ def create_dataset(demos, cameras, demo_augmentation_every_n=10,
     for demo in demos:
         episode_keypoints = _keypoint_discovery(demo)
         if keypoints_only:
-            for i in range(1, len(episode_keypoints)):
-                data = create_sample(demo, episode_keypoints, i, cameras, n_obs, 
-                                     use_low_dim_pcd, use_pcd, use_rgb, use_pose, 
-                                     use_low_dim_state, obs_augmentation_every_n)
+            for i in range(0, len(episode_keypoints)):
+                data = create_obs_action(demo=demo, curr_obs_idx=episode_keypoints[i], episode_keypoints=i, curr_kp_idx=i, cameras=cameras, n_obs=n_obs, 
+                                         use_low_dim_pcd=use_low_dim_pcd, use_pcd=use_pcd, use_rgb=use_rgb, use_pose=use_pose, use_depth=use_depth,
+                                         use_mask=use_mask, use_low_dim_state=use_low_dim_state, obs_augmentation_every_n=obs_augmentation_every_n)
                 dataset.append(data)
                 episode_begin.append(episode_begin[-1])
             episode_begin[-1] = len(dataset)
         else:
             next_keypoint = 0
-            for i in range(episode_keypoints[0], len(demo)-1):
+            for i in range(0, len(demo)-1):
                 if i % demo_augmentation_every_n:
                     continue
-
+                
                 while next_keypoint < len(episode_keypoints) and i >= episode_keypoints[next_keypoint]:
                     next_keypoint += 1
                 if i >= episode_keypoints[-1]:
                     break            
-                data = create_sample(demo, episode_keypoints, next_keypoint, cameras, n_obs, 
-                                     use_low_dim_pcd, use_pcd, use_rgb, use_pose, 
-                                     use_low_dim_state, obs_augmentation_every_n)
+                data = create_obs_action(demo=demo, curr_obs_idx=i, episode_keypoints=episode_keypoints, curr_kp_idx=next_keypoint, cameras=cameras, n_obs=n_obs, 
+                                         use_low_dim_pcd=use_low_dim_pcd, use_pcd=use_pcd, use_rgb=use_rgb, use_pose=use_pose, use_depth=use_depth,
+                                         use_mask=use_mask, use_low_dim_state=use_low_dim_state, obs_augmentation_every_n=obs_augmentation_every_n)
                 dataset.append(data)
                 episode_begin.append(episode_begin[-1])
             episode_begin[-1] = len(dataset)

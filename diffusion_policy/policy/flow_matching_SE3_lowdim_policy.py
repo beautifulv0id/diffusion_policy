@@ -8,7 +8,6 @@ from einops import rearrange, reduce
 from diffusion_policy.policy.base_lowdim_policy import BaseLowdimPolicy
 from pytorch3d.transforms import matrix_to_quaternion, standardize_quaternion
 from diffusion_policy.model.common.so3_util import log_map, normal_so3
-
 from diffusion_policy.model.flow_matching.flow_matching_models import RectifiedLinearFlow, LinearAttractorFlow, SE3LinearAttractorFlow
 
 '''
@@ -110,7 +109,7 @@ class SE3FlowMatchingPolicy(BaseLowdimPolicy):
 
         # unnormalize prediction
         action_pred = sample['action']
-        extra = sample.get('extra', None)
+        extra = sample.get('extra', {})
 
         result = {
             'action_type':'absolute_pose',
@@ -121,6 +120,8 @@ class SE3FlowMatchingPolicy(BaseLowdimPolicy):
 
         if self.normalizer is not None:
             result = self.normalizer.unnormalize(result)
+
+
         return result
 
     # ========= training  ============
@@ -193,7 +194,7 @@ class SE3FlowMatchingPolicy(BaseLowdimPolicy):
 
         ## Add Ignore Collision Loss ##
         if self.ignore_collisions_out:
-            pred_action = model_out['ignore_collision']
+            pred_action = model_out['ignore_collisions']
             target_action = batch['action']['act_ic']
             bce_loss = F.binary_cross_entropy(pred_action, target_action, reduction='none')
             bce_loss = reduce(bce_loss, 'b ... -> b (...)', 'mean')
@@ -207,7 +208,6 @@ class SE3FlowMatchingPolicy(BaseLowdimPolicy):
         gt_action = batch['action']
         gt_act_p = gt_action['act_p']
         gt_act_r = gt_action['act_r']
-        gt_act_gr = gt_action['act_gr']
 
         out = self.predict_action(batch['obs'])
         action = out['action']
@@ -215,6 +215,8 @@ class SE3FlowMatchingPolicy(BaseLowdimPolicy):
         pred_act_r = action['act_r']
         if self.gripper_out:
             pred_act_gr = out['extra']['act_gr_pred']
+        if self.ignore_collisions_out:
+            pred_act_ic = out['extra']['act_ic_pred']
 
         pos_error = torch.nn.functional.mse_loss(pred_act_p, gt_act_p)
 
@@ -224,8 +226,14 @@ class SE3FlowMatchingPolicy(BaseLowdimPolicy):
         rot_error = torch.nn.functional.mse_loss(angle_error, torch.zeros_like(angle_error))
 
         if self.gripper_out:
+            gt_act_gr = gt_action['act_gr']
             gr_error = torch.nn.functional.mse_loss(pred_act_gr, gt_act_gr)
             log_dict['train_gripper_mse_error'] = gr_error.item()
+
+        if self.ignore_collisions_out:
+            gt_act_ic = gt_action['act_ic']
+            ic_error = torch.nn.functional.mse_loss(pred_act_ic, gt_act_ic)
+            log_dict['train_ignore_collisions_mse_error'] = ic_error.item()
 
         log_dict['train_position_mse_error'] = pos_error.item()
         log_dict['train_rotation_mse_error'] = rot_error.item()
@@ -251,21 +259,15 @@ class SE3FlowMatchingPolicy(BaseLowdimPolicy):
                 dr_pred, dp_pred = d_act[...,:3], d_act[...,3:6]
                 rt, pt = self.step(rt, pt, dr_pred, dp_pred, dt, time=s*dt, output_target=self._output_target)
 
-            out_dict = {'action': {'act_r': rt, 'act_p': pt}}
-            act_quat = standardize_quaternion(matrix_to_quaternion(rt))
-            rlbench_action = torch.cat([pt, act_quat], dim=-1)
+            out_dict = {'action': {'act_r': rt, 'act_p': pt}, "extra": {}}
             if self.gripper_out:
                 act_gr = model_out['gripper'] > 0.5
-                out_dict['extra'] = {'act_gr_pred': act_gr}
+                out_dict['extra'] ['act_gr_pred'] = act_gr
                 out_dict['action']['act_gr'] = act_gr
-                rlbench_action = torch.cat([rlbench_action, act_gr.unsqueeze(-1)], dim=-1)
             if self.ignore_collisions_out:
-                act_ic = model_out['ignore_collision'] > 0.5
-                out_dict['extra'] = {'act_ic_pred': act_ic}
+                act_ic = model_out['ignore_collisions'] > 0.5
+                out_dict['extra']['act_ic_pred'] = act_ic
                 out_dict['action']['act_ic'] = act_ic
-                rlbench_action = torch.cat([rlbench_action, act_ic.unsqueeze(-1)], dim=-1)
-
-            out_dict['extra']['rlbench_action'] = rlbench_action
 
             return out_dict
 

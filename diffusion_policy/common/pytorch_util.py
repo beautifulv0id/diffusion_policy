@@ -99,9 +99,9 @@ def print_dict(x, indent=0, print_values=False):
             else:
                 print(" "*3*indent+k+":", x[k])
 
-def compare_dicts(a, b):
+def compare_dicts(a, b, rtol=1e-4, atol=1e-3):
     for k in a.keys():
         if isinstance(a[k], dict):
             compare_dicts(a[k], b[k])
         else:
-            assert torch.allclose(a[k], b[k], rtol=1e-3), f"{a[k]} != {b[k]}, {k} not equal"
+            assert torch.allclose(a[k], b[k], rtol=rtol, atol=atol), f"{a[k]} != {b[k]}, {k} not equal"

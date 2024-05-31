@@ -2,7 +2,7 @@ _target_: diffusion_policy.model.flow_matching.flow_matching_git.FlowMatchingInv
 obs_dim: ${embedding_dim}
 n_action_steps: ${n_action_steps}
 gripper_out: true
-ignore_collision_out: true
+ignore_collisions_out: true
 latent_dim: 128
 depth: 4
 heads: 3

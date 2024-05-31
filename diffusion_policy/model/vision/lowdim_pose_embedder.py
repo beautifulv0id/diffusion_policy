@@ -73,7 +73,7 @@ def test():
     # time = torch.rand(B).to(device)
 
     # ## Run model ##
-    # ipt = FlowMatchingInvariantPointTransformer(obs_dim=60, n_obs_steps=n_obs_steps, n_action_steps=n_action_steps, gripper_out=True,ignore_collision_out=True).to(device)
+    # ipt = FlowMatchingInvariantPointTransformer(obs_dim=60, n_obs_steps=n_obs_steps, n_action_steps=n_action_steps, gripper_out=True,ignore_collisions_out=True).to(device)
     # ipt.set_context(obs)
     # out = ipt(act_r, act_p, time)
     # print_dict(out)

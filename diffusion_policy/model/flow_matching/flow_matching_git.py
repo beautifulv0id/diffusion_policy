@@ -41,7 +41,7 @@ class FlowMatchingInvariantPointTransformer(nn.Module):
                  dropout=0.,
                  attention_module=InvariantPointAttention,
                  gripper_out = False,
-                 ignore_collision_out = False,
+                 ignore_collisions_out = False,
                  causal_attn=True,
                  point_dim=4,
                  **kwargs
@@ -60,7 +60,7 @@ class FlowMatchingInvariantPointTransformer(nn.Module):
         self.dropout = dropout
         self.attention_module = attention_module
         self.gripper_out = gripper_out
-        self.ignore_collision_out = ignore_collision_out
+        self.ignore_collisions_out = ignore_collisions_out
         self.causal_attn = causal_attn
 
         ## Set Action Poses ##
@@ -109,7 +109,7 @@ class FlowMatchingInvariantPointTransformer(nn.Module):
         out_dim = 6
         if self.gripper_out:
             out_dim += 1
-        if self.ignore_collision_out:
+        if self.ignore_collisions_out:
             out_dim += 1
         self.to_out = nn.Linear(latent_dim*2, out_dim)
 
@@ -163,13 +163,13 @@ class FlowMatchingInvariantPointTransformer(nn.Module):
             "obs_f": features_out[:, act_tokens:, :],
 
         }
-        if self.gripper_out and self.ignore_collision_out:
+        if self.gripper_out and self.ignore_collisions_out:
             out_dict["gripper"] = self.sigmoid(out[:, :act_tokens, 6])
-            out_dict["ignore_collision"] = self.sigmoid(out[:, :act_tokens, 7])
+            out_dict['ignore_collisions'] = self.sigmoid(out[:, :act_tokens, 7])
         if self.gripper_out:
             out_dict["gripper"] = self.sigmoid(out[:, :act_tokens, 6])
-        elif self.ignore_collision_out:
-            out_dict["ignore_collision"] = self.sigmoid(out[:, :act_tokens, 6])
+        elif self.ignore_collisions_out:
+            out_dict['ignore_collisions'] = self.sigmoid(out[:, :act_tokens, 6])
         
         return out_dict
     

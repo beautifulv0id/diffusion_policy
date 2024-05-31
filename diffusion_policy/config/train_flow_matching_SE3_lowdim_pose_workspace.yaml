@@ -3,7 +3,7 @@ defaults:
   - _self_
   - task: stack_blocks
 
-name: train_flow_matching_unet_lowdim_pose
+name: train_flow_matching_SE3_lowdim_pose
 _target_: diffusion_policy.workspace.train_flow_matching_SE3_lowdim_workspace.TrainingWorkspace
 
 task_name: ${task.name}
@@ -14,8 +14,6 @@ embedding_dim: 60
 num_episodes: 1
 global_pose_on: True
 mode: train
-
-
 
 policy:
   _target_: diffusion_policy.policy.flow_matching_SE3_lowdim_policy.SE3FlowMatchingPolicy
@@ -31,6 +29,7 @@ policy:
   rotation_loss_scaling: 0.318 #1/pi
   action_adaptor: False
   gripper_out: True
+  ignore_collisions_out: True
 
   augmentor:
     _target_: diffusion_policy.common.augmentors.AugmentGripperHistory
@@ -67,7 +66,8 @@ policy:
     heads: 3
     dim_head: 60
     dropout: 0.3
-    gripper_out: True
+    gripper_out: policy.gripper_out
+    ignore_collisions_out: policy.ignore_collisions_out
 
 dataloader:
   batch_size: 512

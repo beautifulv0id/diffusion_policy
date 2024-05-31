@@ -47,7 +47,7 @@ dataset:
   num_episodes: ${num_episodes}
   variation: 0
   n_obs: ${n_obs_steps}
-  demo_augmentation_every_n: 10
+  demo_augmentation_every_n: 1
   obs_augmentation_every_n: ${task.obs_augmentation_every_n}
   keypoints_only: False
   val_ratio: 0.2
@@ -59,10 +59,12 @@ env_runner:
   _target_: diffusion_policy.env_runner.rlbench_runner.RLBenchRunner
   data_root: ${task.dataset.root}
   task_str: stack_blocks
-  max_episodes: 5
+  max_episodes: 3
   max_steps: ${eval:'50 if "${task.dataset.keypoints_only}" else 500'}
   max_rtt_tries: 3
   demo_tries: 1
+  n_train_vis: 3
+  n_val_vis: 3
   obs_history_augmentation_every_n: ${task.dataset.obs_augmentation_every_n}
   collision_checking: True
   action_dim: 8

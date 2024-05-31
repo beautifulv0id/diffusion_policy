@@ -93,7 +93,7 @@ class Robomimic2Peract(ModuleAttrMixin):
             new_action = {}
             act_p = action[..., :3]
             act_quat = action[..., 3:7]
-            act_r = quaternion_to_matrix(act_quat)
+            act_r = standardize_quaternion(quaternion_to_matrix(act_quat))
             act_gr = action[..., 7]
             act_ic = action[..., 8]
             new_action['act_p'] = act_p
@@ -112,9 +112,9 @@ class Robomimic2Peract(ModuleAttrMixin):
             kp_idx = 0
             keypoint_pose = data['obs']['keypoint_poses']
             for i in range(keypoint_pose.shape[1]):
-                kp_rot, kp_pos = rot_pos_from_se3(keypoint_pose[..., i, :, :])
-                new_obs['kp%d_pos' % kp_idx] = kp_pos
-                new_obs['kp%d_rot' % kp_idx] = kp_rot
+                kp_rot, kp_pos = rot_pos_from_se3(keypoint_pose[:, i, :, :])
+                new_obs['kp%d_pos' % kp_idx] = kp_pos.unsqueeze(1)
+                new_obs['kp%d_rot' % kp_idx] = kp_rot.unsqueeze(1)
                 kp_idx += 1
             if 'low_dim_state' in data['obs']:
                 new_obs['low_dim_state'] = data['obs']['low_dim_state']

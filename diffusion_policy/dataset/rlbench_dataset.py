@@ -2,7 +2,7 @@ from typing import Dict
 import torch
 import numpy as np
 import copy
-from diffusion_policy.common.pytorch_util import dict_apply
+from diffusion_policy.common.pytorch_util import dict_apply, print_dict
 from diffusion_policy.dataset.base_dataset import BaseImageDataset, BaseLowdimDataset
 from pathlib import Path
 from rlbench.utils import get_stored_demos
@@ -19,7 +19,7 @@ class RLBenchDataset():
             cameras = ['left_shoulder', 'right_shoulder', 'overhead', 'wrist', 'front'],
             image_size=(128, 128),
             n_obs=2,
-            demo_augmentation_every_n=10,
+            demo_augmentation_every_n=1,
             obs_augmentation_every_n=10,
             use_low_dim_pcd=False,
             use_pcd = False,
@@ -82,6 +82,8 @@ class RLBenchDataset():
                                         use_pcd=use_pcd,
                                         use_rgb=use_rgb,
                                         use_pose=use_pose,
+                                        # use_depth=use_depth,
+                                        # use_mask=use_mask,
                                         use_low_dim_state=use_low_dim_state,
                                         keypoints_only=keypoints_only)
         
@@ -94,6 +96,8 @@ class RLBenchDataset():
                                         use_pcd=use_pcd,
                                         use_rgb=use_rgb,
                                         use_pose=use_pose,
+                                        # use_depth=use_depth,
+                                        # use_mask=use_mask,
                                         use_low_dim_state=use_low_dim_state,
                                         keypoints_only=keypoints_only)
         
@@ -122,8 +126,8 @@ class RLBenchDataset():
         for k in data['obs'].keys():
             if not 'robot0_eef' in k and not 'low_dim_state' in k:
                 this_data['obs'][k] = data['obs'][k][-1:]
+
         torch_data = dict_apply(this_data, torch.from_numpy)
-        # torch_data = dict_apply(data, torch.from_numpy)
         return torch_data
     
     def get_validation_dataset(self):
@@ -148,15 +152,11 @@ class RLBenchLowdimDataset(RLBenchDataset, BaseLowdimDataset):
                     cameras=[],
                     image_size=None,
                     n_obs=2,
-                    demo_augmentation_every_n=10,
+                    demo_augmentation_every_n=1,
                     obs_augmentation_every_n=10,
                     keypoints_only=False,
-                    use_low_dim_state=False,
-                    val_ratio=0.0,
-                    use_pcd=False,
-                    use_rgb=False,
-                    use_depth=False,
-                    use_mask=False):
+                    use_low_dim_state=True,
+                    val_ratio=0.0):
         super().__init__(root=root,
                         task_name=task_name,
                         num_episodes=num_episodes,
@@ -167,10 +167,10 @@ class RLBenchLowdimDataset(RLBenchDataset, BaseLowdimDataset):
                         demo_augmentation_every_n=demo_augmentation_every_n,
                         obs_augmentation_every_n=obs_augmentation_every_n,
                         use_low_dim_pcd=use_low_dim_pcd,
-                        use_pcd=use_pcd,
-                        use_rgb=use_rgb,
-                        use_depth=use_depth,
-                        use_mask=use_mask,
+                        use_pcd=False,
+                        use_rgb=False,
+                        use_depth=False,
+                        use_mask=False,
                         use_pose=use_pose,
                         keypoints_only=keypoints_only,
                         use_low_dim_state=use_low_dim_state,
@@ -183,18 +183,17 @@ class RLBenchImageDataset(RLBenchDataset, BaseImageDataset):
                     image_size=(128, 128),
                     use_pcd=True,
                     use_rgb=True,
-                    use_depth=True,
-                    use_mask=True,
+                    use_depth=False,
+                    use_mask=False,
                     task_name="open_drawer",
                     num_episodes=1,
                     variation=0,
                     n_obs=2,
-                    demo_augmentation_every_n=10,
+                    demo_augmentation_every_n=1,
                     obs_augmentation_every_n=10,
                     keypoints_only=False,
                     use_low_dim_state=False,
-                    val_ratio=0.0,
-                    use_low_dim_pcd=False):
+                    val_ratio=0.0):
         super().__init__(root=root,
                         task_name=task_name,
                         num_episodes=num_episodes,
@@ -204,7 +203,7 @@ class RLBenchImageDataset(RLBenchDataset, BaseImageDataset):
                         n_obs=n_obs,
                         demo_augmentation_every_n=demo_augmentation_every_n,
                         obs_augmentation_every_n=obs_augmentation_every_n,
-                        use_low_dim_pcd=use_low_dim_pcd,
+                        use_low_dim_pcd=False,
                         use_pcd=use_pcd,
                         use_rgb=use_rgb,
                         use_depth=use_depth,
@@ -215,7 +214,7 @@ class RLBenchImageDataset(RLBenchDataset, BaseImageDataset):
                         val_ratio=val_ratio)
 
 def test():
-    from pytorch3d.transforms import quaternion_to_matrix
+    from pytorch3d.transforms import quaternion_to_matrix, matrix_to_quaternion, standardize_quaternion
     def format_batch(batch):
         kp = batch['obs']['keypoint_poses']
         obs = {f"kp{i}_pos": kp[:,i:i+1,:3,3] for i in range(kp.shape[1])}
@@ -238,8 +237,8 @@ def test():
         image_size=(128, 128),
         n_obs=3,
         keypoints_only=False,
-        demo_augmentation_every_n=5,
-        obs_augmentation_every_n=5,
+        demo_augmentation_every_n=1,
+        obs_augmentation_every_n=10,
         use_low_dim_pcd=True,
         use_pcd = False,
         use_rgb = False,
@@ -250,14 +249,20 @@ def test():
         val_ratio=0.0
     )
 
-    def print_dict(x, indent=0):
-        for k in x.keys():
-            if isinstance(x[k], dict):
-                print(" "*3*indent+k+":")
-                print_dict(x[k], indent+1)
-            else:
-                print(" "*3*indent+k+":", x[k].detach().cpu().numpy().shape)
-                print( x[k][0].detach().cpu().numpy())
+    obs = dataset.demos[0][0]
+    gripper_matrix = torch.from_numpy(obs.gripper_matrix).unsqueeze(0)[...,:3,:3]
+    gripper_pose = torch.from_numpy(obs.gripper_pose).unsqueeze(0)[...,3:7]
+    print(gripper_pose.shape)
+    gripper_matrix2 = quaternion_to_matrix(gripper_pose)
+    gripper_pose = torch.cat([gripper_pose[...,3:], gripper_pose[...,:3]], dim=-1)
+    gripper_matrix3 = quaternion_to_matrix(gripper_pose)
+
+    print(torch.abs(gripper_matrix - gripper_matrix2))
+    print(torch.abs(gripper_matrix - gripper_matrix3))
+    print(torch.allclose(gripper_matrix, gripper_matrix2))
+    print(torch.allclose(gripper_matrix, gripper_matrix3))
+
+    return
 
     data = dataset[0]
     batch = dict_apply(data, lambda x: x.unsqueeze(0))

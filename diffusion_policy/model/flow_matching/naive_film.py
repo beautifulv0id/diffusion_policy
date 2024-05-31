@@ -70,13 +70,13 @@ class NaiveFilmFlowMatchingModel(nn.Module):
             mid_dim = 256,
             num_blocks = 4,
             gripper_out = True,
-            ignore_collision_out = True,
+            ignore_collisions_out = True,
             ):
         super().__init__()
 
 
         self.gripper_out = gripper_out
-        self.ignore_collision_out = ignore_collision_out
+        self.ignore_collisions_out = ignore_collisions_out
 
         self.blocks = nn.ModuleList([
             nn.ModuleList([FILMConditionalBlock(2*embed_dim, mid_dim, embed_dim), nn.ReLU()]),
@@ -85,7 +85,7 @@ class NaiveFilmFlowMatchingModel(nn.Module):
         out_dim = 6
         if self.gripper_out:
             out_dim += 1
-        if self.ignore_collision_out:
+        if self.ignore_collisions_out:
             out_dim += 1
         self.to_out = nn.Linear(mid_dim, out_dim)
                 
@@ -118,13 +118,13 @@ class NaiveFilmFlowMatchingModel(nn.Module):
         out_dict = {
             'v' : x[..., None, :6],
         }
-        if self.gripper_out and self.ignore_collision_out:
+        if self.gripper_out and self.ignore_collisions_out:
             out_dict["gripper"] = nn.Sigmoid()(out[..., None, 6])
-            out_dict["ignore_collision"] = nn.Sigmoid()(out[..., None, 7])
+            out_dict['ignore_collisions'] = nn.Sigmoid()(out[..., None, 7])
         if self.gripper_out:
             out_dict["gripper"] = nn.Sigmoid()(out[..., None, 6])
-        elif self.ignore_collision_out:
-            out_dict["ignore_collision"] = nn.Sigmoid()(out[..., None, 6])
+        elif self.ignore_collisions_out:
+            out_dict['ignore_collisions'] = nn.Sigmoid()(out[..., None, 6])
         
         return out_dict
     
