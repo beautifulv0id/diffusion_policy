@@ -4,12 +4,29 @@ import torch
 import torch.nn as nn
 from torch.nn import init
 
-
 from einops import rearrange
 
 
 __USE_DEFAULT_INIT__ = False
 
+class AdaLN(nn.Module):
+    def __init__(self, embedding_dim):
+        super().__init__()
+        self.modulation = nn.Sequential(
+             nn.SiLU(), nn.Linear(embedding_dim, 2 * embedding_dim, bias=True)
+        )
+        nn.init.constant_(self.modulation[-1].weight, 0)
+        nn.init.constant_(self.modulation[-1].bias, 0)
+
+    def forward(self, x, t):
+        """
+        Args:
+            x: A tensor of shape (B, N, C)
+            t: A tensor of shape (B, C)
+        """
+        scale, shift = self.modulation(t).chunk(2, dim=-1)  # (B, C), (B, C)
+        x = x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
+        return x  # (B, N, C)
 
 def invert_se3(matrix):
     """
@@ -158,7 +175,8 @@ class JaxLinear(nn.Linear):
 
 class MultiHeadGeometricRelativeAttention(nn.Module):
     def __init__(self, dim, heads=8, dim_head=64, dropout=0., kv_dim=None,
-                 linear_module=JaxLinear, use_bias = True, v_transform=True,
+                 linear_module=JaxLinear, use_bias = True, v_transform=True, 
+                 use_adaln=False,
                  **kwargs):
         super().__init__()
         inner_dim = dim_head * heads
@@ -190,7 +208,14 @@ class MultiHeadGeometricRelativeAttention(nn.Module):
             nn.Dropout(dropout)
         ) if project_out else nn.Identity()
 
-    def forward(self, x, z=None, return_attmap=False, extras={}):
+        if use_adaln:
+            self.adaln = AdaLN(dim)
+
+    def forward(self, x, z=None, return_attmap=False, diff_ts=None, extras={}):
+        if diff_ts is not None:
+            x = self.adaln(x, diff_ts)
+        else:
+            x = x
 
         ## Set Positional Embeddings ##
         if self.selfatt:

@@ -3,7 +3,7 @@ defaults:
   - _self_
   - task: open_drawer
   - encoder: lowdim_keypoint_embedder
-  - model: feat_pcd_tit
+  - model: feat_pcd_git
 
 name: train_flow_matching_unet_lowdim_feat_pcd
 _target_: diffusion_policy.workspace.train_flow_matching_SE3_lowdim_workspace.TrainingWorkspace

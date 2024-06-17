@@ -1,7 +1,7 @@
 _target_: diffusion_policy.model.decoder.feat_pcd_tit.FeaturePCloudPolicy
 dim : ${embedding_dim}
-n_action_steps : ${n_action_steps}
-n_obs_steps : ${n_obs_steps}
+n_action_steps: ${n_action_steps}
+n_obs_steps: ${n_obs_steps}
 depth: 4
 heads: 5
 gripper_out: policy.gripper_out

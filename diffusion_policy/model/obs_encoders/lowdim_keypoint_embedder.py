@@ -27,6 +27,7 @@ class LowdimKeypointEmbedder(ModuleAttrMixin):
         new_obs['context_pcd'] = pcd
         new_obs['context_features'] = embeddings
         new_obs['gripper_pcd'] = obs['robot0_eef_pos']
+        new_obs['gripper_rot'] = obs['robot0_eef_rot']
         new_obs['gripper_features'] = self.gripper_features
         return new_obs
 

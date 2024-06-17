@@ -156,9 +156,9 @@ class FeaturePCloudPolicy(nn.Module):
                                                 context_pcd, 
                                                 time_embeddings)
 
-        trajectory_features1 = self.encode_trajectory(rt, pt, time_embeddings)
+        trajectory_features = self.encode_trajectory(rt, pt, time_embeddings)
 
-        trajectory_features = self.trajectory_cross_attn(trajectory_features1, 
+        trajectory_features = self.trajectory_cross_attn(trajectory_features, 
                                                         trajectory_pcd,
                                                         context_features,
                                                         context_pcd,
@@ -169,9 +169,6 @@ class FeaturePCloudPolicy(nn.Module):
         out_dict = {
             "v": out[:, :act_tokens, :6],
             "act_f": trajectory_features[:, :act_tokens, :],
-            "context_f": context_features,
-            "trajectory_features1" : trajectory_features1,
-            "gripper_features": gripper_features,
         }
         if self.gripper_out and self.ignore_collisions_out:
             out_dict["gripper"] = nn.Sigmoid()(out[:, :act_tokens, 6])
@@ -200,21 +197,17 @@ def feature_pcloud_git_test():
     Xz = torch.randn(B, n_context_tokens, 3)
     Xf = torch.randn(B, n_context_tokens, dim)
     gripper_pcd = torch.randn(B, n_obs_steps, 3)
-    gripper_features = torch.randn(B, n_obs_steps, dim)
+    gripper_features = torch.randn(n_obs_steps, dim)
 
 
     model.set_context({'context_pcd': Xz, 'context_features': Xf,
                           'gripper_pcd': gripper_pcd, 'gripper_features': gripper_features})
     out = model(Hx[..., :3, :3], Hx[..., :3, -1], t)
     v1 = out['v']
-    cf1 = out['context_f']
-    tf1 = out['trajectory_features1']
-    gf1 = out['gripper_features']
 
 
     ############### TEST 2 #################
     trans = torch.randn(B, 1, 3)
-
     Hx2 = Hx
     Hx2[...,:3,-1] = Hx2[...,:3,-1] + trans
     Xz2 = Xz + trans
@@ -224,17 +217,7 @@ def feature_pcloud_git_test():
                           'gripper_pcd': gripper_pcd2, 'gripper_features': gripper_features})
     out2 = model(Hx2[..., :3, :3], Hx2[..., :3, -1], t)
     v2 = out2['v']
-    cf2 = out2['context_f']
-    tf2 = out2['trajectory_features1']
-    gf2 = out2['gripper_features']
 
-    print(torch.allclose(cf1, cf2, rtol=1e-05, atol=1e-05))
-    print((cf1 - cf2).abs().max())
-    print(torch.allclose(gf1, gf2, rtol=1e-05, atol=1e-05))
-    print((gf1 - gf2).abs().max())
-
-    print(torch.allclose(tf1, tf2, rtol=1e-05, atol=1e-05))
-    print((tf1 - tf2).abs().max())
     print(torch.allclose(v1, v2, rtol=1e-05, atol=1e-05))
     print((v1 - v2).abs().max())
 

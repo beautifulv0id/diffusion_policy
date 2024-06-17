@@ -1,4 +1,5 @@
 # TODOs 📔
+- [ ] I made a change to AdaLN unsqueeze(1) -> unsqueeze(0) - ok??
 - [ ] re-add workspace normalization
 - [ ] why does FM + image not work?
 - [ ] data augmentation

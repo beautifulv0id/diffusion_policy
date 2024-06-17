@@ -67,7 +67,8 @@ class GeometryInvariantTransformer(nn.Module):
     def __init__(self, dim, depth, heads, dim_head, mlp_dim,
                  dropout=0.,
                  kv_dim=None,
-                 return_last_attmap=False,):
+                 return_last_attmap=False,
+                 use_adaln=False,):
 
         super().__init__()
         self.heads = heads
@@ -81,7 +82,7 @@ class GeometryInvariantTransformer(nn.Module):
             attn = prenorm_fn(MultiHeadGeometricRelativeAttention(
                 dim, heads=heads, dim_head=dim_head,
                 dropout=dropout, kv_dim=kv_dim,
-                linear_module=linear_module_attn))
+                linear_module=linear_module_attn, use_adaln=use_adaln))
             ff = prenorm_fn(FeedForward(
                 dim, mlp_dim,
                 dropout=dropout,
@@ -89,11 +90,11 @@ class GeometryInvariantTransformer(nn.Module):
             self.layers.append(nn.ModuleList([attn, ff]))
         self.return_last_attmap = return_last_attmap
 
-    def forward(self, x, z=None, extras=None):
+    def forward(self, x, z=None, extras=None, diff_ts=None):
 
         for l, (attn, ff) in enumerate(self.layers):
             if l == len(self.layers) - 1 and self.return_last_attmap:
-                out, attmap = attn(x, z=z, return_attmap=True, extras=extras)
+                out, attmap = attn(x, z=z, return_attmap=True, diff_ts=diff_ts, extras=extras)
                 x = out + x
             else:
                 x = attn(x, z=z, extras=extras) + x

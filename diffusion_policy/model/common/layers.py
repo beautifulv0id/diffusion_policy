@@ -287,7 +287,7 @@ class AdaLN(nn.Module):
             t: A tensor of shape (B, C)
         """
         scale, shift = self.modulation(t).chunk(2, dim=-1)  # (B, C), (B, C)
-        x = x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
+        x = x * (1 + scale.unsqueeze(0)) + shift.unsqueeze(0)
         return x  # (B, N, C)
 
 
