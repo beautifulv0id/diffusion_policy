@@ -17,6 +17,7 @@ class RLBenchRunner(BaseImageRunner):
                 max_steps: int,
                 max_episodes: int,
                 max_rtt_tries: int = 1,
+                n_action_steps: int = 1,
                 demo_tries: int = 1,
                 headless: bool = True,
                 collision_checking: bool = True,
@@ -54,6 +55,7 @@ class RLBenchRunner(BaseImageRunner):
                             obs_history_augmentation_every_n=obs_history_augmentation_every_n,
                             adaptor=adaptor,
                             n_obs_steps=n_obs_steps,
+                            n_action_steps=n_action_steps,
                             ) 
         self.task_str = task_str
         self.env = env

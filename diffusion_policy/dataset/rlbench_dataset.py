@@ -18,7 +18,9 @@ class RLBenchDataset():
             variation=0,
             cameras = ['left_shoulder', 'right_shoulder', 'overhead', 'wrist', 'front'],
             image_size=(128, 128),
-            n_obs=2,
+            n_obs_steps=2,
+            horizon=1,
+            use_keyframe_actions=True,
             demo_augmentation_every_n=1,
             obs_augmentation_every_n=10,
             use_low_dim_pcd=False,
@@ -27,7 +29,6 @@ class RLBenchDataset():
             use_depth = False,
             use_mask = False,
             use_pose = False,
-            keypoints_only=False,
             use_low_dim_state=False,
             val_ratio=0.0,
             ):
@@ -77,29 +78,31 @@ class RLBenchDataset():
                                         cameras=cameras, 
                                         demo_augmentation_every_n=demo_augmentation_every_n, 
                                         obs_augmentation_every_n=obs_augmentation_every_n,
-                                        n_obs=n_obs, 
+                                        n_obs=n_obs_steps, 
                                         use_low_dim_pcd=use_low_dim_pcd,
                                         use_pcd=use_pcd,
                                         use_rgb=use_rgb,
                                         use_pose=use_pose,
                                         # use_depth=use_depth,
                                         # use_mask=use_mask,
-                                        use_low_dim_state=use_low_dim_state,
-                                        keypoints_only=keypoints_only)
+                                        horizon=horizon,
+                                        use_keyframe_actions=use_keyframe_actions,
+                                        use_low_dim_state=use_low_dim_state)
         
         val_dataset, val_demo_begin = create_dataset(val_demos,
                                         cameras=cameras, 
                                         demo_augmentation_every_n=demo_augmentation_every_n, 
                                         obs_augmentation_every_n=obs_augmentation_every_n,
-                                        n_obs=n_obs, 
+                                        n_obs=n_obs_steps, 
                                         use_low_dim_pcd=use_low_dim_pcd,
                                         use_pcd=use_pcd,
                                         use_rgb=use_rgb,
                                         use_pose=use_pose,
                                         # use_depth=use_depth,
                                         # use_mask=use_mask,
-                                        use_low_dim_state=use_low_dim_state,
-                                        keypoints_only=keypoints_only)
+                                        horizon=horizon,
+                                        use_keyframe_actions=use_keyframe_actions,
+                                        use_low_dim_state=use_low_dim_state)
         
         self.demos = train_demos
         self.dataset = train_dataset
@@ -107,8 +110,7 @@ class RLBenchDataset():
         self.val_demos = val_demos
         self.val_dataset = val_dataset
         self.val_demo_begin = val_demo_begin
-        self.n_obs = n_obs
-        self.keypoints_only = keypoints_only
+        self.n_obs = n_obs_steps
 
     def __len__(self) -> int:
         return len(self.dataset)
@@ -151,10 +153,11 @@ class RLBenchLowdimDataset(RLBenchDataset, BaseLowdimDataset):
                     variation=0,
                     cameras=[],
                     image_size=None,
-                    n_obs=2,
+                    use_keyframe_actions=True,
+                    n_obs_steps=2,
+                    horizon=1,
                     demo_augmentation_every_n=1,
                     obs_augmentation_every_n=10,
-                    keypoints_only=False,
                     use_low_dim_state=True,
                     val_ratio=0.0):
         super().__init__(root=root,
@@ -163,7 +166,9 @@ class RLBenchLowdimDataset(RLBenchDataset, BaseLowdimDataset):
                         variation=variation,
                         cameras=cameras,
                         image_size=image_size,
-                        n_obs=n_obs,
+                        n_obs_steps=n_obs_steps,
+                        horizon=horizon,
+                        use_keyframe_actions=use_keyframe_actions,
                         demo_augmentation_every_n=demo_augmentation_every_n,
                         obs_augmentation_every_n=obs_augmentation_every_n,
                         use_low_dim_pcd=use_low_dim_pcd,
@@ -172,7 +177,6 @@ class RLBenchLowdimDataset(RLBenchDataset, BaseLowdimDataset):
                         use_depth=False,
                         use_mask=False,
                         use_pose=use_pose,
-                        keypoints_only=keypoints_only,
                         use_low_dim_state=use_low_dim_state,
                         val_ratio=val_ratio) 
 
@@ -188,10 +192,11 @@ class RLBenchImageDataset(RLBenchDataset, BaseImageDataset):
                     task_name="open_drawer",
                     num_episodes=1,
                     variation=0,
-                    n_obs=2,
+                    n_obs_steps=2,
+                    horizon=1,
+                    use_keyframe_actions=True,
                     demo_augmentation_every_n=1,
                     obs_augmentation_every_n=10,
-                    keypoints_only=False,
                     use_low_dim_state=False,
                     val_ratio=0.0):
         super().__init__(root=root,
@@ -200,7 +205,9 @@ class RLBenchImageDataset(RLBenchDataset, BaseImageDataset):
                         variation=variation,
                         cameras=cameras,
                         image_size=image_size,
-                        n_obs=n_obs,
+                        n_obs_steps=n_obs_steps,
+                        horizon=horizon,
+                        use_keyframe_actions=use_keyframe_actions,
                         demo_augmentation_every_n=demo_augmentation_every_n,
                         obs_augmentation_every_n=obs_augmentation_every_n,
                         use_low_dim_pcd=False,
@@ -209,24 +216,11 @@ class RLBenchImageDataset(RLBenchDataset, BaseImageDataset):
                         use_depth=use_depth,
                         use_mask=use_mask,
                         use_pose=False,
-                        keypoints_only=keypoints_only,
                         use_low_dim_state=use_low_dim_state,
                         val_ratio=val_ratio)
 
 def test():
     from pytorch3d.transforms import quaternion_to_matrix, matrix_to_quaternion, standardize_quaternion
-    def format_batch(batch):
-        kp = batch['obs']['keypoint_poses']
-        obs = {f"kp{i}_pos": kp[:,i:i+1,:3,3] for i in range(kp.shape[1])}
-        obs.update({f"kp{i}_rot": kp[:,i:i+1,:3,:3] for i in range(kp.shape[1])})
-        obs.update({f"robot0_eef_pos": batch['obs']['agent_pose'][:,:,:3,3]})
-        obs.update({f"robot0_eef_rot": batch['obs']['agent_pose'][:,:,:3,:3]})
-        obs.update({'low_dim_state': batch['obs']['low_dim_state'].unsqueeze(1)})
-        act_R = quaternion_to_matrix(torch.cat([batch['action'][:,:,6:7], batch['action'][:,:,3:6]], dim=-1))
-        action = {f"act_p": batch['action'][:,:,:3]}
-        action.update({f"act_r": act_R})
-        action.update({f"act_gr": batch['action'][:,:,7]})
-        return {'obs': obs, 'action': action}
 
     dataset = RLBenchDataset(
         root = "/home/felix/Workspace/diffusion_policy_felix/data/keypoint/train",
@@ -235,8 +229,9 @@ def test():
         variation=0,
         cameras = ['left_shoulder', 'right_shoulder', 'overhead', 'wrist', 'front'],
         image_size=(128, 128),
-        n_obs=3,
-        keypoints_only=False,
+        n_obs_steps=3,
+        horizon=16,
+        use_keyframe_actions=False,
         demo_augmentation_every_n=1,
         obs_augmentation_every_n=10,
         use_low_dim_pcd=True,
@@ -246,31 +241,13 @@ def test():
         use_mask = False,
         use_pose = True,
         use_low_dim_state=True,
-        val_ratio=0.0
+        val_ratio=0
     )
-
-    obs = dataset.demos[0][0]
-    gripper_matrix = torch.from_numpy(obs.gripper_matrix).unsqueeze(0)[...,:3,:3]
-    gripper_pose = torch.from_numpy(obs.gripper_pose).unsqueeze(0)[...,3:7]
-    print(gripper_pose.shape)
-    gripper_matrix2 = quaternion_to_matrix(gripper_pose)
-    gripper_pose = torch.cat([gripper_pose[...,3:], gripper_pose[...,:3]], dim=-1)
-    gripper_matrix3 = quaternion_to_matrix(gripper_pose)
-
-    print(torch.abs(gripper_matrix - gripper_matrix2))
-    print(torch.abs(gripper_matrix - gripper_matrix3))
-    print(torch.allclose(gripper_matrix, gripper_matrix2))
-    print(torch.allclose(gripper_matrix, gripper_matrix3))
-
-    return
-
     data = dataset[0]
     batch = dict_apply(data, lambda x: x.unsqueeze(0))
     print_dict(batch)
     print("Dataset length:", len(dataset))
     return
-    batch = format_batch(batch)
-    print_dict(batch)
 
 
     from diffusion_policy.common.visualization_se3 import visualize_frames, visualize_poses_and_actions

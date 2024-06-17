@@ -62,7 +62,7 @@ class FlowMatchingSE3UnetImagePolicy(BaseImagePolicy):
     def __init__(self, 
             shape_meta: dict,
             observation_encoder: Union[nn.Module, TransformerFeaturePointCloudEncoder],
-            action_decoder: nn.Module,
+            model: nn.Module,
             horizon : int, 
             n_action_steps : int, 
             n_obs_steps : int,
@@ -105,7 +105,7 @@ class FlowMatchingSE3UnetImagePolicy(BaseImagePolicy):
         obs_feature_dim = observation_encoder.output_shape()[0]
 
         self.encoder = observation_encoder
-        self.action_decoder = action_decoder
+        self.model = model
         self.ignore_collision_predictor = nn.Sequential(
             nn.Linear(obs_feature_dim, 128),
             nn.ReLU(),
@@ -133,7 +133,7 @@ class FlowMatchingSE3UnetImagePolicy(BaseImagePolicy):
         else:
             self.data_augmentation = False
 
-        print("Diffusion params: %e" % sum(p.numel() for p in self.action_decoder.parameters()))
+        print("Diffusion params: %e" % sum(p.numel() for p in self.model.parameters()))
         print("Vision params: %e" % sum(p.numel() for p in self.encoder.parameters()))
 
     def state_dict(self):
@@ -242,7 +242,7 @@ class FlowMatchingSE3UnetImagePolicy(BaseImagePolicy):
                 trj = H0[:,None,...].repeat(1,steps,1,1)
             Ht = H0
             for s in range(0, steps):
-                ut = self.velocity_scale*self.action_decoder(
+                ut = self.velocity_scale*self.model(
                                                 Ht.view(batch_size,horizon,4,4), 
                                                 t[s]*torch.ones_like(Ht[:,0,0]), 
                                                 global_cond)
@@ -413,7 +413,7 @@ class FlowMatchingSE3UnetImagePolicy(BaseImagePolicy):
         # Ht.requires_grad = True
         # t.requires_grad = True
         Ht = Ht.reshape(B, T, 4, 4)
-        vt = self.action_decoder(Ht, t, gripper_features)
+        vt = self.model(Ht, t, gripper_features)
 
         # regress gripper open
         gripper_open_pred = self.open_gripper_predictor(gripper_features)

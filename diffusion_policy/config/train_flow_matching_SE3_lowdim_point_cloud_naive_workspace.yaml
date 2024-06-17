@@ -5,7 +5,7 @@ defaults:
   - encoder: GITLowdimEncoder
   - model: naive_film_se3_flow_matching_model
 
-name: train_flow_matching_unet_lowdim_pose
+name: train_flow_matching_unet_lowdim_feat_pcd_naive
 _target_: diffusion_policy.workspace.train_flow_matching_SE3_lowdim_workspace.TrainingWorkspace
 
 task_name: ${task.name}
@@ -29,6 +29,10 @@ policy:
   rotation_loss_scaling: 0.318 #1/pi
   action_adaptor: False
   gripper_out: True
+  augmentor:
+    _target_: diffusion_policy.common.augmentors.AugmentGripperHistory
+    pos_scale: 0.02
+    rot_scale: 0.2
 
   normalizer:
     _target_: diffusion_policy.common.adapt_and_normalize.AdaptAndNormalize
@@ -36,7 +40,7 @@ policy:
       _target_: diffusion_policy.common.adaptors.WorldPoses2EEFPoses
       add_global_pose: ${global_pose_on}
     normalizer:
-      _target_: diffusion_policy.common.se3_normalizer.SharedPositionNormalizer
+      _target_: diffusion_policy.model.common.se3_normalizer.SharedPositionNormalizer
       scale: 5.0
   batch_adaptor:
     _target_: diffusion_policy.common.adaptors.Robomimic2Peract

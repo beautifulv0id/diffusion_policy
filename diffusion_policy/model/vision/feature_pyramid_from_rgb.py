@@ -10,7 +10,7 @@ from torchvision.ops import FeaturePyramidNetwork
 from diffusion_policy.model.common.position_encodings import RotaryPositionEncoding3D
 from diffusion_policy.model.common.layers import FFWRelativeCrossAttentionModule, ParallelAttention
 from diffusion_policy.model.vision.resnet import load_resnet50, load_resnet18
-# from diffusion_policy.model.vision.clip import load_clip
+from diffusion_policy.model.vision.clip_wrapper import load_clip
 
 
 class RGB2FeaturePyramid(nn.Module):
@@ -30,6 +30,8 @@ class RGB2FeaturePyramid(nn.Module):
             self.backbone, self.normalize = load_resnet50()
         elif backbone == "resnet18":
             self.backbone, self.normalize = load_resnet18()
+        elif backbone == "clip":
+            self.backbone, self.normalize = load_clip()
         for p in self.backbone.parameters():
             p.requires_grad = False
 
@@ -76,7 +78,9 @@ def test():
 
     
     rgb = torch.randn(2, 3, 256, 256)
-    encoder = RGB2FeaturePyramid()
+    encoder = RGB2FeaturePyramid(
+        backbone="clip"
+    )
     features = encoder(rgb)
     
     print("Feature pyramid:")

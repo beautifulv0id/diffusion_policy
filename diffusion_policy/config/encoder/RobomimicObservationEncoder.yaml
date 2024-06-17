@@ -1,0 +1,8 @@
+    _target_: diffusion_policy.model.obs_encoders.robomimic_pose_encoders.BaseObservationEncoder
+    task: ${task.name}
+    n_obs_steps: ${n_obs_steps}
+    additional_inputs:
+      low_dim_state: 3
+    dim_out: ${embedding_dim}
+    # TODO - check here how everything is with this global pose on or off,... - I think my training setting is inconsistent!
+    add_global_pose: ${global_pose_on}

@@ -112,6 +112,8 @@ class TransformerFeaturePointCloudEncoder(ModuleAttrMixin):
         visual_features = self.visual_feature_pyramid(rgbs)[self.feature_layer]
         visual_features = einops.rearrange(visual_features, "(bt ncam) c h w -> bt ncam c h w", ncam=ncam)
         return visual_features
+    
+    
     def forward(self, obs_dict):
         rgbs = obs_dict['rgb']
         pcds = obs_dict['pcd']

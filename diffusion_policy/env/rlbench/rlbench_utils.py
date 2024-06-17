@@ -269,7 +269,7 @@ class Actioner:
         gripper_open = pred_dict['action'].get('act_gr', None)
         ignore_collision = pred_dict['action'].get('act_ic', None)
         rlbench_action = create_rlbench_action(rot, pos, gripper_open, ignore_collision)
-        rlbench_action = rlbench_action[0,-1]
+        rlbench_action = rlbench_action[0]
         return rlbench_action.detach().cpu().numpy()
 
     @property

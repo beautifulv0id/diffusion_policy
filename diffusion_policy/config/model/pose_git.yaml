@@ -1,0 +1,11 @@
+_target_: diffusion_policy.model.decoder.pose_git.FlowMatchingInvariantPointTransformer
+obs_dim: ${embedding_dim}
+n_obs_steps: ${n_obs_steps}
+n_action_steps: ${n_action_steps}
+latent_dim: 128
+depth: 4
+heads: 3
+dim_head: 60
+dropout: 0.3
+gripper_out: policy.gripper_out
+ignore_collisions_out: policy.ignore_collisions_out

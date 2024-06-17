@@ -138,6 +138,7 @@ class RLBenchEnv:
         collision_checking=False,
         obs_history_augmentation_every_n=10,
         n_obs_steps=1,
+        n_action_steps=1,
         render_image_size=[128, 128],
         adaptor=None,
     ):
@@ -165,6 +166,7 @@ class RLBenchEnv:
         self.obs_history = []
         self.obs_history_augmentation_every_n = obs_history_augmentation_every_n
         self.n_obs_steps = n_obs_steps
+        self.n_action_steps = n_action_steps
         self.action_mode.arm_action_mode.set_callable_each_step(self.save_observation)
         self.env = Environment(
             self.action_mode, str(data_path), self.obs_config,
@@ -696,8 +698,8 @@ class RLBenchEnv:
                     if self.adaptor is not None:
                         obs_dict = self.adaptor.adapt({'obs': obs_dict})['obs']
                     obs_dict = dict_apply(obs_dict, lambda x: x.type(dtype))
-                    action = actioner.predict(obs_dict)
-                    self._gripper_dummmy.set_pose(action[:7])
+                    trajectory = actioner.predict(obs_dict)
+                    self._gripper_dummmy.set_pose(trajectory[-1,:7])
                     self._gripper_dummmy.set_renderable(True)
 
                     if verbose:
@@ -709,8 +711,11 @@ class RLBenchEnv:
                     try:
                         if verbose:
                             print("Plan with RRT")
-                        collision_checking = self._collision_checking(task_str, step_id)
-                        observation, reward, terminate, _ = move(action, collision_checking=collision_checking)
+
+                        for action in trajectory[:self.n_action_steps]:
+
+                            collision_checking = self._collision_checking(task_str, step_id)
+                            observation, reward, terminate, _ = move(action, collision_checking=collision_checking)
 
                         max_reward = max(max_reward, reward)
 
@@ -1300,7 +1305,7 @@ def test_dataset_simulation_consitency():
     dataset = RLBenchLowdimDataset(
         root=data_path,
         task_name=task_str,
-        n_obs=n_obs_steps,
+        n_obs_steps=n_obs_steps,
         variation=0,
         num_episodes=1,
         obs_augmentation_every_n=obs_history_augmentation_every_n,

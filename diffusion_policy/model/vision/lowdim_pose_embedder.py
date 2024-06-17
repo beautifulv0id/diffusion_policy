@@ -64,7 +64,7 @@ def test():
 
     print_dict(obs)
 
-    # from diffusion_policy.model.flow_matching.flow_matching_git import FlowMatchingInvariantPointTransformer
+    # from diffusion_policy.model.decoder.pose_git import FlowMatchingInvariantPointTransformer
     # from diffusion_policy.model.common.so3_util import random_so3
     # n_action_steps = 1
 

@@ -20,7 +20,6 @@ import tqdm
 import numpy as np
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
 from diffusion_policy.policy.base_image_policy import BaseImagePolicy
-from diffusion_policy.common.rotation_utils import SO3_log_map
 from diffusion_policy.common.common_utils import trajectory_gripper_open_ignore_collision_from_action
 from diffusion_policy.dataset.base_dataset import BaseImageDataset
 from diffusion_policy.env_runner.rlbench_runner import RLBenchRunner
@@ -349,7 +348,7 @@ class TrainFlowMatchingUnetImageWorkspace(BaseWorkspace):
                             R_pred = trajectory[:,:,:3,:3].flatten(0,1)
                             x_pred = trajectory[:,:,:3,3]
                             R_delta = torch.matmul(R_pred.transpose(-2,-1), R_gt)
-                            theta_delta = SO3_log_map(R_delta)
+                            theta_delta = log_map(R_delta)
                             x_delta = x_pred - x_gt
                             step_log['train_position_mse_error'] = torch.mean(x_delta.norm(dim=-1)).item()
                             step_log['train_rotation_mse_error'] = torch.mean(theta_delta.norm(dim=-1)).item()

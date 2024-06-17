@@ -4,7 +4,7 @@ defaults:
   # - encoder: GITLowdimEncoder 
   # - encoder: transformer_lowdim_obs_relative_encoder
   - encoder: lowdim_pose_embedder # transformer_self_attn_lowdim_encoder
-  - model: flow_matching_git # naive_film_se3_flow_matching_model
+  - model: pose_git # naive_film_se3_flow_matching_model
 
 name: flow_matching_unet_lowdim_policy
 
@@ -32,7 +32,7 @@ task_name: ${task.name}
 exp_name: "default"
 horizon: 1
 n_obs_steps: &n_obs_steps 2
-n_action_steps: 1
+n_action_steps: 16
 embedding_dim: 60
 num_episodes: 1
 
@@ -60,15 +60,17 @@ policy:
   data_augmentation: False
   rotation_std: 0.2
   position_std: 0.02
+
+
 dataloader:
-  batch_size: 512
+  batch_size: 32
   num_workers: 0
   shuffle: True
   pin_memory: False
   persistent_workers: False
 
 val_dataloader:
-  batch_size: 512
+  batch_size: 32
   num_workers: 0
   shuffle: False
   pin_memory: False

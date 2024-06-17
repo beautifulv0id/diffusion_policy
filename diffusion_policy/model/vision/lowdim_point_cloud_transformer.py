@@ -9,7 +9,7 @@ from diffusion_policy.model.common.layers import FFWRelativeSelfAttentionModule,
 import einops
 from scipy.spatial import transform
 
-class LowDimPointCloudEmbedder(ModuleAttrMixin):
+class LowDimPointCloudTransformer(ModuleAttrMixin):
     def __init__(self,
             shape_meta: dict,
             n_obs_steps: int,
@@ -122,7 +122,7 @@ def test():
                 "shape": [10, 3]
             },}
     }
-    encoder = LowDimPointCloudEmbedder(
+    encoder = LowDimPointCloudTransformer(
         shape_meta=shape_meta,
         n_obs_steps=1,
         query_embeddings=nn.Embedding(1, 60),

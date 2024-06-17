@@ -1,0 +1,4 @@
+_target_: diffusion_policy.model.obs_encoders.lowdim_keypoint_embedder.LowdimKeypointEmbedder
+n_pcd: ${eval:'${task.shape_meta.obs.low_dim_pcd.shape}[0]'}
+dim_out: ${embedding_dim}
+n_obs_steps: ${n_obs_steps}

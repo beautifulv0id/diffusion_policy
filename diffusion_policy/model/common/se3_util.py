@@ -1,4 +1,5 @@
 import torch
+from diffusion_policy.model.common.so3_util import random_so3
 
 def se3_from_rot_pos(rot, pos):
     """
@@ -28,6 +29,17 @@ def rot_pos_from_se3(H):
         and positions as translation vectors, as tensor of shape (..., 3).
     """
     return H[..., :3, :3], H[..., :3, 3]
+
+def random_se3(batch_size):
+    '''
+    This function creates SE(3) homogeneous matrices
+    :param batch_size: N
+    :return: Nx4x4 tensor of shape (batch_size, 4, 4)
+    '''
+    H = torch.eye(4).unsqueeze(0).repeat(batch_size, 1, 1)
+    H[:, :3, :3] = random_so3(batch_size)
+    H[:, :3, 3] = torch.randn(batch_size, 3)
+    return H
 
 def test():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')   

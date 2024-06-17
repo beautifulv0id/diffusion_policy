@@ -1,20 +1,18 @@
 # Actually the task entry loads the yaml file inside task
 defaults:
   - _self_
-  - task: stack_blocks
-  - model: pose_git
-  - encoder: RobomimicObservationEncoder
+  - task: open_drawer
+  - encoder: lowdim_keypoint_embedder
+  - model: feat_pcd_tit
 
-name: train_flow_matching_SE3_lowdim_pose
+name: train_flow_matching_unet_lowdim_feat_pcd
 _target_: diffusion_policy.workspace.train_flow_matching_SE3_lowdim_workspace.TrainingWorkspace
 
 task_name: ${task.name}
 exp_name: "flowmatching"
 n_obs_steps: &n_obs_steps 2
-# n_action_steps: 8
-# horizon: 16
-n_action_steps: 1
 horizon: 1
+n_action_steps: 1
 embedding_dim: 60
 num_episodes: 1
 global_pose_on: True
@@ -22,7 +20,6 @@ mode: train
 
 policy:
   _target_: diffusion_policy.policy.flow_matching_SE3_lowdim_policy.SE3FlowMatchingPolicy
-
   n_action_steps: ${n_action_steps}
   n_obs_steps: ${n_obs_steps}
   flow_type: 'rectified_linear'
@@ -32,34 +29,30 @@ policy:
   rotation_loss_scaling: 0.318 #1/pi
   action_adaptor: False
   gripper_out: True
-  ignore_collisions_out: True
-
   augmentor:
     _target_: diffusion_policy.common.augmentors.AugmentGripperHistory
-    pos_scale: 0.02
-    rot_scale: 0.2
+    pos_scale: 0.0 # 0.02
+    rot_scale: 0.0 #s 0.2
 
   normalizer:
     _target_: diffusion_policy.common.adapt_and_normalize.AdaptAndNormalize
     adaptor:
       _target_: diffusion_policy.common.adaptors.WorldPoses2EEFPoses
-      add_global_pose: ${global_pose_on}
     normalizer:
       _target_: diffusion_policy.model.common.se3_normalizer.SharedPositionNormalizer
       scale: 5.0
-
   obs_encoder: ${encoder}
   model: ${model}
 
 dataloader:
-  batch_size: 1024
+  batch_size: 512
   num_workers: 0
   shuffle: True
   pin_memory: False
   persistent_workers: False
 
 val_dataloader:
-  batch_size: 1024
+  batch_size: 512
   num_workers: 0
   shuffle: False
   pin_memory: False
@@ -67,7 +60,7 @@ val_dataloader:
 
 optimizer:
   _target_: torch.optim.AdamW
-  lr: 1.0e-4
+  lr: 4.0e-4
   betas: [0.95, 0.999]
   eps: 1.0e-8
   weight_decay: 1.0e-6

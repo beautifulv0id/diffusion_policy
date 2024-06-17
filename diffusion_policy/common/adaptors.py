@@ -1,10 +1,11 @@
 import torch
 import torch.nn as nn
+from torch import einsum
 
 from diffusion_policy.model.common.module_attr_mixin import ModuleAttrMixin
 from diffusion_policy.model.common.so3_util import log_map, exp_map, se3_inverse, apply_transform
 from pytorch3d.transforms import quaternion_to_matrix, matrix_to_quaternion, standardize_quaternion
-from diffusion_policy.common.se3_util import se3_from_rot_pos, rot_pos_from_se3
+from diffusion_policy.model.common.se3_util import se3_from_rot_pos, rot_pos_from_se3
 
 class SequenceAdaptor(ModuleAttrMixin):
     def __init__(self, *args, **kwargs):
@@ -170,6 +171,8 @@ class WorldPoses2EEFPoses(ModuleAttrMixin):
                 new_pos, new_rot = apply_transform(inv_eef_pos[:,None,:], inv_eef_rot[:,None,...], pos, rot)
                 new_obs[key] = new_rot
                 new_obs[key.replace('rot', 'pos')] = new_pos
+            elif key == "low_dim_pcd":
+                new_obs[key] = einsum("bij,bhnj->bhni", inv_eef_rot, obs[key]) + inv_eef_pos[:,None,None,:]
             else:
                 if key not in new_obs:
                     new_obs[key] = obs[key]
@@ -219,6 +222,79 @@ class WorldPoses2EEFPoses(ModuleAttrMixin):
         return data
 
 
+class WorldPoses2EEFPosition(ModuleAttrMixin):
+    '''
+    The following action adaptor receives the action as target poses in the world frame and converts it to displacements in the End-Effector frame.
+    '''
+    def __init__(self):
+        super(WorldPoses2EEFPosition, self).__init__()
+
+    def adapt(self, data):
+        assert 'obs' in data
+        obs = data['obs']
+
+        ## End Effector Position (The following method assume that last instance in dimension 1 is the current end-effector pose) ##
+        eef_pos = obs['robot0_eef_pos'][:, -1,:]
+        ## Save End-Effector Position and Rotation ##
+        self.eef_pos = eef_pos
+
+
+        new_obs = {}
+        for key in obs.keys():
+            if key.find('rot') != -1:
+                rot = obs[key]
+                pos = obs[key.replace('rot', 'pos')]
+                new_pos = pos - eef_pos[:,None,:]
+                new_rot = rot
+                new_obs[key] = new_rot
+                new_obs[key.replace('rot', 'pos')] = new_pos
+            elif key == "low_dim_pcd":
+                new_obs[key] = obs[key] - eef_pos[:,None,None,:]
+            else:
+                if key not in new_obs:
+                    new_obs[key] = obs[key]
+
+        if 'action' not in data:
+            return {'obs': new_obs}
+
+        else:
+            action = data['action']
+            ## Target Positions and Rotation ##
+            act_p = action['act_p']
+            act_r = action['act_r']
+            act_gr = action['act_gr']
+            act_ic = action['act_ic']
+            act_p_ee = act_p - eef_pos[:, None, :]
+            act_r_ee = act_r
+            new_action = {'act_p': act_p_ee, 'act_r': act_r_ee, 'act_gr': act_gr, 'act_ic': act_ic}
+
+            return {'obs': new_obs, 'action': new_action}
+
+
+    def unadapt(self, data):
+
+        assert 'action' in data
+        action = data['action']
+
+        ## End Effector Position (The following method assume that last instance in dimension 1 is the current end-effector pose) ##
+        eef_pos = self.eef_pos
+
+        ## Target Positions and Rotation ##
+        act_p = action['act_p']
+        act_r = action['act_r']
+        act_gr = action['act_gr']
+        if 'act_ic' in action:
+            act_ic = action['act_ic']
+        act_p_w = act_p + eef_pos[:,None,:]
+        act_r_w = act_r
+
+        new_action = {'act_p': act_p_w, 'act_r': act_r_w, 'act_gr': act_gr}
+        if 'act_ic' in action:
+            new_action['act_ic'] = act_ic
+        
+        data['action'] = new_action
+        return data
+    
 def test():
     from diffusion_policy.common.pytorch_util import print_dict, compare_dicts
     from diffusion_policy.model.common.so3_util import random_so3

@@ -1,4 +1,5 @@
 # TODOs 📔
+- [ ] re-add workspace normalization
 - [ ] why does FM + image not work?
 - [ ] data augmentation
   - [ ] world frame rotation/translation

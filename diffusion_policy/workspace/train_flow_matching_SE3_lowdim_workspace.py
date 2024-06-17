@@ -21,7 +21,7 @@ import numpy as np
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
 from diffusion_policy.common.checkpoint_util import TopKCheckpointManager
 from diffusion_policy.common.json_logger import JsonLogger
-from diffusion_policy.common.pytorch_util import dict_apply, optimizer_to, normalizer_to
+from diffusion_policy.common.pytorch_util import dict_apply, optimizer_to, normalizer_to, print_dict
 from diffusion_policy.model.common.lr_scheduler import get_scheduler
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
@@ -166,10 +166,7 @@ class TrainingWorkspace(BaseWorkspace):
                                 leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
                         for batch_idx, batch in enumerate(tepoch):
                             # device transfer
-
-                                
                                             
-                            # batch = format_batch(batch)
                             batch = dict_apply(batch, lambda x: x.to(device, dtype, non_blocking=True))
                             if train_sampling_batch is None:
                                 train_sampling_batch = batch

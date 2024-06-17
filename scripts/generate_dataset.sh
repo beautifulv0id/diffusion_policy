@@ -1,7 +1,7 @@
 save_path=/home/felix/Workspace/diffusion_policy_felix/data/keypoint/tmp
 image_size=128,128
 variations=1
-episodes_per_task=100
+episodes_per_task=1
 all_variations=False
 processes=1
 tasks=stack_blocks

@@ -28,8 +28,6 @@ class SE3FlowMatchingPolicy(BaseLowdimPolicy):
                  ignore_collisions_out=False,
                  translation_loss_scaling=1.,
                  rotation_loss_scaling=1.,
-                 rot_scale=0.0,
-                 pos_scale=0.0,
                  only_inference_time=False,
                  normalizer=None,
                  batch_adaptor=None,
@@ -54,8 +52,6 @@ class SE3FlowMatchingPolicy(BaseLowdimPolicy):
         self.only_inference_time = only_inference_time
         self.translation_loss_scaling = translation_loss_scaling
         self.rotation_loss_scaling = rotation_loss_scaling
-        self.rot_scale = rot_scale
-        self.pos_scale = pos_scale
         self.action_dim = (4,4)
         self.n_action_steps = n_action_steps
         self.n_obs_steps = n_obs_steps
@@ -72,7 +68,7 @@ class SE3FlowMatchingPolicy(BaseLowdimPolicy):
         elif flow_type == 'linear_attractor':
             self.flow = LinearAttractorFlow(t_switch=t_switch)
         else:
-            self.flow = RectifiedLinearFlow()
+            self.flow = RectifiedLinearFlow(world_translation=True)
         self.generate_random_initial_pose = self.flow.generate_random_initial_pose
         self.flow_at_t = self.flow.flow_at_t
         self.vector_field_at_t = self.flow.vector_field_at_t
@@ -101,7 +97,7 @@ class SE3FlowMatchingPolicy(BaseLowdimPolicy):
 
         ## run sampling
         if batch is None:
-            batch = latent_obs['obs_f'].shape[0]
+            batch = obs_dict['robot0_eef_pos'].shape[0]
 
         sample = self.sample(
             batch_size=batch
@@ -124,21 +120,7 @@ class SE3FlowMatchingPolicy(BaseLowdimPolicy):
 
         return result
 
-    # ========= training  ============
-    def augment_obs(self, obs):
-        if self.rot_scale != 0:
-            gripper_rot = obs['robot0_eef_rot']
-            delta_rot = normal_so3(gripper_rot.shape[0] * gripper_rot.shape[1], scale=self.rot_scale)
-            delta_rot = delta_rot.reshape(gripper_rot.shape)
-            delta_rot = delta_rot.to(gripper_rot.device)
-            obs['robot0_eef_rot'] = matmul(delta_rot, gripper_rot)
-        if self.pos_scale != 0:
-            gripper_pos = obs['robot0_eef_pos']
-            delta_pos = torch.randn(gripper_pos.shape) * self.pos_scale
-            delta_pos = delta_pos.to(gripper_pos.device)
-            obs['robot0_eef_pos'] = gripper_pos + delta_pos
-        return obs
-    
+    # ========= training  ============   
     def set_flow_matching_normalization_params(self):
         self.ff_position_scale = 1.
 
@@ -173,8 +155,8 @@ class SE3FlowMatchingPolicy(BaseLowdimPolicy):
         if self.batch_adaptor is not None:
             obs = self.batch_adaptor.adapt({"obs": obs})["obs"]
         latent_obs = self.obs_encoder(obs)
-        self.model.set_context(latent_obs)
 
+        self.model.set_context(latent_obs)
         model_out = self.model(rt, pt, time*self.num_inference_steps)
         d_act = model_out['v']
         dr_pred, dp_pred = d_act[...,:3], d_act[...,3:6]
@@ -291,7 +273,7 @@ class SE3FlowMatchingPolicy(BaseLowdimPolicy):
 
 ############# TEST ################
 def load_model(n_action_steps = 12, n_obs_steps=2, num_inference_steps = 10, dim_features = 50, device='cpu', obs_dim=50):
-    from diffusion_policy.model.flow_matching.flow_matching_git import FlowMatchingInvariantPointTransformer
+    from diffusion_policy.model.decoder.pose_git import FlowMatchingInvariantPointTransformer
     from diffusion_policy.model.obs_encoders.base_model import BaseObservationEncoder
 
 

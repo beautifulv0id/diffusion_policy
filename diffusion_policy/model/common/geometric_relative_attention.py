@@ -75,8 +75,6 @@ class GeomRelAttn(torch.nn.Module):
             _v = v.reshape(B, H, N, -1, x.shape[-1])
             return torch.einsum('bnj,bhncj->bhncj', x, _v).reshape(B, H, N, D)
 
-
-
         if q_types is not dict:
             if q_types == 'se3':
                 self.q_inv_poses = invert_se3(q_poses)

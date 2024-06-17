@@ -1,0 +1,10 @@
+_target_: diffusion_policy.model.decoder.feat_pcd_git.FeaturePCloudPolicy
+dim : ${embedding_dim}
+context_dim : ${embedding_dim}
+n_action_steps : ${n_action_steps}
+depth: 4
+heads: 3
+dim_head : 64
+mlp_dim : 256
+gripper_out: policy.gripper_out
+ignore_collisions_out: policy.ignore_collisions_out

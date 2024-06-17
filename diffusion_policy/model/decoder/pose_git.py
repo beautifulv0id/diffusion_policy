@@ -136,6 +136,7 @@ class FlowMatchingInvariantPointTransformer(nn.Module):
 
         ## Set Joint Poses ##
         poses = {}
+
         poses['rotations'] = torch.cat((act_r, self.context['obs_r']), dim=1)
         poses['translations'] = torch.cat((act_p, self.context['obs_p']), dim=1)
 
