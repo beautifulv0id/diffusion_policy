@@ -3,24 +3,24 @@ defaults:
   - _self_
   - task: open_drawer
   - encoder: lowdim_keypoint_embedder
-  - model: feat_pcd_git
+  - model: feat_pcd_tit
 
 name: train_flow_matching_unet_lowdim_feat_pcd
 _target_: diffusion_policy.workspace.train_flow_matching_SE3_lowdim_workspace.TrainingWorkspace
 
 task_name: ${task.name}
 exp_name: "flowmatching"
-n_obs_steps: &n_obs_steps 2
-horizon: 1
-n_action_steps: 1
-embedding_dim: 60
+n_obs_steps: &n_obs_steps 3
+horizon: 16
+n_action_steps: 8
+use_keyframe_actions: False
+embedding_dim: 120
 num_episodes: 1
-global_pose_on: True
 mode: train
 
 policy:
   _target_: diffusion_policy.policy.flow_matching_SE3_lowdim_policy.SE3FlowMatchingPolicy
-  n_action_steps: ${n_action_steps}
+  horizon: ${horizon}
   n_obs_steps: ${n_obs_steps}
   flow_type: 'rectified_linear'
   num_inference_steps: 10
@@ -29,10 +29,11 @@ policy:
   rotation_loss_scaling: 0.318 #1/pi
   action_adaptor: False
   gripper_out: True
+  ignore_collisions_out: True
   augmentor:
     _target_: diffusion_policy.common.augmentors.AugmentGripperHistory
-    pos_scale: 0.0 # 0.02
-    rot_scale: 0.0 #s 0.2
+    pos_scale: 0.0
+    rot_scale: 0.0
 
   normalizer:
     _target_: diffusion_policy.common.adapt_and_normalize.AdaptAndNormalize
@@ -45,14 +46,14 @@ policy:
   model: ${model}
 
 dataloader:
-  batch_size: 512
-  num_workers: 0
+  batch_size: 64
+  num_workers: 1
   shuffle: True
-  pin_memory: False
+  pin_memory: True
   persistent_workers: False
 
 val_dataloader:
-  batch_size: 512
+  batch_size: 64
   num_workers: 0
   shuffle: False
   pin_memory: False
@@ -60,7 +61,7 @@ val_dataloader:
 
 optimizer:
   _target_: torch.optim.AdamW
-  lr: 4.0e-4
+  lr: 1.0e-4
   betas: [0.95, 0.999]
   eps: 1.0e-8
   weight_decay: 1.0e-6
@@ -81,7 +82,7 @@ training:
   # training loop control
   # in epochs
   model_evaluation_every: 50
-  rollout_every: 10000
+  rollout_every: 1000
   checkpoint_every: 100
   val_every: 1
   sample_every: 5

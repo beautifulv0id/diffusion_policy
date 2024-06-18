@@ -114,14 +114,14 @@ OmegaConf.register_new_resolver("eval", eval, replace=True)
 
 def test():
     import torch
-    from diffusion_policy.policy.flowmatching_policy import SE3FlowMatchingPolicy
+    from diffusion_policy.policy.flow_matching_SE3_lowdim_policy import SE3FlowMatchingPolicy
 
     with initialize(version_base=None, config_path="../config"):
-        cfg = compose(config_name="julen.yaml", overrides=["task=put_item_in_drawer"])
+        cfg = compose(config_name="train_flow_matching_SE3_lowdim_feat_pcd_workspace.yaml", overrides=["task=open_drawer","model=feat_pcd_tit"])
 
     OmegaConf.resolve(cfg)
     policy : SE3FlowMatchingPolicy = hydra.utils.instantiate(cfg.policy)
-    checkpoint_path = "/home/felix/Workspace/diffusion_policy_felix/data/outputs/2024.05.17/13.08.18_train__put_item_in_drawer/checkpoints/epoch=4800-train_loss=0.001.ckpt"
+    checkpoint_path = "/home/felix/Workspace/diffusion_policy_felix/data/outputs/2024.06.18/14.22.14_train_flow_matching_unet_lowdim_feat_pcd_open_drawer/checkpoints/latest.ckpt"
     checkpoint = torch.load(checkpoint_path)
 
     dataset = hydra.utils.instantiate(cfg.task.dataset)

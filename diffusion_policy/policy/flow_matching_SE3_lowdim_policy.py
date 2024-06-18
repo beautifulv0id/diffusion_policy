@@ -19,7 +19,7 @@ class SE3FlowMatchingPolicy(BaseLowdimPolicy):
     def __init__(self,
                  model,
                  obs_encoder,
-                 n_action_steps,
+                 horizon,
                  n_obs_steps,
                  num_inference_steps=10,
                  flow_type='se3_linear_attractor',#'linear_attractor', 'rectified_linear', 'se3_linear_attractor'
@@ -53,7 +53,7 @@ class SE3FlowMatchingPolicy(BaseLowdimPolicy):
         self.translation_loss_scaling = translation_loss_scaling
         self.rotation_loss_scaling = rotation_loss_scaling
         self.action_dim = (4,4)
-        self.n_action_steps = n_action_steps
+        self.horizon = horizon
         self.n_obs_steps = n_obs_steps
         self.kwargs = kwargs
         self._output_target = False
@@ -230,7 +230,7 @@ class SE3FlowMatchingPolicy(BaseLowdimPolicy):
             dt = 1 / self.num_inference_steps
 
             # sample H_0
-            r0, p0 = self.generate_random_initial_pose(batch_size, self.n_action_steps)
+            r0, p0 = self.generate_random_initial_pose(batch_size, self.horizon)
             r0, p0 = r0.to(self.device), p0.to(self.device)
 
             rt, pt = r0, p0
@@ -260,7 +260,7 @@ class SE3FlowMatchingPolicy(BaseLowdimPolicy):
                 'model': self.model.get_args(),
                 'obs_encoder':self.obs_encoder.get_args(),},
             'params':{
-                'n_action_steps': self.n_action_steps,
+                'horizon': self.horizon,
                 'n_obs_steps': self.n_obs_steps,
                 'num_inference_steps': self.num_inference_steps,
                 't_switch': self.t_switch,
@@ -272,12 +272,12 @@ class SE3FlowMatchingPolicy(BaseLowdimPolicy):
 
 
 ############# TEST ################
-def load_model(n_action_steps = 12, n_obs_steps=2, num_inference_steps = 10, dim_features = 50, device='cpu', obs_dim=50):
+def load_model(horizon = 12, n_obs_steps=2, num_inference_steps = 10, dim_features = 50, device='cpu', obs_dim=50):
     from diffusion_policy.model.decoder.pose_git import FlowMatchingInvariantPointTransformer
     from diffusion_policy.model.obs_encoders.base_model import BaseObservationEncoder
 
 
-    n_action_steps = n_action_steps
+    horizon = horizon
     n_obs_steps = n_obs_steps
 
     t_switch = 0.75
@@ -289,7 +289,8 @@ def load_model(n_action_steps = 12, n_obs_steps=2, num_inference_steps = 10, dim
     heads = 3
     dim_head = 60
     model = FlowMatchingInvariantPointTransformer(obs_dim=obs_dim,
-                                                  n_action_steps=n_action_steps,
+                                                n_obs_steps=n_obs_steps,
+                                                  horizon=horizon,
                                                   latent_dim=latent_dim,
                                                   depth=depth,
                                                   heads=heads,
@@ -302,7 +303,7 @@ def load_model(n_action_steps = 12, n_obs_steps=2, num_inference_steps = 10, dim
     ## Load SE3FlowMatchingPolicy ##
     policy = SE3FlowMatchingPolicy(model=model,
                                obs_encoder=obs_encoder,
-                               n_action_steps=n_action_steps,
+                               horizon=horizon,
                                n_obs_steps=n_obs_steps,
                                num_inference_steps=num_inference_steps,
                                t_switch=t_switch,
@@ -313,16 +314,16 @@ def load_model(n_action_steps = 12, n_obs_steps=2, num_inference_steps = 10, dim
 def test_flow_and_vector_field():
     import matplotlib.pyplot as plt
 
-    n_action_steps = 12
+    horizon = 12
     num_inference_steps = 4
-    policy = load_model(n_action_steps=n_action_steps, num_inference_steps=num_inference_steps)
+    policy = load_model(horizon=horizon, num_inference_steps=num_inference_steps)
 
     #################### FLOW ########################
     time_steps = num_inference_steps + 1
-    r1 = torch.eye(3)[None, None, ...].repeat(time_steps, n_action_steps, 1, 1)
-    p1 = torch.zeros(time_steps, n_action_steps, 3)
+    r1 = torch.eye(3)[None, None, ...].repeat(time_steps, horizon, 1, 1)
+    p1 = torch.zeros(time_steps, horizon, 3)
 
-    r0, p0 = policy.generate_random_initial_pose(batch=1, trj_steps=n_action_steps)
+    r0, p0 = policy.generate_random_initial_pose(batch=1, trj_steps=horizon)
     r0, p0 = r0[:, ...].repeat(time_steps, 1, 1, 1), p0[:, ...].repeat(time_steps, 1, 1)
 
     time = torch.linspace(0, 1, time_steps)
@@ -332,7 +333,7 @@ def test_flow_and_vector_field():
     fig, ax = plt.subplots(nrows=3, ncols=2)
 
     vt = log_map(rt)
-    for i in range(n_action_steps):
+    for i in range(horizon):
         ax[0,0].plot(pt[:, i, 0], 'r')
         ax[1,0].plot(pt[:, i, 1], 'r')
         ax[2,0].plot(pt[:, i, 2], 'r')
@@ -358,7 +359,7 @@ def test_flow_and_vector_field():
     ## Visualize ##
     vt2 = log_map(trj_r)
     pt2 = trj_p
-    for i in range(n_action_steps):
+    for i in range(horizon):
         ax[0,0].plot(pt2[:, i, 0], 'b')
         ax[1,0].plot(pt2[:, i, 1], 'b')
         ax[2,0].plot(pt2[:, i, 2], 'b')
@@ -381,14 +382,14 @@ def test_train():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     n_obs_dim = 2
-    n_action_steps = 12
+    horizon = 12
 
 
-    policy = load_model(n_action_steps=n_action_steps, obs_dim=n_obs_dim, device=device)
+    policy = load_model(horizon=horizon, obs_dim=n_obs_dim, device=device)
 
     B = 10
     ## Generate Random Action Trajectory ##
-    act_r, act_p = policy.generate_random_initial_pose(B, n_action_steps)
+    act_r, act_p = policy.generate_random_initial_pose(B, horizon)
 
     ## Generate Observation ##
     obs_r, obs_p = policy.generate_random_initial_pose(B, 3)

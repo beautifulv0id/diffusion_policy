@@ -14,7 +14,7 @@ import einops
 
 class FeaturePCloudPolicy(nn.Module):
     def __init__(self, dim=100, depth=1, heads=3, n_obs_steps=1,
-                       n_action_steps=1,gripper_out = False,
+                       horizon=1,gripper_out = False,
                         ignore_collisions_out = False):
 
         super().__init__()
@@ -30,10 +30,15 @@ class FeaturePCloudPolicy(nn.Module):
         self.relative_pe_layer = RotaryPositionEncoding3D(dim)
 
         ## Input Embeddings ##
-        self.trajectory_embeddings = nn.Parameter(torch.randn(n_action_steps, dim))
+        self.trajectory_embeddings = nn.Parameter(torch.randn(horizon, dim))
         self.trajectory_encoder = nn.Linear(3+9, dim)
         self.curr_gripper_emb = nn.Sequential(
             nn.Linear(dim * n_obs_steps, dim),
+            nn.ReLU(),
+            nn.Linear(dim, dim)
+        )
+        self.low_dim_state_emb = nn.Sequential(
+            nn.Linear(3, dim),
             nn.ReLU(),
             nn.Linear(dim, dim)
         )
@@ -58,12 +63,20 @@ class FeaturePCloudPolicy(nn.Module):
 
         self.to_out = nn.Linear(dim, out_dim)
         
+        self._keys_to_ignore_on_save = ['context_features', 'gripper_features']
 
+    def state_dict(self, destination=None, prefix='', keep_vars=False):
+        state_dict = super().state_dict(destination=destination, prefix=prefix, keep_vars=keep_vars)
+        for key in self._keys_to_ignore_on_save:
+            state_dict.pop(prefix + key, None)
+        return state_dict
+    
     def set_context(self, context):
         self.context_pcd = context["context_pcd"]
         self.context_features = context["context_features"]
         self.gripper_pcd = context["gripper_pcd"]
         self.gripper_features = context["gripper_features"]
+        self.low_dim_state = context["low_dim_state"]
 
     def context_self_attn(self, context_features, context_pcd):
         context_features = einops.rearrange(
@@ -79,13 +92,19 @@ class FeaturePCloudPolicy(nn.Module):
         )
         return context_features
     
-    def encode_gripper(self, gripper_features, gripper_pcd, context_features, context_pcd, time_embeddings):
-        gripper_features = einops.repeat(
-            gripper_features, 'nhist c -> nhist b c', b=gripper_pcd.size(0))
+    def encode_gripper(self, gripper_features, gripper_pcd, context_features, context_pcd, low_dim_state, time_embeddings):
+        gripper_features = einops.rearrange(
+            gripper_features, 'b nhist c -> nhist b c')
         gripper_pos = self.relative_pe_layer(gripper_pcd)
         context_features = einops.rearrange(
             context_features, 'b n c -> n b c')
         context_pos = self.relative_pe_layer(context_pcd)
+
+        low_dim_state_emb = self.low_dim_state_emb(low_dim_state)
+        low_dim_state_emb = einops.rearrange(
+            low_dim_state_emb, 'b nhist c -> nhist b c')
+
+        gripper_features = gripper_features + low_dim_state_emb
 
         gripper_features = self.gripper_context_head(
             query=gripper_features,
@@ -100,6 +119,7 @@ class FeaturePCloudPolicy(nn.Module):
         gripper_features = gripper_features.flatten(1)
 
         gripper_features = self.curr_gripper_emb(gripper_features)
+
 
         return gripper_features + time_embeddings
     
@@ -146,7 +166,13 @@ class FeaturePCloudPolicy(nn.Module):
         gripper_pcd = self.gripper_pcd
         context_features = self.context_features
         context_pcd = self.context_pcd
+        low_dim_state = self.low_dim_state
         trajectory_pcd = pt
+
+        gripper_features = einops.repeat(
+            gripper_features, 'nhist c -> b nhist c', b=gripper_pcd.size(0))
+        context_features = einops.repeat(
+            context_features, 'n c -> b n c', b=gripper_pcd.size(0))
         
         context_features = self.context_self_attn(context_features, context_pcd)
 
@@ -154,11 +180,12 @@ class FeaturePCloudPolicy(nn.Module):
                                                 gripper_pcd, 
                                                 context_features, 
                                                 context_pcd, 
+                                                low_dim_state,
                                                 time_embeddings)
 
-        trajectory_features = self.encode_trajectory(rt, pt, time_embeddings)
+        trajectory_embedding = self.encode_trajectory(rt, pt, time_embeddings)
 
-        trajectory_features = self.trajectory_cross_attn(trajectory_features, 
+        trajectory_features = self.trajectory_cross_attn(trajectory_embedding, 
                                                         trajectory_pcd,
                                                         context_features,
                                                         context_pcd,
@@ -169,6 +196,9 @@ class FeaturePCloudPolicy(nn.Module):
         out_dict = {
             "v": out[:, :act_tokens, :6],
             "act_f": trajectory_features[:, :act_tokens, :],
+            "context_features": context_features,
+            "gripper_features": gripper_features,
+            "trajectory_embedding": trajectory_embedding
         }
         if self.gripper_out and self.ignore_collisions_out:
             out_dict["gripper"] = nn.Sigmoid()(out[:, :act_tokens, 6])
@@ -181,27 +211,29 @@ class FeaturePCloudPolicy(nn.Module):
         return out_dict
 
 
-def feature_pcloud_git_test():
+def feature_pcloud_tit_test():
     n_context_tokens = 9
-    n_action_tokens = 1
+    horizon = 16
     n_obs_steps = 2
     heads = 3
     dim = heads * 20
-    model = FeaturePCloudPolicy(dim=dim, heads=heads,n_action_steps=n_action_tokens, n_obs_steps=n_obs_steps)
+    model = FeaturePCloudPolicy(dim=dim, heads=heads,horizon=horizon, n_obs_steps=n_obs_steps)
     from diffusion_policy.model.common.se3_util import random_se3
 
     B = 120
 
-    Hx = random_se3(B * n_action_tokens).reshape(B, n_action_tokens, 4, 4)
+    Hx = random_se3(B * horizon).reshape(B, horizon, 4, 4)
     t = torch.rand(B)
     Xz = torch.randn(B, n_context_tokens, 3)
     Xf = torch.randn(B, n_context_tokens, dim)
     gripper_pcd = torch.randn(B, n_obs_steps, 3)
     gripper_features = torch.randn(n_obs_steps, dim)
+    low_dim_state = torch.randn(B, n_obs_steps, 3)
 
 
     model.set_context({'context_pcd': Xz, 'context_features': Xf,
-                          'gripper_pcd': gripper_pcd, 'gripper_features': gripper_features})
+                          'gripper_pcd': gripper_pcd, 'gripper_features': gripper_features,
+                          'low_dim_state': low_dim_state})
     out = model(Hx[..., :3, :3], Hx[..., :3, -1], t)
     v1 = out['v']
 
@@ -214,14 +246,22 @@ def feature_pcloud_git_test():
     gripper_pcd2 = gripper_pcd + trans
 
     model.set_context({'context_pcd': Xz2, 'context_features': Xf,
-                          'gripper_pcd': gripper_pcd2, 'gripper_features': gripper_features})
+                          'gripper_pcd': gripper_pcd2, 'gripper_features': gripper_features,
+                            'low_dim_state': low_dim_state})
     out2 = model(Hx2[..., :3, :3], Hx2[..., :3, -1], t)
     v2 = out2['v']
+
+    print(torch.allclose(out['context_features'], out2['context_features']))
+    print((out['context_features'] - out2['context_features']).abs().max())
+    print(torch.allclose(out['gripper_features'], out2['gripper_features']))
+    print((out['gripper_features'] - out2['gripper_features']).abs().max())
+    print(torch.allclose(out['trajectory_embedding'], out2['trajectory_embedding']))
+    print((out['trajectory_embedding'] - out2['trajectory_embedding']).abs().max())
 
     print(torch.allclose(v1, v2, rtol=1e-05, atol=1e-05))
     print((v1 - v2).abs().max())
 
 if __name__ == '__main__':
 
-    feature_pcloud_git_test()
+    feature_pcloud_tit_test()
 

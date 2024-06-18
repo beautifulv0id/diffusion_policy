@@ -31,6 +31,20 @@ from diffusion_policy.env.rlbench.rlbench_utils import CircleCameraMotion
 from diffusion_policy.common.pytorch_util import print_dict
 
 
+from diffusion_policy.common.visualization_se3 import visualize_frames, visualize_poses_and_actions
+from diffusion_policy.model.common.so3_util import quaternion_to_matrix, log_map, exp_map, se3_inverse, apply_transform
+def visualize(obs, action):
+    state_rotation = [v for k, v in obs.items() if 'rot' in k]
+    state_translation = [v for k, v in obs.items() if 'pos' in k]
+
+    state_rotation = torch.cat(state_rotation, dim=1).flatten(0, 1)
+    state_translation = torch.cat(state_translation, dim=1).flatten(0, 1)
+
+    action_rotation = action['act_r'].flatten(0, 1)
+    action_translation = action['act_p'].flatten(0, 1)
+    visualize_poses_and_actions(state_rotation, state_translation, action_rotation, action_translation)
+
+
 # computes pixel location of gripper in the image
 def obs_to_attn(obs, camera):
     extrinsics_44 = torch.from_numpy(
@@ -177,25 +191,39 @@ class RLBenchEnv:
         self._rgbs = []
         self._recording = False
         self._cam = None
-        self._gripper_dummmy = None
+        self._gripper_dummmies = None
         self._keypoints = None
     
-    def create_gripper_dummy(self) -> Dummy:
-        gripper_shapes = [shape.copy() for shape in self.env._robot.gripper.get_visuals()]
-        gripper_dummy = Dummy.create()
+    def create_gripper_dummies(self) -> Dummy:
+        
+        gripper_dummies = []
+        for _ in range(self.n_action_steps):
+            gripper_shapes = [shape.copy() for shape in self.env._robot.gripper.get_visuals()]
+            gripper_dummy = Dummy.create()
 
-        gripper_shapes[0].set_parent(gripper_dummy)
-        gripper_shapes[0].set_transparency(0.5)
-        gripper_shapes[1].set_parent(gripper_shapes[0])
-        gripper_shapes[1].set_transparency(0.5)
-        gripper_shapes[2].set_parent(gripper_shapes[0])
-        gripper_shapes[2].set_transparency(0.5)
+            gripper_shapes[0].set_parent(gripper_dummy)
+            gripper_shapes[0].set_transparency(0.5)
+            gripper_shapes[1].set_parent(gripper_shapes[0])
+            gripper_shapes[1].set_transparency(0.5)
+            gripper_shapes[2].set_parent(gripper_shapes[0])
+            gripper_shapes[2].set_transparency(0.5)
 
-        gripper_shapes[0].set_position([0, 0, -0.09], relative_to=gripper_dummy)
-        gripper_shapes[0].set_orientation([np.pi/2, 0, 0], relative_to=gripper_dummy)
+            gripper_shapes[0].set_position([0, 0, -0.09], relative_to=gripper_dummy)
+            gripper_shapes[0].set_orientation([np.pi/2, 0, 0], relative_to=gripper_dummy)
 
-        return gripper_dummy
+            gripper_dummies.append(gripper_dummy)
+
+        return gripper_dummies
     
+    def set_gripper_dummies(self, trajectory):
+        for gripper_dummy, gripper_pose in zip(self._gripper_dummmies, trajectory):
+            gripper_dummy.set_pose(gripper_pose)
+            self.set_gripper_renderable(gripper_dummy, True)
+
+    def set_gripper_renderable(self, gripper_dummy, renderable):
+        for child in gripper_dummy.get_objects_in_tree():
+            child.set_renderable(renderable)
+
     def launch(self):
         if self.env._pyrep is None:
             self.env.launch()
@@ -205,8 +233,8 @@ class RLBenchEnv:
             cam.set_parent(Dummy('cam_cinematic_placeholder'))
             self._cam_motion = CircleCameraMotion(cam, Dummy('cam_cinematic_base'), 0.005, init_rotation=np.deg2rad(0))
             self._cam = cam
-        if self._gripper_dummmy is None:
-            self._gripper_dummmy = self.create_gripper_dummy() 
+        if self._gripper_dummmies is None:
+            self._gripper_dummmies = self.create_gripper_dummies() 
 
     def shutdown(self):
         self.env.shutdown()
@@ -219,16 +247,6 @@ class RLBenchEnv:
                 keypoint.remove()
         keypoints = []
         for pos in positions:
-            # shape = Shape.create(type=PrimitiveShape.SPHERE, 
-            #             size=[0.01, 0.01, 0.01],
-            #             static=True,
-            #             respondable=False,
-            #             color=[1, 0, 0],
-            #             renderable=True,
-            #             orientation=[0, 0, 0])
-
-            # shape.set_position(pos)
-            # create_keypoint(pos)
             keypoints.extend(create_keypoint(pos))
         self._keypoints = keypoints
 
@@ -240,7 +258,7 @@ class RLBenchEnv:
         """
         self.obs_history.append(obs)
         if self._recording:
-            # self.add_keypoints(obs.misc["low_dim_pcd"])
+            self.add_keypoints(obs.misc["low_dim_pcd"])
             rgb = (self._cam.capture_rgb() * 255.).astype(np.uint8)
             self._rgbs.append(rgb)
             self._cam_motion.step()
@@ -694,13 +712,14 @@ class RLBenchEnv:
                         obs_dict["keypoint_poses"] = keypoint_poses_input[:,-1]
                     obs_dict["agent_pose"] = gripper_input
                     obs_dict["low_dim_state"] = low_dim_state_input
-
+                    
                     if self.adaptor is not None:
                         obs_dict = self.adaptor.adapt({'obs': obs_dict})['obs']
                     obs_dict = dict_apply(obs_dict, lambda x: x.type(dtype))
-                    trajectory = actioner.predict(obs_dict)
-                    self._gripper_dummmy.set_pose(trajectory[-1,:7])
-                    self._gripper_dummmy.set_renderable(True)
+                    out = actioner.predict(obs_dict)
+                    trajectory = out['rlbench_action']
+                    
+                    self.set_gripper_dummies(trajectory[:,:7])
 
                     if verbose:
                         print(f"Step {step_id}")
@@ -712,10 +731,10 @@ class RLBenchEnv:
                         if verbose:
                             print("Plan with RRT")
 
-                        for action in trajectory[:self.n_action_steps]:
-
+                        for action, gripper_dummy in zip(trajectory[:self.n_action_steps], self._gripper_dummmies):
                             collision_checking = self._collision_checking(task_str, step_id)
                             observation, reward, terminate, _ = move(action, collision_checking=collision_checking)
+                            self.set_gripper_renderable(gripper_dummy, False)
 
                         max_reward = max(max_reward, reward)
 
@@ -730,7 +749,6 @@ class RLBenchEnv:
                         print(task_str, demo, step_id, successful_demos, e)
                         reward = 0
                         #break
-
                 if demo_id < n_visualize and i == 0:
                     self.stop_recording()
                     rgbs = self.get_rgbs()
@@ -1198,6 +1216,8 @@ def load_dataset(cfg):
     dataset = hydra.utils.instantiate(cfg.task.dataset)
     return dataset
 
+
+
 def test():
     
     data_path = "/home/felix/Workspace/diffusion_policy_felix/data/keypoint/train"
@@ -1206,15 +1226,20 @@ def test():
     from diffusion_policy.common.pytorch_util import dict_apply
     from diffusion_policy.common.common_utils import create_rlbench_action
     from diffusion_policy.common.adaptors import Peract2Robomimic
-    TASK = "stack_blocks"
-    checkpoint_path = "/home/felix/Workspace/diffusion_policy_felix/data/outputs/2024.05.30/19.54.34_train_flow_matching_unet_lowdim_pose_stack_blocks/checkpoints/latest.ckpt"
+    TASK = "open_drawer"
+    checkpoint_path = "/home/felix/Workspace/diffusion_policy_felix/data/outputs/2024.06.18/14.45.00_train_flow_matching_unet_lowdim_feat_pcd_open_drawer/checkpoints/latest.ckpt"
 
-    cfg = load_config("train_flow_matching_SE3_lowdim_pose_workspace.yaml", [f"task={TASK}"])
-    policy : SE3FlowMatchingPolicy = load_model(checkpoint_path, cfg)
+    cfg = load_config("train_flow_matching_SE3_lowdim_feat_pcd_workspace.yaml", [f"task={TASK}"])
     dataset = load_dataset(cfg)
-
     batch = dict_apply(dataset[0], lambda x: x.unsqueeze(0).float())
+
+    policy : SE3FlowMatchingPolicy = load_model(checkpoint_path, cfg)
     policy.eval()
+
+
+    action = policy.predict_action(batch['obs'])
+
+    # visualize(batch['obs'], action["action"])
 
     adaptor = hydra.utils.instantiate(cfg.task.env_runner.adaptor)
     adaptor = Peract2Robomimic()
@@ -1222,17 +1247,18 @@ def test():
         data_path=data_path,
         headless=True,
         collision_checking=False,
+        n_action_steps=cfg.n_action_steps,
         obs_history_augmentation_every_n=cfg.task.env_runner.obs_history_augmentation_every_n,
         apply_rgb=False,
         apply_pc=False,
         apply_depth=False,
         apply_low_dim_pcd=True,
-        render_image_size=[1280//4, 720//4],
+        render_image_size=[1280//2, 720//2],
         apply_pose=True,
         adaptor=adaptor,
     )
 
-    task_str = TASK
+    task_str = "open_drawer_keypoint"
     task_type = task_file_to_task_class(task_str)
     task = env.env.get_task(task_type)
     variation = 0
@@ -1260,8 +1286,7 @@ def test():
     action_pred = create_rlbench_action(pred_dict['action']['act_r'], pred_dict['action']['act_p'], 
                                         pred_dict['action'].get('act_gr', None), pred_dict['action'].get('act_ic', None))
 
-
-    print("GT action: ", action_gt)
+    print("GT action: ", action_pred)
     print("Pred action: ", action_pred)
 
     # print("GT pos:", batch['action']['act_p'])
@@ -1273,10 +1298,12 @@ def test():
     print_dict(eval_dict)
 
 
+
+
     logs = env._evaluate_task_on_demos(
         task_str=task_str,
         task=task,
-        max_steps=30,
+        max_steps=4,
         demos=dataset.demos[:1],
         actioner=actioner,
         max_rtt_tries=10,

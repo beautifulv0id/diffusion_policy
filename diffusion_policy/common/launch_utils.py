@@ -188,7 +188,7 @@ def create_obs_action(demo,
                   use_pose=False, 
                   use_low_dim_state=False,
                   obs_augmentation_every_n=10):
-    observations = [demo[max(0, curr_obs_idx - i * obs_augmentation_every_n)] for i in range(n_obs)]
+    observations = [demo[max(0, curr_obs_idx - i * obs_augmentation_every_n)] for i in reversed(range(n_obs))]
     obs_dicts = None
     for _, obs in enumerate(observations):
         obs_dict = extract_obs(obs, cameras=cameras, use_rgb=use_rgb, use_mask=use_mask, use_pcd=use_pcd, use_depth=use_depth, use_low_dim_pcd=use_low_dim_pcd, use_pose=use_pose, use_low_dim_state=use_low_dim_state)
@@ -205,7 +205,7 @@ def create_obs_action(demo,
         obs2action_list = [obs_tm1, obs_tp1]
     else:
         obs2action_list = [observations[-1]]
-        obs2action_list.extend([demo[min(len(demo)-1, curr_obs_idx + (i + 1) * obs_augmentation_every_n)] for i in range(horizon)])
+        obs2action_list.extend([demo[min(len(demo)-1, curr_obs_idx + (i + 1))] for i in range(horizon)])
     action_dicts = create_actions_from_obs(obs2action_list)
 
     data = {

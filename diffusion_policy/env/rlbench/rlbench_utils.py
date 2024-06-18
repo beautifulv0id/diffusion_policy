@@ -270,7 +270,11 @@ class Actioner:
         ignore_collision = pred_dict['action'].get('act_ic', None)
         rlbench_action = create_rlbench_action(rot, pos, gripper_open, ignore_collision)
         rlbench_action = rlbench_action[0]
-        return rlbench_action.detach().cpu().numpy()
+        out = {
+            "rlbench_action": rlbench_action.detach().cpu().numpy(),
+            "action": pred_dict['action'],
+        }
+        return out
 
     @property
     def device(self):

@@ -15,19 +15,19 @@ from diffusion_policy.model.common.position_encodings import RotaryPositionEncod
 
 class FeaturePCloudPolicy(nn.Module):
     def __init__(self, dim=100, depth=1, heads=3, dim_head=64, mlp_dim=256,
-                       n_action_steps=1, n_obs_steps=1, gripper_out = False,
+                       horizon=1, n_obs_steps=1, gripper_out = False,
                         ignore_collisions_out = False):
 
         super().__init__()
-        self.n_action_steps = n_action_steps
+        self.horizon = horizon
         self.n_obs_steps = n_obs_steps
 
         ## Time-Context Embedding ##
         self.time_encoder = SinusoidalPosEmb(dim)
 
         ## Input Embeddings ##
-        self.x_embeddings = nn.Parameter(torch.randn(n_action_steps, dim))
-        self.trajectory_embeddings = nn.Parameter(torch.randn(n_action_steps, dim))
+        self.x_embeddings = nn.Parameter(torch.randn(horizon, dim))
+        self.trajectory_embeddings = nn.Parameter(torch.randn(horizon, dim))
         self.traj_time_emb = SinusoidalPosEmb(dim)
         self.trajectory_encoder = nn.Linear(16, dim)
 
@@ -64,7 +64,15 @@ class FeaturePCloudPolicy(nn.Module):
             out_dim += 1
 
         self.to_out = nn.Linear(dim, out_dim)
-        
+
+        self._keys_to_ignore_on_save = ['context_features', 'gripper_features']
+
+    def state_dict(self, destination=None, prefix='', keep_vars=False):
+        state_dict = super().state_dict(destination=destination, prefix=prefix, keep_vars=keep_vars)
+        for key in self._keys_to_ignore_on_save:
+            state_dict.pop(prefix + key, None)
+        return state_dict
+
 
     def set_context(self, context):
         self.context_pcd = context["context_pcd"]
@@ -76,8 +84,6 @@ class FeaturePCloudPolicy(nn.Module):
     def encode_gripper(self, gripper_features, gripper_pose, context_features, context_pcd, time_embeddings):
         extras = {'x_poses': gripper_pose, 'z_poses': context_pcd,
                   'x_types': 'se3', 'z_types': '3D'}
-        gripper_features = einops.repeat(
-            gripper_features, 'nhist c -> b nhist c', b=gripper_pose.size(0))
 
         gripper_features = self.gripper_context_head(
             x=gripper_features,
@@ -110,7 +116,7 @@ class FeaturePCloudPolicy(nn.Module):
         trajectory_features = self.trajectory_encoder(trajectory.flatten(1))
         trajectory_embeddings = self.trajectory_embeddings[None,...].repeat(batch_size,1,1)
         traj_time_pos = self.traj_time_emb(
-            torch.arange(0, self.n_action_steps, device=time_embeddings.device)
+            torch.arange(0, self.horizon, device=time_embeddings.device)
         )[None].repeat(batch_size, 1, 1)
         return traj_time_pos + trajectory_embeddings + time_embeddings[:,None,:]
 
@@ -135,6 +141,11 @@ class FeaturePCloudPolicy(nn.Module):
         context_features = self.context_features
         context_pcd = self.context_pcd
         trajectory_pose = se3_from_rot_pos(rt, pt)
+
+        gripper_features = einops.repeat(
+            gripper_features, 'nhist c -> b nhist c', b=gripper_pose.size(0))
+        context_features = einops.repeat(
+            context_features, 'n c -> b n c', b=gripper_pose.size(0))
 
         context_features = self.context_self_attn(context_features, context_pcd)
 
@@ -167,17 +178,17 @@ class FeaturePCloudPolicy(nn.Module):
 
 def feature_pcloud_git_test():
     n_context_tokens = 9
-    n_action_tokens = 1
+    horizon = 1
     n_obs_steps = 2
     heads = 3
     dim = heads * 20
-    model = FeaturePCloudPolicy(dim=dim, heads=heads,n_action_steps=n_action_tokens, n_obs_steps=n_obs_steps)
+    model = FeaturePCloudPolicy(dim=dim, heads=heads,horizon=horizon, n_obs_steps=n_obs_steps)
     from diffusion_policy.model.common.se3_util import random_se3
     from diffusion_policy.model.common.so3_util import random_so3
 
     B = 120
 
-    Hx = random_se3(B * n_action_tokens).reshape(B, n_action_tokens, 4, 4)
+    Hx = random_se3(B * horizon).reshape(B, horizon, 4, 4)
     t = torch.rand(B)
     Xz = torch.randn(B, n_context_tokens, 3)
     Xf = torch.randn(B, n_context_tokens, dim)

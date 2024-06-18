@@ -22,13 +22,14 @@ class LowdimKeypointEmbedder(ModuleAttrMixin):
 
     def forward(self, obs):
         pcd = obs['low_dim_pcd'][:,-1]
-        embeddings = self.pcd_features[None,...].repeat(pcd.shape[0],1,1)
+        embeddings = self.pcd_features.data
         new_obs = {}
         new_obs['context_pcd'] = pcd
         new_obs['context_features'] = embeddings
         new_obs['gripper_pcd'] = obs['robot0_eef_pos']
         new_obs['gripper_rot'] = obs['robot0_eef_rot']
-        new_obs['gripper_features'] = self.gripper_features
+        new_obs['gripper_features'] = self.gripper_features.data
+        new_obs['low_dim_state'] = obs['low_dim_state']
         return new_obs
 
     def get_args(self):

@@ -222,9 +222,9 @@ class RLBenchImageDataset(RLBenchDataset, BaseImageDataset):
 def test():
     from pytorch3d.transforms import quaternion_to_matrix, matrix_to_quaternion, standardize_quaternion
 
-    dataset = RLBenchDataset(
+    dataset = RLBenchLowdimDataset(
         root = "/home/felix/Workspace/diffusion_policy_felix/data/keypoint/train",
-        task_name="put_item_in_drawer",
+        task_name="open_drawer_keypoint",
         num_episodes=1,
         variation=0,
         cameras = ['left_shoulder', 'right_shoulder', 'overhead', 'wrist', 'front'],
@@ -235,10 +235,6 @@ def test():
         demo_augmentation_every_n=1,
         obs_augmentation_every_n=10,
         use_low_dim_pcd=True,
-        use_pcd = False,
-        use_rgb = False,
-        use_depth = False,
-        use_mask = False,
         use_pose = True,
         use_low_dim_state=True,
         val_ratio=0

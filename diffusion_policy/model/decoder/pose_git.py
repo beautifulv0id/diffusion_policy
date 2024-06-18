@@ -33,7 +33,7 @@ class FlowMatchingInvariantPointTransformer(nn.Module):
     def __init__(self,
                  obs_dim,
                  n_obs_steps,
-                 n_action_steps,
+                 horizon,
                  latent_dim=128,
                  depth=2,
                  heads=3, dim_head=64,
@@ -51,7 +51,7 @@ class FlowMatchingInvariantPointTransformer(nn.Module):
         ## Parameters ##
         self.n_obs_steps = n_obs_steps
         self.obs_dim = obs_dim
-        self.n_action_steps = n_action_steps
+        self.horizon = horizon
         self.latent_dim = latent_dim
         self.depth = depth
         self.heads = heads
@@ -64,8 +64,8 @@ class FlowMatchingInvariantPointTransformer(nn.Module):
         self.causal_attn = causal_attn
 
         ## Set Action Poses ##
-        self.action_features = nn.Parameter(torch.randn(n_action_steps, latent_dim))
-        self.positional_encoding = PositionalEncoding(latent_dim, max_len=n_action_steps)
+        self.action_features = nn.Parameter(torch.randn(horizon, latent_dim))
+        self.positional_encoding = PositionalEncoding(latent_dim, max_len=horizon)
 
 
         # ## Set Observation Encoder ##
@@ -179,7 +179,7 @@ class FlowMatchingInvariantPointTransformer(nn.Module):
             '__class__': [type(self).__module__, type(self).__name__],
             'params':{
                 'obs_dim': self.obs_dim,
-                'n_action_steps': self.n_action_steps,
+                'horizon': self.horizon,
                 'latent_dim': self.latent_dim,
                 'depth': self.depth,
                 'heads': self.heads,
@@ -194,7 +194,8 @@ class FlowMatchingInvariantPointTransformer(nn.Module):
 def test():
     import time
 
-    n_action_steps = 12
+    n_obs_steps = 2
+    horizon = 12
     obs_dim = 50
     context_dim = 64
     depth = 5
@@ -204,7 +205,8 @@ def test():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     model = FlowMatchingInvariantPointTransformer(obs_dim=obs_dim,
-                                                  n_action_steps=n_action_steps,).to(device)
+                                                    n_obs_steps=n_obs_steps,
+                                                  horizon=horizon,).to(device)
 
     ### RUN ###
     ## Generate Observation ##
@@ -216,8 +218,8 @@ def test():
     obs ={'obs_r': obs_r, 'obs_p': obs_p, 'obs_f': obs_f}
 
 
-    act_r = random_so3(B*n_action_steps).reshape(B, n_action_steps, 3, 3).to(device)
-    act_p = torch.randn(B, n_action_steps, 3).to(device)
+    act_r = random_so3(B*horizon).reshape(B, horizon, 3, 3).to(device)
+    act_p = torch.randn(B, horizon, 3).to(device)
     time = torch.rand(B).to(device)
 
     ## Run model ##
