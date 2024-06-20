@@ -13,6 +13,7 @@ exp_name: "flowmatching"
 n_obs_steps: &n_obs_steps 2
 # n_action_steps: 8
 # horizon: 16
+use_keyframe_actions: True
 n_action_steps: 1
 horizon: 1
 embedding_dim: 60
@@ -23,6 +24,7 @@ mode: train
 policy:
   _target_: diffusion_policy.policy.flow_matching_SE3_lowdim_policy.SE3FlowMatchingPolicy
 
+  horizon: ${horizon}
   n_action_steps: ${n_action_steps}
   n_obs_steps: ${n_obs_steps}
   flow_type: 'rectified_linear'

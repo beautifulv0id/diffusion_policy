@@ -1,7 +1,7 @@
 _target_: diffusion_policy.model.decoder.pose_git.FlowMatchingInvariantPointTransformer
 obs_dim: ${embedding_dim}
 n_obs_steps: ${n_obs_steps}
-n_action_steps: ${n_action_steps}
+horizon: ${horizon}
 latent_dim: 128
 depth: 4
 heads: 3

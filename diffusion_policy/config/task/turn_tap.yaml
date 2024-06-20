@@ -26,6 +26,10 @@ gripper_loc_bounds:
   buffer: 0.0
   task: ${name}
 
+obs_augmentation_every_n: 10
+obs_history_from_planner: False
+use_keyframe_observations: False
+
 dataset:
   _target_: diffusion_policy.dataset.rlbench_dataset.RLBenchDataset
   root: /home/felix/Workspace/diffusion_policy_felix/data/peract
@@ -36,8 +40,10 @@ dataset:
   n_obs_steps: ${n_obs_steps}
   horizon: ${horizon}
   use_keyframe_actions: ${use_keyframe_actions}
+  use_keyframe_observations: ${task.use_keyframe_observations}
   demo_augmentation_every_n: 1
-  obs_augmentation_every_n: ${task.obs_augmentation_every_n}
+  obs_augmentation_every_n: ${eval:'${task.obs_augmentation_every_n} if ${task.obs_history_from_planner} else ${n_action_steps}'}
+
   val_ratio: 0.2
   use_low_dim_pcd: true
   use_pose: true
@@ -48,11 +54,14 @@ env_runner:
   data_root: ${task.dataset.root}
   task_str: ${task.name}
   max_episodes: 3
-  max_steps: ${eval:'20 if "${use_keyframe_actions}" else 200'}
-  max_rtt_tries: 10
+  max_steps: ${eval:'20 if ${use_keyframe_actions} else 60'}
+  max_rtt_tries: 3
   demo_tries: 1
   n_train_vis: 3
   n_val_vis: 3
+  n_obs_steps: ${n_obs_steps}
+  n_action_steps: ${n_action_steps}
+  obs_history_from_planner: ${task.obs_history_from_planner}
   obs_history_augmentation_every_n: ${task.dataset.obs_augmentation_every_n}
   collision_checking: True
   action_dim: 8

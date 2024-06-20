@@ -110,3 +110,22 @@ def create_rlbench_action(rot: torch.Tensor, pos: torch.Tensor, gripper_open: to
         ignore_collision = ignore_collision.reshape(B, T, 1) > 0.5
         action = torch.cat([action, ignore_collision], dim=-1)
     return action
+
+def create_robomimic_from_rlbench_action(rlbench_action: torch.Tensor, to_rel_first: bool = True):
+    L = rlbench_action.shape[-1]
+    pos = rlbench_action[:, :, :3]
+    quat = rlbench_action[:, :, 3:7]
+    if to_rel_first:
+        quat = torch.cat([quat[..., [3]], quat[..., :3]])
+    rot = quaternion_to_matrix(quat)
+    action = {
+            "act_r": rot,
+            "act_p": pos
+        }
+    if L > 7:
+        gripper_open = rlbench_action[:, :, 7]
+        action["act_gr"] = gripper_open
+    if L > 8:
+        ignore_collision = rlbench_action[:, :, 8]
+        action["act_ic"] = ignore_collision
+    return action

@@ -81,6 +81,11 @@ but you can use conda as well:
 $ conda env create -f conda_environment.yaml
 ```
 
+install dgl:
+```
+conda install -c dglteam/label/th23_cu121 dgl
+```
+
 The `conda_environment_macos.yaml` file is only for development on MacOS and does not have full support for benchmarks.
 
 ### 🦾 Real Robot

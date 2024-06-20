@@ -1,14 +1,14 @@
-save_path=/home/felix/Workspace/diffusion_policy_felix/data/keypoint/tmp
-image_size=128,128
+save_path=/home/felix/Workspace/diffusion_policy_felix/data/image
+image_size=256,256
 variations=1
-episodes_per_task=1
+episodes_per_task=100
 all_variations=False
 processes=1
-tasks=stack_blocks
-high_dim=False
+tasks=open_drawer
+high_dim=True
 
 cd /home/felix/Workspace/diffusion_policy_felix/installs/RLBench/tools
-/home/felix/miniforge3/envs/robodiff/bin/python3 dataset_generator.py \
+xvfb-run -a /home/felix/miniforge3/envs/robodiff/bin/python3 dataset_generator.py \
 --tasks=$tasks \
 --all_variations=False \
 --save_path=$save_path \

@@ -3,6 +3,7 @@ from rlbench.demo import Demo
 from typing import List
 from rlbench.backend.observation import Observation
 import numpy as np
+
 REMOVE_KEYS = ['joint_velocities', 'joint_positions', 'joint_forces',
                'gripper_open', 'gripper_pose',
                'gripper_joint_positions', 'gripper_touch_forces']
@@ -58,6 +59,7 @@ def extract_obs(obs: Observation,
     obs.wrist_camera_matrix = None
     obs.joint_positions = None
     obs.joint_velocities = None
+    obs.task_low_dim_state = None
     if obs.gripper_joint_positions is not None:
         obs.gripper_joint_positions = np.clip(
             obs.gripper_joint_positions, 0., 0.04)
@@ -117,10 +119,13 @@ def extract_obs(obs: Observation,
 
     obs_dict['robot0_eef_rot'] = grip_mat[...,:3,:3]
     obs_dict['robot0_eef_pos'] = grip_mat[...,:3,3]
+
+    obs_dict['curr_gripper'] = pose_gr_ic_from_obs(obs)
+
     if use_rgb:
-        obs_dict['rgb'] = np.stack([obs_dict['%s_rgb' % camera] for camera in cameras]) 
+        obs_dict['rgb'] = np.stack([obs_dict.pop('%s_rgb' % camera) for camera in cameras]) 
     if use_pcd:
-        obs_dict['pcd'] = np.stack([obs_dict['%s_point_cloud' % camera] for camera in cameras])
+        obs_dict['pcd'] = np.stack([obs_dict.pop('%s_point_cloud' % camera) for camera in cameras])
     if use_low_dim_pcd:
         obs_dict['low_dim_pcd'] = low_dim_pcd
     if use_pose:
@@ -139,6 +144,31 @@ def normalize_quaternion(quat):
         quat = -quat
     return quat
 
+def quaternion_to_real_part_first(quat : np.ndarray):
+    """
+    Rearranges the quaternion array to have the real part as the first element.
+
+    Parameters:
+    quat (np.ndarray): The input quaternion array.
+
+    Returns:
+    np.ndarray: The rearranged quaternion array with the real part as the first element.
+    """
+    return np.concatenate([quat[..., [3]], quat[..., :3]], axis=-1)
+
+def quaternion_to_real_part_last(quat):
+    """
+    Converts a quaternion array to a new array with the real part at the last index.
+
+    Args:
+        quat (numpy.ndarray): Array of quaternions.
+
+    Returns:
+        numpy.ndarray: Array with the real part of each quaternion at the last index.
+
+    """
+    return np.concatenate([quat[..., 1:], quat[..., [0]]], axis=-1)
+
 def stack_list_of_dicts(data):
     data_dict = {}
     for k in data[0].keys():
@@ -148,23 +178,49 @@ def stack_list_of_dicts(data):
             data_dict[k] = stack_list_of_dicts([d[k] for d in data])
     return data_dict
 
+def pose_gr_ic_from_obs(obs, obs_m1=None):
+    """
+    Convert observation data to a concatenated array representing the gripper pose, gripper open state, and ignore collisions flag.
+
+    Args:
+        obs (object): The current observation object.
+        obs_m1 (object, optional): The previous observation object. Defaults to None.
+
+    Returns:
+        numpy.ndarray: A concatenated array representing the gripper pose, gripper open state, and ignore collisions flag.
+    """
+    obs_m1 = obs if obs_m1 is None else obs_m1
+
+    ignore_collisions = np.array(obs_m1.ignore_collisions, dtype=np.float32).reshape(1)
+    gripper_open = np.array(obs.gripper_open, dtype=np.float32).reshape(1)
+    
+    gripper_pose = obs.gripper_pose
+    pos = gripper_pose[:3]
+    quat = gripper_pose[3:]
+    quat = normalize_quaternion(quaternion_to_real_part_first(quat))
+    return np.concatenate([pos, quat, gripper_open, ignore_collisions])
+
+
 def create_actions_from_obs(observations):
     actions = {
         'act_p': [],
         'act_r': [],
         'act_gr': [],
-        'act_ic': []
+        'act_ic': [],
+        'gt_trajectory': []
     }
     for i in range(1, len(observations)):
         obs_tp1 = observations[i]
         obs_tm1 = observations[i - 1]
-        ignore_collisions = np.array(obs_tm1.ignore_collisions, dtype=np.float32)
-        gripper_open = np.array(obs_tp1.gripper_open, dtype=np.float32)
+        ignore_collisions = np.array(obs_tm1.ignore_collisions, dtype=np.float32).reshape(1)
+        gripper_open = np.array(obs_tp1.gripper_open, dtype=np.float32).reshape(1)
         action = dict()
         action['act_p'] = obs_tp1.gripper_matrix[:3,3].reshape(-1, 3)
         action['act_r'] = obs_tp1.gripper_matrix[:3,:3].reshape(-1, 3, 3)
-        action['act_gr'] = gripper_open.reshape(1)
-        action['act_ic'] = ignore_collisions.reshape(1)
+        action['act_gr'] = gripper_open
+        action['act_ic'] = ignore_collisions
+
+        action['gt_trajectory'] = pose_gr_ic_from_obs(obs_tp1, obs_tm1).reshape(-1, 9)
 
         for k in actions.keys():
             actions[k].append(action[k])
@@ -175,6 +231,7 @@ def create_actions_from_obs(observations):
 def create_obs_action(demo, 
                   curr_obs_idx,
                   use_keyframe_actions=True,
+                  use_keyframe_observations=False,
                   horizon=1,
                   episode_keypoints=None, 
                   curr_kp_idx=0, 
@@ -188,7 +245,18 @@ def create_obs_action(demo,
                   use_pose=False, 
                   use_low_dim_state=False,
                   obs_augmentation_every_n=10):
-    observations = [demo[max(0, curr_obs_idx - i * obs_augmentation_every_n)] for i in reversed(range(n_obs))]
+    if use_keyframe_observations:
+        observations = []
+        for i in reversed(range(0, n_obs)):
+            offset = i
+            if curr_obs_idx == episode_keypoints[curr_kp_idx - 1]:
+                offset +=1
+            if curr_kp_idx - offset < 0:
+                observations.append(demo[0])
+            else:
+                observations.append(demo[episode_keypoints[curr_kp_idx - offset]])
+    else:
+        observations = [demo[max(0, curr_obs_idx - i * obs_augmentation_every_n)] for i in reversed(range(n_obs))]
     obs_dicts = None
     for _, obs in enumerate(observations):
         obs_dict = extract_obs(obs, cameras=cameras, use_rgb=use_rgb, use_mask=use_mask, use_pcd=use_pcd, use_depth=use_depth, use_low_dim_pcd=use_low_dim_pcd, use_pose=use_pose, use_low_dim_state=use_low_dim_state)
@@ -201,7 +269,7 @@ def create_obs_action(demo,
 
     if use_keyframe_actions:
         obs_tp1 = demo[episode_keypoints[curr_kp_idx]]
-        obs_tm1 = demo[episode_keypoints[curr_kp_idx - 1]] if curr_kp_idx > 0 else demo[0]
+        obs_tm1 = demo[episode_keypoints[max(0,curr_kp_idx - 1)]]
         obs2action_list = [obs_tm1, obs_tp1]
     else:
         obs2action_list = [observations[-1]]
@@ -220,15 +288,21 @@ def create_dataset(demos, cameras, demo_augmentation_every_n=10,
                    use_low_dim_pcd=False, use_rgb=False, 
                     use_keyframe_actions=True, horizon=1,
                    use_pcd=False, use_mask=False, use_depth=False,
-                    use_pose=False, use_low_dim_state=False):
+                    use_pose=False, use_low_dim_state=False, use_keyframe_observations=False):
     dataset = []
     episode_begin = [0]
 
+    if use_keyframe_observations:
+        demo_augmentation_every_n = 1
+
     for demo in demos:
         episode_keypoints = _keypoint_discovery(demo)
-        next_keypoint = 0
-        for i in range(0, len(demo)-1):
+        episode_keypoints = [0] + episode_keypoints
+        next_keypoint = 1
+        i = 0
+        while i < len(demo)-1:
             if i % demo_augmentation_every_n:
+                i += 1
                 continue
             
             if use_keyframe_actions:
@@ -238,8 +312,14 @@ def create_dataset(demos, cameras, demo_augmentation_every_n=10,
                     break            
             data = create_obs_action(demo=demo, curr_obs_idx=i, episode_keypoints=episode_keypoints, curr_kp_idx=next_keypoint, cameras=cameras, n_obs=n_obs, use_keyframe_actions=use_keyframe_actions, horizon=horizon,
                                     use_low_dim_pcd=use_low_dim_pcd, use_pcd=use_pcd, use_rgb=use_rgb, use_pose=use_pose, use_depth=use_depth,
-                                    use_mask=use_mask, use_low_dim_state=use_low_dim_state, obs_augmentation_every_n=obs_augmentation_every_n)
+                                    use_mask=use_mask, use_low_dim_state=use_low_dim_state, obs_augmentation_every_n=obs_augmentation_every_n,
+                                    use_keyframe_observations=use_keyframe_observations)
             dataset.append(data)
             episode_begin.append(episode_begin[-1])
+            i += 1
+
+            if use_keyframe_observations:
+                i = episode_keypoints[next_keypoint]
+
         episode_begin[-1] = len(dataset)
     return dataset, episode_begin

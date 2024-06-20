@@ -1,7 +1,7 @@
 # Code from https://github.com/zhouxian/act3d-chained-diffuser
 from torch import nn
 from torch.nn import functional as F
-
+import numpy as np
 from diffusion_policy.model.common.multihead_costum_attention import MultiheadCustomAttention
 
 
@@ -352,8 +352,8 @@ class RelativeCrossAttentionLayer(nn.Module):
         if use_adaln:
             self.adaln = AdaLN(embedding_dim)
 
-    def forward(self, query, value, diff_ts=None,
-                query_pos=None, value_pos=None, pad_mask=None):
+    def forward(self, query, value, diff_ts=None, query_pos=None, 
+                value_pos=None, pad_mask=None, attn_mask=None):
         if diff_ts is not None:
             adaln_query = self.adaln(query, diff_ts)
         else:
@@ -363,7 +363,8 @@ class RelativeCrossAttentionLayer(nn.Module):
             key=value,
             value=value,
             rotary_pe=None if query_pos is None else (query_pos, value_pos),
-            key_padding_mask=pad_mask
+            key_padding_mask=pad_mask,
+            attn_mask=attn_mask
         )
         output = query + self.dropout(attn_output)
         output = self.norm(output)
@@ -417,11 +418,11 @@ class FFWRelativeCrossAttentionModule(nn.Module):
             ))
 
     def forward(self, query, value, diff_ts=None,
-                query_pos=None, value_pos=None):
+                query_pos=None, value_pos=None, attn_mask=None):
         output = []
         for i in range(self.num_layers):
             query = self.attn_layers[i](
-                query, value, diff_ts, query_pos, value_pos
+                query, value, diff_ts, query_pos, value_pos, attn_mask=attn_mask
             )
             query = self.ffw_layers[i](query, diff_ts)
             output.append(query)
@@ -446,11 +447,11 @@ class FFWRelativeSelfAttentionModule(nn.Module):
             ))
 
     def forward(self, query, diff_ts=None,
-                query_pos=None, context=None, context_pos=None):
+                query_pos=None, context=None, context_pos=None, attn_mask=None):
         output = []
         for i in range(self.num_layers):
             query = self.attn_layers[i](
-                query, query, diff_ts, query_pos, query_pos
+                query, query, diff_ts, query_pos, query_pos, attn_mask=attn_mask
             )
             query = self.ffw_layers[i](query, diff_ts)
             output.append(query)

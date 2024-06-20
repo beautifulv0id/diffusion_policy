@@ -110,21 +110,26 @@ class Robomimic2Peract(ModuleAttrMixin):
             gripper_rot, gripper_pos = rot_pos_from_se3(gripper_H)
             new_obs['robot0_eef_pos'] = gripper_pos
             new_obs['robot0_eef_rot'] = gripper_rot
+
+            #hack for diffuser actor
+            gripper_quat = standardize_quaternion(matrix_to_quaternion(gripper_rot))
+            new_obs['curr_gripper'] = torch.cat([gripper_pos, gripper_quat], dim=-1)
             kp_idx = 0
-            keypoint_pose = data['obs']['keypoint_poses']
-            for i in range(keypoint_pose.shape[1]):
-                kp_rot, kp_pos = rot_pos_from_se3(keypoint_pose[:, i, :, :])
-                new_obs['kp%d_pos' % kp_idx] = kp_pos.unsqueeze(1)
-                new_obs['kp%d_rot' % kp_idx] = kp_rot.unsqueeze(1)
-                kp_idx += 1
+            if 'keypoint_poses' in data['obs']:
+                keypoint_pose = data['obs']['keypoint_poses']
+                for i in range(keypoint_pose.shape[1]):
+                    kp_rot, kp_pos = rot_pos_from_se3(keypoint_pose[:, i, :, :])
+                    new_obs['kp%d_pos' % kp_idx] = kp_pos.unsqueeze(1)
+                    new_obs['kp%d_rot' % kp_idx] = kp_rot.unsqueeze(1)
+                    kp_idx += 1
             if 'low_dim_state' in data['obs']:
                 new_obs['low_dim_state'] = data['obs']['low_dim_state']
             if 'low_dim_pcd' in data['obs']:
                 new_obs['low_dim_pcd'] = data['obs']['low_dim_pcd'].unsqueeze(1)
             if 'rgb' in data['obs']:
-                new_obs['rgb'] = data['obs']['rgb'].unsqueeze(1)
+                new_obs['rgb'] = data['obs']['rgb']
             if 'pcd' in data['obs']:
-                new_obs['pcd'] = data['obs']['pcd'].unsqueeze(1)
+                new_obs['pcd'] = data['obs']['pcd']
             new_data['obs'] = new_obs
 
         return new_data

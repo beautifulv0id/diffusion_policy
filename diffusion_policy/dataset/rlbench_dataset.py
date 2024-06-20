@@ -23,6 +23,7 @@ class RLBenchDataset():
             use_keyframe_actions=True,
             demo_augmentation_every_n=1,
             obs_augmentation_every_n=10,
+            use_keyframe_observations=False,
             use_low_dim_pcd=False,
             use_pcd = False,
             use_rgb = False,
@@ -87,7 +88,8 @@ class RLBenchDataset():
                                         # use_mask=use_mask,
                                         horizon=horizon,
                                         use_keyframe_actions=use_keyframe_actions,
-                                        use_low_dim_state=use_low_dim_state)
+                                        use_low_dim_state=use_low_dim_state,
+                                        use_keyframe_observations=use_keyframe_observations)
         
         val_dataset, val_demo_begin = create_dataset(val_demos,
                                         cameras=cameras, 
@@ -102,7 +104,8 @@ class RLBenchDataset():
                                         # use_mask=use_mask,
                                         horizon=horizon,
                                         use_keyframe_actions=use_keyframe_actions,
-                                        use_low_dim_state=use_low_dim_state)
+                                        use_low_dim_state=use_low_dim_state,
+                                        use_keyframe_observations=use_keyframe_observations)
         
         self.demos = train_demos
         self.dataset = train_dataset
@@ -121,13 +124,21 @@ class RLBenchDataset():
             "action": data["action"],
             "obs": dict()
         }
-        this_data['obs']['robot0_eef_rot'] = data['obs']['robot0_eef_rot']
-        this_data['obs']['robot0_eef_pos'] = data['obs']['robot0_eef_pos']
+        this_data['obs']['robot0_eef_rot'] = data['obs'].pop('robot0_eef_rot')
+        this_data['obs']['robot0_eef_pos'] = data['obs'].pop('robot0_eef_pos')
+        this_data['obs']['curr_gripper'] = data['obs'].pop('curr_gripper')
+
         if 'low_dim_state' in data['obs']:
-            this_data['obs']['low_dim_state'] = data['obs']['low_dim_state']
+            this_data['obs']['low_dim_state'] = data['obs'].pop('low_dim_state')
+
+        if 'rgb' in data['obs']:
+            this_data['obs']['rgb'] = data['obs'].pop('rgb')[-1]
+        
+        if 'pcd' in data['obs']:   
+            this_data['obs']['pcd'] = data['obs'].pop('pcd')[-1]
+
         for k in data['obs'].keys():
-            if not 'robot0_eef' in k and not 'low_dim_state' in k:
-                this_data['obs'][k] = data['obs'][k][-1:]
+            this_data['obs'][k] = data['obs'][k][-1:]
 
         torch_data = dict_apply(this_data, torch.from_numpy)
         return torch_data
@@ -154,6 +165,7 @@ class RLBenchLowdimDataset(RLBenchDataset, BaseLowdimDataset):
                     cameras=[],
                     image_size=None,
                     use_keyframe_actions=True,
+                    use_keyframe_observations=False,
                     n_obs_steps=2,
                     horizon=1,
                     demo_augmentation_every_n=1,
@@ -169,6 +181,7 @@ class RLBenchLowdimDataset(RLBenchDataset, BaseLowdimDataset):
                         n_obs_steps=n_obs_steps,
                         horizon=horizon,
                         use_keyframe_actions=use_keyframe_actions,
+                        use_keyframe_observations=use_keyframe_observations,
                         demo_augmentation_every_n=demo_augmentation_every_n,
                         obs_augmentation_every_n=obs_augmentation_every_n,
                         use_low_dim_pcd=use_low_dim_pcd,
@@ -195,6 +208,7 @@ class RLBenchImageDataset(RLBenchDataset, BaseImageDataset):
                     n_obs_steps=2,
                     horizon=1,
                     use_keyframe_actions=True,
+                    use_keyframe_observations=False,
                     demo_augmentation_every_n=1,
                     obs_augmentation_every_n=10,
                     use_low_dim_state=False,
@@ -208,6 +222,7 @@ class RLBenchImageDataset(RLBenchDataset, BaseImageDataset):
                         n_obs_steps=n_obs_steps,
                         horizon=horizon,
                         use_keyframe_actions=use_keyframe_actions,
+                        use_keyframe_observations=use_keyframe_observations,
                         demo_augmentation_every_n=demo_augmentation_every_n,
                         obs_augmentation_every_n=obs_augmentation_every_n,
                         use_low_dim_pcd=False,
@@ -221,10 +236,11 @@ class RLBenchImageDataset(RLBenchDataset, BaseImageDataset):
 
 def test():
     from pytorch3d.transforms import quaternion_to_matrix, matrix_to_quaternion, standardize_quaternion
+    from diffusion_policy.common.common_utils import create_rlbench_action
 
-    dataset = RLBenchLowdimDataset(
-        root = "/home/felix/Workspace/diffusion_policy_felix/data/keypoint/train",
-        task_name="open_drawer_keypoint",
+    dataset = RLBenchImageDataset(
+        root = "/home/felix/Workspace/diffusion_policy_felix/data/image",
+        task_name="open_drawer",
         num_episodes=1,
         variation=0,
         cameras = ['left_shoulder', 'right_shoulder', 'overhead', 'wrist', 'front'],
@@ -232,26 +248,21 @@ def test():
         n_obs_steps=3,
         horizon=16,
         use_keyframe_actions=False,
-        demo_augmentation_every_n=1,
+        use_keyframe_observations=False,
+        demo_augmentation_every_n=10,
         obs_augmentation_every_n=10,
-        use_low_dim_pcd=True,
-        use_pose = True,
-        use_low_dim_state=True,
+        use_low_dim_state=False,
         val_ratio=0
     )
-    data = dataset[0]
+    data = dataset[2]
     batch = dict_apply(data, lambda x: x.unsqueeze(0))
-    print_dict(batch)
     print("Dataset length:", len(dataset))
-    return
-
+    print_dict(batch)
+    
+    return 
 
     from diffusion_policy.common.visualization_se3 import visualize_frames, visualize_poses_and_actions
     from diffusion_policy.model.common.so3_util import quaternion_to_matrix, log_map, exp_map, se3_inverse, apply_transform
-
-    data = dataset[0]
-    batch = dict_apply(data, lambda x: x.unsqueeze(0))
-    batch = format_batch(batch)
 
     state_rotation = [v for k, v in batch['obs'].items() if 'rot' in k]
     state_translation = [v for k, v in batch['obs'].items() if 'pos' in k]
