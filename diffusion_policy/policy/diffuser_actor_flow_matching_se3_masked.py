@@ -2,14 +2,15 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import einops
-from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
+from diffusion_policy.model.common.so3_util import log_map, normal_so3
+from diffusion_policy.model.flow_matching.flow_matching_models import SE3LinearAttractorFlow
 
 from diffusion_policy.model.common.layers import (
     FFWRelativeSelfAttentionModule,
     FFWRelativeCrossAttentionModule,
     FFWRelativeSelfCrossAttentionModule
 )
-from diffusion_policy.model.obs_encoders.diffuser_actor_encoder import DiffuserActorEncoder
+from diffusion_policy.model.obs_encoders.diffuser_actor_mask_encoder import DiffuserActorEncoder
 from diffusion_policy.model.common.layers import ParallelAttention
 from diffusion_policy.model.common.position_encodings import (
     RotaryPositionEncoding3D,
@@ -29,7 +30,7 @@ from diffusion_policy.policy.base_image_policy import BaseImagePolicy
 from typing import Dict
 
 
-class DiffuserActor(BaseImagePolicy):
+class DiffuserActorFLowMatching(BaseImagePolicy):
 
     def __init__(self,
                  backbone="clip",
@@ -39,14 +40,16 @@ class DiffuserActor(BaseImagePolicy):
                  use_instruction=False,
                  fps_subsampling_factor=5,
                  gripper_loc_bounds=None,
-                 rotation_parametrization='6D',
+                 rotation_parametrization='so3',
                  quaternion_format='xyzw',
-                 diffusion_timesteps=100,
+                 num_inference_steps=100,
                  nhist=3,
                  nhorizon=16,
                  relative=False,
-                 lang_enhanced=False):
+                 lang_enhanced=False,
+                 t_switch=0.75):
         super().__init__()
+        assert rotation_parametrization == 'so3', "Only SO3 is supported"
         self._rotation_parametrization = rotation_parametrization
         self._quaternion_format = quaternion_format
         self._relative = relative
@@ -55,7 +58,7 @@ class DiffuserActor(BaseImagePolicy):
             backbone=backbone,
             image_size=image_size,
             embedding_dim=embedding_dim,
-            num_sampling_level=1,
+            num_sampling_level=2,
             nhist=nhist,
             num_vis_ins_attn_layers=num_vis_ins_attn_layers,
             fps_subsampling_factor=fps_subsampling_factor
@@ -67,32 +70,34 @@ class DiffuserActor(BaseImagePolicy):
             nhist=nhist,
             lang_enhanced=lang_enhanced
         )
-        self.position_noise_scheduler = DDPMScheduler(
-            num_train_timesteps=diffusion_timesteps,
-            beta_schedule="scaled_linear",
-            prediction_type="epsilon"
-        )
-        self.rotation_noise_scheduler = DDPMScheduler(
-            num_train_timesteps=diffusion_timesteps,
-            beta_schedule="squaredcos_cap_v2",
-            prediction_type="epsilon"
-        )
-        self.n_steps = diffusion_timesteps
+
+        self.n_steps = num_inference_steps
         self.nhorizon = nhorizon
         self.gripper_loc_bounds = torch.tensor(gripper_loc_bounds)
 
-    def encode_inputs(self, visible_rgb, visible_pcd, instruction,
+        ## Flow Model ##
+        self.t_switch = t_switch
+        self.flow = SE3LinearAttractorFlow()
+        self.generate_random_initial_pose = self.flow.generate_random_initial_pose
+        self.flow_at_t = self.flow.flow_at_t
+        self.vector_field_at_t = self.flow.vector_field_at_t
+        self.step = self.flow.step
+
+
+    def encode_inputs(self, visible_rgb, visible_pcd, mask, instruction,
                       curr_gripper):
         # Compute visual features/positional embeddings at different scales
         rgb_feats_pyramid, pcd_pyramid = self.encoder.encode_images(
             visible_rgb, visible_pcd
         )
-        # Keep only low-res scale
-        context_feats = einops.rearrange(
-            rgb_feats_pyramid[0],
-            "b ncam c h w -> b (ncam h w) c"
-        )
-        context = pcd_pyramid[0]
+
+        rgb_feats = rgb_feats_pyramid[0]
+        pcd = pcd_pyramid[0]
+
+        rgb_feats, pcd = self.encoder.mask_out_features_pcd(mask, rgb_feats, pcd, n_min=128, n_max=1024)
+
+        context_feats = rgb_feats
+        context = pcd
 
         # Encode instruction (B, 53, F)
         instr_feats = None
@@ -146,48 +151,36 @@ class DiffuserActor(BaseImagePolicy):
         )
 
     def conditional_sample(self, condition_data, condition_mask, fixed_inputs):
-        self.position_noise_scheduler.set_timesteps(self.n_steps)
-        self.rotation_noise_scheduler.set_timesteps(self.n_steps)
-
         # Random trajectory, conditioned on start-end
-        noise = torch.randn(
-            size=condition_data.shape,
-            dtype=condition_data.dtype,
-            device=condition_data.device
-        )
-        # Noisy condition data
-        noise_t = torch.ones(
-            (len(condition_data),), device=condition_data.device
-        ).long().mul(self.position_noise_scheduler.timesteps[0])
-        noise_pos = self.position_noise_scheduler.add_noise(
-            condition_data[..., :3], noise[..., :3], noise_t
-        )
-        noise_rot = self.rotation_noise_scheduler.add_noise(
-            condition_data[..., 3:9], noise[..., 3:9], noise_t
-        )
-        noisy_condition_data = torch.cat((noise_pos, noise_rot), -1)
-        trajectory = torch.where(
-            condition_mask, noisy_condition_data, noise
-        )
-
+        B, L, D = condition_data.size()
+        device = condition_data.device
         # Iterative denoising
-        timesteps = self.position_noise_scheduler.timesteps
-        for t in timesteps:
-            out = self.policy_forward_pass(
-                trajectory,
-                t * torch.ones(len(trajectory)).to(trajectory.device).long(),
-                fixed_inputs
-            )
-            out = out[-1]  # keep only last layer's output
-            pos = self.position_noise_scheduler.step(
-                out[..., :3], t, trajectory[..., :3]
-            ).prev_sample
-            rot = self.rotation_noise_scheduler.step(
-                out[..., 3:9], t, trajectory[..., 3:9]
-            ).prev_sample
-            trajectory = torch.cat((pos, rot), -1)
+        with torch.no_grad():
+            dt = 1.0 / self.n_steps
+            r0, p0 = self.generate_random_initial_pose(batch=B, trj_steps=L)
+            r0, p0 = r0.to(device), p0.to(device)
+            rt, pt = r0, p0
+            for s in range(0, self.n_steps):
+                time = s*dt*torch.ones_like(pt[:, 0, 0], device=device)
+                xt = torch.cat([pt, rt.flatten(-2)], -1)
+                out = self.policy_forward_pass(
+                    xt,
+                    time,
+                    fixed_inputs
+                )
+                out = out[-1] # keep only last layer's output
+                dr, dp = out[...,:3], out[...,3:6]   
+                rt, pt = self.step(rt, pt, dr, dp, dt, time=s*dt)
 
-        trajectory = torch.cat((trajectory, out[..., 9:]), -1)
+
+        trajectory = torch.cat([pt, rt.flatten(-2)], -1)
+        
+        if self._rotation_parametrization == 'so3':
+            trajectory = torch.cat([trajectory, out[..., 6:]], -1)
+        if self._rotation_parametrization == 'quat':
+            trajectory = torch.cat([trajectory, out[..., 7:]], -1)
+        if self._rotation_parametrization == '6D':
+            trajectory = torch.cat([trajectory, out[..., 9:]], -1)
 
         return trajectory
 
@@ -196,6 +189,7 @@ class DiffuserActor(BaseImagePolicy):
         trajectory_mask,
         rgb_obs,
         pcd_obs,
+        mask_obs,
         instruction,
         curr_gripper
     ):
@@ -210,7 +204,7 @@ class DiffuserActor(BaseImagePolicy):
 
         # Prepare inputs
         fixed_inputs = self.encode_inputs(
-            rgb_obs, pcd_obs, instruction, curr_gripper
+            rgb_obs, pcd_obs, mask_obs,instruction, curr_gripper
         )
 
         # Condition on start-end pose
@@ -230,7 +224,7 @@ class DiffuserActor(BaseImagePolicy):
         )
 
         # Normalize quaternion
-        if self._rotation_parametrization != '6D':
+        if self._rotation_parametrization == 'quat':
             trajectory[:, :, 3:7] = normalise_quat(trajectory[:, :, 3:7])
         # Back to quaternion
         trajectory = self.unconvert_rot(trajectory)
@@ -254,43 +248,57 @@ class DiffuserActor(BaseImagePolicy):
 
     def convert_rot(self, signal):
         signal[..., 3:7] = normalise_quat(signal[..., 3:7])
-        if self._rotation_parametrization == '6D':
+        if self._rotation_parametrization != 'quat':
             # The following code expects wxyz quaternion format!
             if self._quaternion_format == 'xyzw':
                 signal[..., 3:7] = signal[..., (6, 3, 4, 5)]
-            rot = quaternion_to_matrix(signal[..., 3:7])
+            rot_mat = quaternion_to_matrix(signal[..., 3:7])
             res = signal[..., 7:] if signal.size(-1) > 7 else None
-            if len(rot.shape) == 4:
-                B, L, D1, D2 = rot.shape
-                rot = rot.reshape(B * L, D1, D2)
-                rot_6d = get_ortho6d_from_rotation_matrix(rot)
-                rot_6d = rot_6d.reshape(B, L, 6)
-            else:
-                rot_6d = get_ortho6d_from_rotation_matrix(rot)
-            signal = torch.cat([signal[..., :3], rot_6d], dim=-1)
+            if self._rotation_parametrization == '6D':
+                if len(rot_mat.shape) == 4:
+                    B, L, D1, D2 = rot_mat.shape
+                    rot_mat = rot_mat.reshape(B * L, D1, D2)
+                    rot_6d = get_ortho6d_from_rotation_matrix(rot_mat)
+                    rot_6d = rot_6d.reshape(B, L, 6)
+                else:
+                    rot_6d = get_ortho6d_from_rotation_matrix(rot_mat)
+                signal = torch.cat([signal[..., :3], rot_6d], dim=-1)
+            if self._rotation_parametrization == 'so3':
+                signal = torch.cat([signal[..., :3], rot_mat.flatten(-2)], dim=-1)
             if res is not None:
                 signal = torch.cat((signal, res), -1)
-        return signal
+            return signal
 
     def unconvert_rot(self, signal):
-        if self._rotation_parametrization == '6D':
-            res = signal[..., 9:] if signal.size(-1) > 9 else None
-            if len(signal.shape) == 3:
-                B, L, _ = signal.shape
-                rot = signal[..., 3:9].reshape(B * L, 6)
-                mat = compute_rotation_matrix_from_ortho6d(rot)
-                quat = matrix_to_quaternion(mat)
-                quat = quat.reshape(B, L, 4)
-            else:
-                rot = signal[..., 3:9]
-                mat = compute_rotation_matrix_from_ortho6d(rot)
-                quat = matrix_to_quaternion(mat)
+        if self._rotation_parametrization != 'quat':
+            if self._rotation_parametrization == '6D':
+                res = signal[..., 9:] if signal.size(-1) > 9 else None
+                if len(signal.shape) == 3:
+                    B, L, _ = signal.shape
+                    rot = signal[..., 3:9].reshape(B * L, 6)
+                    mat = compute_rotation_matrix_from_ortho6d(rot)
+                    quat = matrix_to_quaternion(mat)
+                    quat = quat.reshape(B, L, 4)
+                else:
+                    rot = signal[..., 3:9]
+                    mat = compute_rotation_matrix_from_ortho6d(rot)
+                    quat = matrix_to_quaternion(mat)
+            if self._rotation_parametrization == 'so3':
+                res = signal[..., 12:] if signal.size(-1) > 12 else None
+                if len(signal.shape) == 3:
+                    B, L, _ = signal.shape
+                    rot = signal[..., 3:12].reshape(B, L, 3, 3)
+                    quat = matrix_to_quaternion(rot)
+                else:
+                    rot = signal[..., 3:12].reshape(-1, 3, 3)
+                    quat = matrix_to_quaternion(rot)
             signal = torch.cat([signal[..., :3], quat], dim=-1)
             if res is not None:
                 signal = torch.cat((signal, res), -1)
             # The above code handled wxyz quaternion format!
             if self._quaternion_format == 'xyzw':
                 signal[..., 3:7] = signal[..., (4, 5, 6, 3)]
+        
         return signal
 
     def convert2rel(self, pcd, curr_gripper):
@@ -308,6 +316,7 @@ class DiffuserActor(BaseImagePolicy):
         trajectory_mask,
         rgb_obs,
         pcd_obs,
+        mask_obs,
         instruction,
         curr_gripper,
         run_inference=False
@@ -340,6 +349,7 @@ class DiffuserActor(BaseImagePolicy):
                 trajectory_mask,
                 rgb_obs,
                 pcd_obs,
+                mask_obs,
                 instruction,
                 curr_gripper
             )
@@ -359,53 +369,37 @@ class DiffuserActor(BaseImagePolicy):
 
         # Prepare inputs
         fixed_inputs = self.encode_inputs(
-            rgb_obs, pcd_obs, instruction, curr_gripper
+            rgb_obs, pcd_obs, mask_obs, instruction, curr_gripper
         )
 
-        # Condition on start-end pose
-        cond_data = torch.zeros_like(gt_trajectory)
-        cond_mask = torch.zeros_like(cond_data)
-        cond_mask = cond_mask.bool()
-
-        # Sample noise
-        noise = torch.randn(gt_trajectory.shape, device=gt_trajectory.device)
-
-        # Sample a random timestep
-        timesteps = torch.randint(
-            0,
-            self.position_noise_scheduler.config.num_train_timesteps,
-            (len(noise),), device=noise.device
-        ).long()
+        B, L, _ = gt_trajectory.shape
+        p1 = gt_trajectory[:, :, :3]
+        r1 = gt_trajectory[:, :, 3:12].reshape(B, L, 3, 3)
 
         # Add noise to the clean trajectories
-        pos = self.position_noise_scheduler.add_noise(
-            gt_trajectory[..., :3], noise[..., :3],
-            timesteps
-        )
-        rot = self.rotation_noise_scheduler.add_noise(
-            gt_trajectory[..., 3:9], noise[..., 3:9],
-            timesteps
-        )
-        noisy_trajectory = torch.cat((pos, rot), -1)
-        noisy_trajectory[cond_mask] = cond_data[cond_mask]  # condition
-        assert not cond_mask.any()
+        r0, p0 = self.generate_random_initial_pose(batch=gt_trajectory.shape[0], trj_steps=gt_trajectory.shape[1])
+        r0, p0 = r0.to(gt_trajectory.device), p0.to(gt_trajectory.device)
+        time = torch.rand(gt_trajectory.shape[0], device=gt_trajectory.device)
+        rt, pt = self.flow_at_t(r0, p0, r1, p1, time)
+        dr, dp = self.vector_field_at_t(r1,p1,rt,pt,time)
 
         # Predict the noise residual
+        trajectory_t = torch.cat([pt, rt.flatten(-2)], -1)
         pred = self.policy_forward_pass(
-            noisy_trajectory, timesteps, fixed_inputs
+            trajectory_t, time, fixed_inputs
         )
 
         # Compute loss
         total_loss = 0
         for layer_pred in pred:
-            trans = layer_pred[..., :3]
-            rot = layer_pred[..., 3:9]
+            rot = layer_pred[..., :3]
+            trans = layer_pred[..., 3:6]
             loss = (
-                30 * F.l1_loss(trans, noise[..., :3], reduction='mean')
-                + 10 * F.l1_loss(rot, noise[..., 3:9], reduction='mean')
+                30 * F.mse_loss(trans, dp, reduction='mean') + 
+                + 10 * F.mse_loss(rot, dr, reduction='mean')
             )
             if torch.numel(gt_openess) > 0:
-                openess = layer_pred[..., 9:]
+                openess = layer_pred[..., 6:7]
                 loss += F.binary_cross_entropy_with_logits(openess, gt_openess)
             total_loss = total_loss + loss
         return total_loss
@@ -417,6 +411,7 @@ class DiffuserActor(BaseImagePolicy):
             trajectory_mask=trajectory_mask,
             rgb_obs=obs_dict['rgb'],
             pcd_obs=obs_dict['pcd'],
+            mask_obs=obs_dict['mask'],
             instruction=None,
             curr_gripper=obs_dict['curr_gripper'],
             run_inference=True,
@@ -439,6 +434,7 @@ class DiffuserActor(BaseImagePolicy):
             trajectory_mask=None,
             rgb_obs=batch['obs']['rgb'],
             pcd_obs=batch['obs']['pcd'],
+            mask_obs=batch['obs']['mask'],
             instruction=None,
             curr_gripper=batch['obs']['curr_gripper'],
             run_inference=False,
@@ -484,19 +480,26 @@ class DiffusionHead(nn.Module):
                  embedding_dim=60,
                  num_attn_heads=8,
                  use_instruction=False,
-                 rotation_parametrization='quat',
+                 rotation_parametrization='so3',
                  nhist=3,
                  lang_enhanced=False):
         super().__init__()
         self.use_instruction = use_instruction
         self.lang_enhanced = lang_enhanced
         if '6D' in rotation_parametrization:
-            rotation_dim = 6  # continuous 6D
+            rotation_out_dim = 6  # continuous 6D
+            rotation_in_dim = 6
+        elif 'quat' in rotation_parametrization:
+            rotation_out_dim = 4  # quaternion
+            rotation_in_dim = 6
+        elif 'so3' in rotation_parametrization:
+            rotation_out_dim = 3
+            rotation_in_dim = 9
         else:
-            rotation_dim = 4  # quaternion
+            raise ValueError(f"Unknown rotation parametrization: {rotation_parametrization}")
 
         # Encoders
-        self.traj_encoder = nn.Linear(9, embedding_dim)
+        self.traj_encoder = nn.Linear(3+rotation_in_dim, embedding_dim)
         self.relative_pe_layer = RotaryPositionEncoding3D(embedding_dim)
         self.time_emb = nn.Sequential(
             SinusoidalPosEmb(embedding_dim),
@@ -554,7 +557,7 @@ class DiffusionHead(nn.Module):
         self.rotation_predictor = nn.Sequential(
             nn.Linear(embedding_dim, embedding_dim),
             nn.ReLU(),
-            nn.Linear(embedding_dim, rotation_dim)
+            nn.Linear(embedding_dim, rotation_out_dim)
         )
 
         # 2. Position
@@ -750,7 +753,7 @@ def test():
     nhist = 3
     image_size = (256, 256)
 
-    model = DiffuserActor(
+    model = DiffuserActorFLowMatching(
         backbone="clip",
         image_size=(256, 256),
         embedding_dim=192,
@@ -758,9 +761,9 @@ def test():
         use_instruction=False,
         fps_subsampling_factor=5,
         gripper_loc_bounds=[[-1, -1, -1], [1, 1, 1]],
-        rotation_parametrization='6D',
+        rotation_parametrization='so3',
         quaternion_format='xyzw',
-        diffusion_timesteps=100,
+        num_inference_steps=100,
         nhist=nhist,
         nhorizon=horizon,
         relative=False,
@@ -779,8 +782,9 @@ def test():
             'act_ic': torch.randn(1, horizon)
         },
         'obs': {
-            'rgb': torch.randn(1, 2, 3, 256, 256),
-            'pcd': torch.randn(1, 2, 3, 256, 256),
+            'rgb': torch.randn(1, 2, 3, 128, 128),
+            'pcd': torch.randn(1, 2, 3, 128, 128),
+            'mask': (torch.randn(1, 2, 1, 128, 128) > 0).bool(),
             'curr_gripper': torch.randn(1, nhist, 3+4+2)
         }
     }

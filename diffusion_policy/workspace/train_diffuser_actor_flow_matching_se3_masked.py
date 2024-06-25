@@ -166,8 +166,7 @@ class TrainingWorkspace(BaseWorkspace):
                     with tqdm.tqdm(train_dataloader, desc=f"Training epoch {self.epoch}",
                                 leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
                         for batch_idx, batch in enumerate(tepoch):
-                            # device transfer
-                                            
+                            # device transfer                                            
                             batch = dict_apply(batch, lambda x: x.to(device, dtype, non_blocking=True))
                             if train_sampling_batch is None:
                                 train_sampling_batch = batch

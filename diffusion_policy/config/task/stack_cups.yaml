@@ -21,7 +21,7 @@ shape_meta: &shape_meta
     shape: [4,4]
 
 gripper_loc_bounds: 
-  _target_: diffusion_policy.common.common_utils.get_gripper_loc_bounds
+  _target_: diffusion_policy.common.rlbench_util.get_gripper_loc_bounds
   path: "/home/felix/Workspace/diffusion_policy_felix/diffusion_policy/tasks/18_peract_tasks_location_bounds.json"
   buffer: 0.0
   task: ${name}

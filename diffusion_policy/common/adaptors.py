@@ -131,6 +131,8 @@ class Robomimic2Peract(ModuleAttrMixin):
             if 'pcd' in data['obs']:
                 new_obs['pcd'] = data['obs']['pcd']
             new_data['obs'] = new_obs
+            if 'mask' in data['obs']:
+                new_data['obs']['mask'] = data['obs']['mask']
 
         return new_data
     

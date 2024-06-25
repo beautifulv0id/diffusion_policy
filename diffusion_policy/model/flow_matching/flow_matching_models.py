@@ -2,6 +2,26 @@ import torch
 import torch.nn as nn
 from diffusion_policy.model.common.so3_util import log_map,exp_map,random_so3
 
+class EuclideanFlow(nn.Module):
+
+    def __init__(self):
+        super(EuclideanFlow, self).__init__()
+
+    def generate_random_noise(self, batch=1, trj_steps=1, dim=9, device='cpu'):
+        noise = torch.randn(batch, trj_steps, dim, device=device)
+        return noise
+    
+    def flow_at_t(self, x0, x1, t):
+        xt = x0 * (1. - t[:, None,None]) + x1 * t[:, None,None]
+        return xt
+    
+    def vector_field_at_t(self, x1, xt, t):
+        d_x = (x1 - xt) / torch.clip((1 - t[:, None, None]), 0.001, 1.)
+        return d_x
+    
+    def step(self, _x, d_x, dt, time=None):
+        x = _x + d_x * dt
+        return x
 
 class RectifiedLinearFlow(nn.Module):
 
@@ -328,18 +348,78 @@ def test(model, num_inference_steps=4):
     print('Mean Error in rotation: {}, Max Error in rotation {}'.format(errot_v.mean(), errot_v.max()))
     plt.show()
 
+def test_euclidean_flow():
+    from tqdm import tqdm
+    from diffusion_policy.model.common.position_encodings import SinusoidalPosEmb
+    num_inference_steps = 100
+    device = 'cuda'
+    flow_model = EuclideanFlow().to(device)
 
+    class LinearPredictor(nn.Module):
+        def __init__(self, time_embed_dim=64):
+            super(LinearPredictor, self).__init__()
+            self.predictor = nn.Sequential(nn.Linear(9+time_embed_dim, 512), nn.ReLU(), nn.Linear(512, 512), nn.ReLU(), nn.Linear(512, 9))
+            self.time_embedder = SinusoidalPosEmb(time_embed_dim)
+        def forward(self, x, t):
+            t = self.time_embedder(t)[:,None,:]
+            x = torch.cat((x, t), dim=-1)
+            return self.predictor(x)
+        
+        
+    predictor = LinearPredictor()
+    predictor.to(device)
+    optimizer = torch.optim.Adam(predictor.parameters(), lr=1e-4)
+    B = 1
+    n_action_steps = 1
+    rot = random_so3(B * n_action_steps).reshape(B, n_action_steps, 3, 3)
+    rot_6D = rot[...,:2].reshape(B, n_action_steps, 6)
+    pos = torch.randn(B, n_action_steps, 3)
+    x1 = torch.cat((pos, rot_6D), dim=-1).reshape(B, n_action_steps, 9)
+
+    x1_stacked = x1.repeat(2048, 1, 1)
+    x1_stacked = x1_stacked.to(device)
+    print(x1_stacked.shape)
+
+    with tqdm(range(10000)) as epoch:
+        for i in epoch:
+            optimizer.zero_grad()
+            x0 = flow_model.generate_random_noise(batch=2048, trj_steps=n_action_steps, dim=9, device=device)
+            time = torch.rand(2048, device=device)
+            xt = flow_model.flow_at_t(x0, x1_stacked, time)
+            d_x = flow_model.vector_field_at_t(x1_stacked, xt, time)
+            d_x_pred = predictor(xt, time)
+            loss = torch.functional.F.mse_loss(d_x, d_x_pred)
+            loss.backward()
+            optimizer.step()
+            epoch.set_postfix(loss=loss.cpu().item())
+
+    
+    with torch.no_grad():
+        dt = 1 / num_inference_steps
+        x0 = flow_model.generate_random_noise(batch=B, trj_steps=n_action_steps, dim=9).to(device)
+        xt = x0
+        for s in range(0, num_inference_steps):
+            time = s * dt * torch.ones(B).to(device)
+            d_x = predictor(xt, time)
+            xt = flow_model.step(xt, d_x, dt, time)
+
+    print(torch.norm(xt.cpu() - x1))
+    print(xt.cpu())
+    print(x1)
+    print('Done')
+    
 
 if __name__ == '__main__':
+    test_euclidean_flow()
 
-    model = RectifiedLinearFlow()
-    num_inference_steps = 4
-    test(model, num_inference_steps=num_inference_steps)
+    # model = RectifiedLinearFlow()
+    # num_inference_steps = 4
+    # test(model, num_inference_steps=num_inference_steps)
 
-    model = LinearAttractorFlow(t_switch=.75)
-    num_inference_steps = 4
-    test(model, num_inference_steps=num_inference_steps)
+    # model = LinearAttractorFlow(t_switch=.75)
+    # num_inference_steps = 4
+    # test(model, num_inference_steps=num_inference_steps)
 
-    model = SE3LinearAttractorFlow(t_switch=.75)
-    num_inference_steps = 4
-    test(model, num_inference_steps=num_inference_steps)
+    # model = SE3LinearAttractorFlow(t_switch=.75)
+    # num_inference_steps = 4
+    # test(model, num_inference_steps=num_inference_steps)

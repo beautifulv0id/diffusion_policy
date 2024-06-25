@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import numpy as np
 import einops
 from diffusion_policy.policy.base_image_policy import BaseImagePolicy
-from diffusion_policy.common.common_utils import action_from_trajectory_gripper_open_ignore_collision
+from diffusion_policy.common.rlbench_util import action_from_trajectory_gripper_open_ignore_collision
 from diffusion_policy.common.pytorch_util import dict_apply
 from typing import Union, Dict, Optional
 from scipy.spatial.transform import Rotation 

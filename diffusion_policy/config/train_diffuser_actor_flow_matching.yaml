@@ -4,11 +4,11 @@ defaults:
   - task: open_drawer_image
 
 
-name: train_diffuser_actor
-_target_: diffusion_policy.workspace.train_diffuser_actor.TrainingWorkspace
+name: train_diffuser_actor_flow_matching
+_target_: diffusion_policy.workspace.train_diffuser_actor_flow_matching.TrainingWorkspace
 
 task_name: ${task.name}
-exp_name: "train_diffuser_actor"
+exp_name: "train_diffuser_actor_flow_matching"
 n_obs_steps: &n_obs_steps 3
 use_keyframe_actions: True
 horizon: ${eval:'1 if ${use_keyframe_actions} else 16'}
@@ -18,7 +18,7 @@ num_episodes: 1
 mode: train
 
 policy:
-  _target_: diffusion_policy.policy.diffuser_actor.DiffuserActor
+  _target_: diffusion_policy.policy.diffuser_actor_flow_matching_se3.DiffuserActorFLowMatching
   backbone: "clip"
   image_size: [128, 128]
   embedding_dim: ${embedding_dim}
@@ -26,23 +26,23 @@ policy:
   use_instruction: false
   fps_subsampling_factor: 5
   gripper_loc_bounds: ${task.gripper_loc_bounds}
-  rotation_parametrization: '6D'
+  rotation_parametrization: 'so3'
   quaternion_format: 'wxyz' #'xyzw'
-  diffusion_timesteps: 100
+  num_inference_steps: 100
   nhist: ${n_obs_steps}
   nhorizon: ${horizon}
   relative: 0
   lang_enhanced: false
 
 dataloader:
-  batch_size: 2
+  batch_size: 4
   num_workers: 1
   shuffle: True
   pin_memory: True
   persistent_workers: False
 
 val_dataloader:
-  batch_size: 2
+  batch_size: 4
   num_workers: 0
   shuffle: False
   pin_memory: False

@@ -12,7 +12,7 @@ from diffusion_policy.model.diffusion.naive_film_se3 import NaiveFILMSE3Diffusio
 from diffusion_policy.model.diffusion.mask_generator import LowdimMaskGenerator
 from diffusion_policy.model.vision.transformer_lowdim_obs_relative_encoder import TransformerLowdimObsRelativeEncoder
 from diffusion_policy.common.robomimic_config_util import get_robomimic_config
-from diffusion_policy.common.common_utils import action_from_trajectory_gripper_open_ignore_collision
+from diffusion_policy.common.rlbench_util import action_from_trajectory_gripper_open_ignore_collision
 from robomimic.algo.algo import PolicyAlgo
 import robomimic.utils.obs_utils as ObsUtils
 from diffusion_policy.common.pytorch_util import dict_apply

@@ -9,7 +9,9 @@ from pyrep.const import ObjectType
 from rlbench.backend.task import Task
 from pyrep.objects.dummy import Dummy
 from pyrep.objects.vision_sensor import VisionSensor
-from diffusion_policy.common.common_utils import create_rlbench_action
+from diffusion_policy.common.rlbench_util import create_rlbench_action
+from diffusion_policy.common.rlbench_util import _keypoint_discovery
+
 
 
 ALL_RLBENCH_TASKS = [
@@ -51,86 +53,6 @@ def load_episodes() -> Dict[str, Any]:
     with open(Path(__file__).parent.parent / "data_preprocessing/episodes.json") as fid:
         return json.load(fid)
 
-
-# Identify way-point in each RLBench Demo
-def _is_stopped(demo, i, obs, stopped_buffer, delta):
-    next_is_not_final = i == (len(demo) - 2)
-    # gripper_state_no_change = i < (len(demo) - 2) and (
-    #     obs.gripper_open == demo[i + 1].gripper_open
-    #     and obs.gripper_open == demo[i - 1].gripper_open
-    #     and demo[i - 2].gripper_open == demo[i - 1].gripper_open
-    # )
-    gripper_state_no_change = i < (len(demo) - 2) and (
-        obs.gripper_open == demo[i + 1].gripper_open
-        and obs.gripper_open == demo[max(0, i - 1)].gripper_open
-        and demo[max(0, i - 2)].gripper_open == demo[max(0, i - 1)].gripper_open
-    )
-    small_delta = np.allclose(obs.joint_velocities, 0, atol=delta)
-    stopped = (
-        stopped_buffer <= 0
-        and small_delta
-        and (not next_is_not_final)
-        and gripper_state_no_change
-    )
-    return stopped
-
-
-def keypoint_discovery(demo: Demo, stopping_delta=0.1) -> List[int]:
-    episode_keypoints = []
-    prev_gripper_open = demo[0].gripper_open
-    stopped_buffer = 0
-
-    for i, obs in enumerate(demo):
-        stopped = _is_stopped(demo, i, obs, stopped_buffer, stopping_delta)
-        stopped_buffer = 4 if stopped else stopped_buffer - 1
-        # If change in gripper, or end of episode.
-        last = i == (len(demo) - 1)
-        if i != 0 and (obs.gripper_open != prev_gripper_open or last or stopped):
-            episode_keypoints.append(i)
-        prev_gripper_open = obs.gripper_open
-
-    if (
-        len(episode_keypoints) > 1
-        and (episode_keypoints[-1] - 1) == episode_keypoints[-2]
-    ):
-        episode_keypoints.pop(-2)
-
-    return episode_keypoints
-
-
-def transform(obs_dict, scale_size=(0.75, 1.25), augmentation=False):
-    apply_depth = len(obs_dict.get("depth", [])) > 0
-    apply_pc = len(obs_dict["pc"]) > 0
-    num_cams = len(obs_dict["rgb"])
-
-    obs_rgb = []
-    obs_depth = []
-    obs_pc = []
-    for i in range(num_cams):
-        rgb = torch.tensor(obs_dict["rgb"][i]).float().permute(2, 0, 1)
-        depth = (
-            torch.tensor(obs_dict["depth"][i]).float().permute(2, 0, 1)
-            if apply_depth
-            else None
-        )
-        pc = (
-            torch.tensor(obs_dict["pc"][i]).float().permute(2, 0, 1) if apply_pc else None
-        )
-
-        if augmentation:
-            raise NotImplementedError()  # Deprecated
-
-        # normalise to [-1, 1]
-        rgb = rgb / 255.0
-        rgb = 2 * (rgb - 0.5)
-
-        obs_rgb += [rgb.float()]
-        if depth is not None:
-            obs_depth += [depth.float()]
-        if pc is not None:
-            obs_pc += [pc.float()]
-    obs = obs_rgb + obs_depth + obs_pc
-    return torch.cat(obs, dim=0)
 
 class Mover:
 
@@ -230,7 +152,7 @@ class Actioner:
             :param demo: fetch each demo and save key-point observations
             :return: a list of obs and action
         """
-        key_frame = keypoint_discovery(demo)
+        key_frame = _keypoint_discovery(demo)
 
         action_ls = []
         trajectory_ls = []
@@ -264,6 +186,11 @@ class Actioner:
         """
         # self._task_id = self._task_id.to(self.device)
         pred_dict = self._policy.predict_action(obs)
+    
+        if "rlbench_action" in pred_dict:
+            return {
+                "rlbench_action": pred_dict["rlbench_action"],
+            }
         rot = pred_dict['action']['act_r']
         pos = pred_dict['action']['act_p']
         gripper_open = pred_dict['action'].get('act_gr', None)
@@ -272,7 +199,7 @@ class Actioner:
         rlbench_action = rlbench_action[0]
         out = {
             "rlbench_action": rlbench_action.detach().cpu().numpy(),
-            "action": pred_dict['action'],
+            # "action": pred_dict['action'],
         }
         return out
 
@@ -311,7 +238,7 @@ def get_actions_from_demo(demo):
         :param demo: fetch each demo and save key-point observations
         :return: a list of obs and action
     """
-    key_frame = keypoint_discovery(demo)
+    key_frame = _keypoint_discovery(demo)
 
     action_ls = []
     for i in range(len(key_frame)):

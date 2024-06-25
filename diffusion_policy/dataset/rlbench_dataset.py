@@ -6,8 +6,25 @@ from diffusion_policy.common.pytorch_util import dict_apply, print_dict
 from diffusion_policy.dataset.base_dataset import BaseImageDataset, BaseLowdimDataset
 from pathlib import Path
 from rlbench.utils import get_stored_demos
-from diffusion_policy.common.launch_utils import create_dataset
+from diffusion_policy.common.rlbench_util import create_dataset, create_obs_config, create_obs_state_plot, CAMERAS
 from rlbench.observation_config import ObservationConfig, CameraConfig
+from PIL import Image
+
+MASK_IDS_PERACT = {
+    # "open_drawer" : [0, 200] # from 0 to 200
+    "open_drawer" : [305, 319], #[65473, 65487],
+    "put_item_in_drawer" : [65473, 65487],
+}
+
+MASK_IDS = {
+    "open_drawer" : [704, 718],
+}
+
+# peract: 
+# open_drawer: 65474 65477 65479 65484 65486
+
+# mine:
+# open_drawer: 105 107 112 114 117
 
 
 class RLBenchDataset():
@@ -23,38 +40,30 @@ class RLBenchDataset():
             use_keyframe_actions=True,
             demo_augmentation_every_n=1,
             obs_augmentation_every_n=10,
-            use_keyframe_observations=False,
+            use_keyframe_observations=True,
             use_low_dim_pcd=False,
             use_pcd = False,
             use_rgb = False,
             use_depth = False,
             use_mask = False,
+            object_ids = None,
             use_pose = False,
             use_low_dim_state=False,
             val_ratio=0.0,
             ):
 
         root = Path(root)
-        # TODO: change this
-        camera_config = CameraConfig(rgb=use_rgb, depth=use_depth, mask=use_mask, point_cloud=use_pcd, image_size=image_size)
-        camera_off_config = CameraConfig()
-        camera_off_config.set_all(False)
-        use_cameras = any([use_rgb, use_depth, use_mask, use_pcd])
-        if not use_cameras:
-            cameras = []
-        all_cameras = set(['left_shoulder', 'right_shoulder', 'overhead', 'wrist', 'front'])
-        unused_cameras = all_cameras - set(cameras)
-        camera_config_map = {k: camera_config for k in cameras}
-        camera_config_map.update({k: camera_off_config for k in unused_cameras})
-        obs_config = ObservationConfig(
-            left_shoulder_camera=camera_config_map['left_shoulder'],
-            right_shoulder_camera=camera_config_map['right_shoulder'],
-            overhead_camera=camera_config_map['overhead'],
-            wrist_camera=camera_config_map['wrist'],
-            front_camera=camera_config_map['front'],
-            gripper_joint_positions=True,
-            task_low_dim_state=True,
-        )
+        obs_config = create_obs_config(image_size=image_size,
+                                       apply_rgb=use_rgb,
+                                       apply_depth=use_depth,
+                                       apply_pc=use_pcd,
+                                       apply_mask=use_mask,
+                                       apply_cameras=cameras)
+
+        # if use_mask:
+        #     mask_ids = MASK_IDS[task_name]
+        # else:
+        #     mask_ids = None
 
         demos = get_stored_demos(amount = num_episodes,
                                      image_paths = False,
@@ -85,7 +94,8 @@ class RLBenchDataset():
                                         use_rgb=use_rgb,
                                         use_pose=use_pose,
                                         # use_depth=use_depth,
-                                        # use_mask=use_mask,
+                                        use_mask=use_mask,
+                                        mask_ids=object_ids,
                                         horizon=horizon,
                                         use_keyframe_actions=use_keyframe_actions,
                                         use_low_dim_state=use_low_dim_state,
@@ -101,7 +111,8 @@ class RLBenchDataset():
                                         use_rgb=use_rgb,
                                         use_pose=use_pose,
                                         # use_depth=use_depth,
-                                        # use_mask=use_mask,
+                                        use_mask=use_mask,
+                                        mask_ids=object_ids,
                                         horizon=horizon,
                                         use_keyframe_actions=use_keyframe_actions,
                                         use_low_dim_state=use_low_dim_state,
@@ -115,6 +126,13 @@ class RLBenchDataset():
         self.val_demo_begin = val_demo_begin
         self.n_obs = n_obs_steps
 
+        batch = self[40]
+        batch = dict_apply(batch, lambda x: x.unsqueeze(0))
+        img = create_obs_state_plot(batch['obs'], use_mask=True)
+        img = img.transpose(1,2,0)[:,:,:3]
+        img = Image.fromarray(img)
+        img.save("/home/felix/Workspace/diffusion_policy_felix/run_obs_img.png")
+
     def __len__(self) -> int:
         return len(self.dataset)
     
@@ -124,20 +142,31 @@ class RLBenchDataset():
             "action": data["action"],
             "obs": dict()
         }
-        this_data['obs']['robot0_eef_rot'] = data['obs'].pop('robot0_eef_rot')
-        this_data['obs']['robot0_eef_pos'] = data['obs'].pop('robot0_eef_pos')
-        this_data['obs']['curr_gripper'] = data['obs'].pop('curr_gripper')
+        this_data['obs']['robot0_eef_rot'] = data['obs']['robot0_eef_rot']
+        this_data['obs']['robot0_eef_pos'] = data['obs']['robot0_eef_pos']
+        this_data['obs']['curr_gripper'] = data['obs']['curr_gripper']
 
         if 'low_dim_state' in data['obs']:
-            this_data['obs']['low_dim_state'] = data['obs'].pop('low_dim_state')
+            this_data['obs']['low_dim_state'] = data['obs']['low_dim_state']
 
         if 'rgb' in data['obs']:
-            this_data['obs']['rgb'] = data['obs'].pop('rgb')[-1]
+            this_data['obs']['rgb'] = data['obs']['rgb'][-1]
         
         if 'pcd' in data['obs']:   
-            this_data['obs']['pcd'] = data['obs'].pop('pcd')[-1]
+            this_data['obs']['pcd'] = data['obs']['pcd'][-1]
+
+        if 'mask' in data['obs']:
+            this_data['obs']['mask'] = data['obs']['mask'][-1]
 
         for k in data['obs'].keys():
+            if 'robot0_eef_rot' in k or \
+            'robot0_eef_pos' in k or \
+            'curr_gripper' in k or \
+            'low_dim_state' in k or \
+            'rgb' in k or \
+            'pcd' in k or \
+            'mask' in k:
+                continue
             this_data['obs'][k] = data['obs'][k][-1:]
 
         torch_data = dict_apply(this_data, torch.from_numpy)
@@ -212,7 +241,8 @@ class RLBenchImageDataset(RLBenchDataset, BaseImageDataset):
                     demo_augmentation_every_n=1,
                     obs_augmentation_every_n=10,
                     use_low_dim_state=False,
-                    val_ratio=0.0):
+                    val_ratio=0.0,
+                    **kwargs):
         super().__init__(root=root,
                         task_name=task_name,
                         num_episodes=num_episodes,
@@ -232,32 +262,79 @@ class RLBenchImageDataset(RLBenchDataset, BaseImageDataset):
                         use_mask=use_mask,
                         use_pose=False,
                         use_low_dim_state=use_low_dim_state,
-                        val_ratio=val_ratio)
+                        val_ratio=val_ratio,
+                        **kwargs)
+        
+    
 
 def test():
     from pytorch3d.transforms import quaternion_to_matrix, matrix_to_quaternion, standardize_quaternion
-    from diffusion_policy.common.common_utils import create_rlbench_action
+    from diffusion_policy.common.rlbench_util import create_rlbench_action
+    from diffusion_policy.env.rlbench.rlbench_env import visualize
+    from PIL import Image
 
     dataset = RLBenchImageDataset(
-        root = "/home/felix/Workspace/diffusion_policy_felix/data/image",
+        root = "/home/felix/Workspace/diffusion_policy_felix/data/images/",
         task_name="open_drawer",
         num_episodes=1,
         variation=0,
-        cameras = ['left_shoulder', 'right_shoulder', 'overhead', 'wrist', 'front'],
-        image_size=(128, 128),
+        cameras = ['left_shoulder', 'right_shoulder', 'front', 'overhead', 'wrist'],
+        image_size=(256, 256),
         n_obs_steps=3,
-        horizon=16,
-        use_keyframe_actions=False,
-        use_keyframe_observations=False,
-        demo_augmentation_every_n=10,
+        horizon=1,
+        use_mask=True,
+        use_keyframe_actions=True,
+        use_keyframe_observations=True,
+        demo_augmentation_every_n=1,
         obs_augmentation_every_n=10,
         use_low_dim_state=False,
+        object_ids = MASK_IDS['open_drawer'],
         val_ratio=0
     )
-    data = dataset[2]
+
+    data = dataset[60]
     batch = dict_apply(data, lambda x: x.unsqueeze(0))
     print("Dataset length:", len(dataset))
     print_dict(batch)
+    print(len(dataset))
+
+    img = create_obs_state_plot(batch['obs'], use_mask=True)
+    img = img.transpose(1,2,0)[:,:,:3]
+    img = Image.fromarray(img)
+    img.save("obs_img.png")
+    return
+
+    # visualize(batch['obs'], batch['action'])
+    import matplotlib.pyplot as plt
+    def save_img(img, mask):
+        img = torch.where(mask, img, torch.zeros_like(img))
+        plt.imshow(img.permute(1,2,0))
+        plt.savefig(f"img_{view}.png")
+
+    view = 2
+
+    # obj_ids = batch['obs']['mask'][0,view].int()
+    # mask = torch.zeros_like(obj_ids)
+    # # for id in MASK_IDS['open_drawer']:
+    # #     mask = mask | (obj_ids == id)
+    # mask = (obj_ids > 100) & (obj_ids < 280)
+    # mask = mask.bool()
+    img = batch['obs']['rgb'][0,view]
+    mask = batch['obs']['mask'][0,view]
+    save_img(img, mask)
+
+
+
+    # def save_mask_for_id(mask, rgb, id):
+    #     import matplotlib.pyplot as plt
+    #     mask = mask.int() == id
+    #     img = torch.where(mask, rgb, torch.zeros_like(rgb))
+    #     plt.imshow(img.permute(1,2,0))
+    #     plt.savefig(f"mask_{id}.png")
+
+    # for i in torch.unique(batch['obs']['mask'][0].int()):
+    #     save_mask_for_id(batch['obs']['mask'][0,view], batch['obs']['rgb'][0,view], i)
+
     
     return 
 

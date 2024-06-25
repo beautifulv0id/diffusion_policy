@@ -2,7 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import einops
-from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
+from diffusion_policy.model.common.so3_util import log_map, normal_so3
+from diffusion_policy.model.flow_matching.flow_matching_models import EuclideanFlow
 
 from diffusion_policy.model.common.layers import (
     FFWRelativeSelfAttentionModule,
@@ -29,7 +30,7 @@ from diffusion_policy.policy.base_image_policy import BaseImagePolicy
 from typing import Dict
 
 
-class DiffuserActor(BaseImagePolicy):
+class DiffuserActorFLowMatching(BaseImagePolicy):
 
     def __init__(self,
                  backbone="clip",
@@ -41,7 +42,7 @@ class DiffuserActor(BaseImagePolicy):
                  gripper_loc_bounds=None,
                  rotation_parametrization='6D',
                  quaternion_format='xyzw',
-                 diffusion_timesteps=100,
+                 num_inference_steps=100,
                  nhist=3,
                  nhorizon=16,
                  relative=False,
@@ -67,19 +68,18 @@ class DiffuserActor(BaseImagePolicy):
             nhist=nhist,
             lang_enhanced=lang_enhanced
         )
-        self.position_noise_scheduler = DDPMScheduler(
-            num_train_timesteps=diffusion_timesteps,
-            beta_schedule="scaled_linear",
-            prediction_type="epsilon"
-        )
-        self.rotation_noise_scheduler = DDPMScheduler(
-            num_train_timesteps=diffusion_timesteps,
-            beta_schedule="squaredcos_cap_v2",
-            prediction_type="epsilon"
-        )
-        self.n_steps = diffusion_timesteps
+
+        self.n_steps = num_inference_steps
         self.nhorizon = nhorizon
         self.gripper_loc_bounds = torch.tensor(gripper_loc_bounds)
+
+        ## Flow Model ##
+        # self.t_switch = t_switch
+        self.flow = EuclideanFlow()
+        self.generate_random_noise = self.flow.generate_random_noise
+        self.flow_at_t = self.flow.flow_at_t
+        self.vector_field_at_t = self.flow.vector_field_at_t
+        self.step = self.flow.step
 
     def encode_inputs(self, visible_rgb, visible_pcd, instruction,
                       curr_gripper):
@@ -146,48 +146,26 @@ class DiffuserActor(BaseImagePolicy):
         )
 
     def conditional_sample(self, condition_data, condition_mask, fixed_inputs):
-        self.position_noise_scheduler.set_timesteps(self.n_steps)
-        self.rotation_noise_scheduler.set_timesteps(self.n_steps)
-
         # Random trajectory, conditioned on start-end
-        noise = torch.randn(
-            size=condition_data.shape,
-            dtype=condition_data.dtype,
-            device=condition_data.device
-        )
-        # Noisy condition data
-        noise_t = torch.ones(
-            (len(condition_data),), device=condition_data.device
-        ).long().mul(self.position_noise_scheduler.timesteps[0])
-        noise_pos = self.position_noise_scheduler.add_noise(
-            condition_data[..., :3], noise[..., :3], noise_t
-        )
-        noise_rot = self.rotation_noise_scheduler.add_noise(
-            condition_data[..., 3:9], noise[..., 3:9], noise_t
-        )
-        noisy_condition_data = torch.cat((noise_pos, noise_rot), -1)
-        trajectory = torch.where(
-            condition_mask, noisy_condition_data, noise
-        )
-
+        B, L, D = condition_data.size()
+        device = condition_data.device
         # Iterative denoising
-        timesteps = self.position_noise_scheduler.timesteps
-        for t in timesteps:
-            out = self.policy_forward_pass(
-                trajectory,
-                t * torch.ones(len(trajectory)).to(trajectory.device).long(),
-                fixed_inputs
-            )
-            out = out[-1]  # keep only last layer's output
-            pos = self.position_noise_scheduler.step(
-                out[..., :3], t, trajectory[..., :3]
-            ).prev_sample
-            rot = self.rotation_noise_scheduler.step(
-                out[..., 3:9], t, trajectory[..., 3:9]
-            ).prev_sample
-            trajectory = torch.cat((pos, rot), -1)
+        with torch.no_grad():
+            dt = 1.0 / self.n_steps
+            x0 = self.generate_random_noise(batch=B, trj_steps=L, dim=D, device=device)
+            xt = x0
+            for s in range(0, self.n_steps):
+                time = s*dt*torch.ones_like(xt[:, 0, 0], device=device)
+                out = self.policy_forward_pass(
+                    xt,
+                    time,
+                    fixed_inputs
+                )
+                out = out[-1] # keep only last layer's output
+                d_x = out[...,:9]  
+                xt = self.step(xt, d_x, dt)
 
-        trajectory = torch.cat((trajectory, out[..., 9:]), -1)
+        trajectory = torch.cat([xt, out[..., 9:]], -1)
 
         return trajectory
 
@@ -362,37 +340,15 @@ class DiffuserActor(BaseImagePolicy):
             rgb_obs, pcd_obs, instruction, curr_gripper
         )
 
-        # Condition on start-end pose
-        cond_data = torch.zeros_like(gt_trajectory)
-        cond_mask = torch.zeros_like(cond_data)
-        cond_mask = cond_mask.bool()
-
-        # Sample noise
-        noise = torch.randn(gt_trajectory.shape, device=gt_trajectory.device)
-
-        # Sample a random timestep
-        timesteps = torch.randint(
-            0,
-            self.position_noise_scheduler.config.num_train_timesteps,
-            (len(noise),), device=noise.device
-        ).long()
-
         # Add noise to the clean trajectories
-        pos = self.position_noise_scheduler.add_noise(
-            gt_trajectory[..., :3], noise[..., :3],
-            timesteps
-        )
-        rot = self.rotation_noise_scheduler.add_noise(
-            gt_trajectory[..., 3:9], noise[..., 3:9],
-            timesteps
-        )
-        noisy_trajectory = torch.cat((pos, rot), -1)
-        noisy_trajectory[cond_mask] = cond_data[cond_mask]  # condition
-        assert not cond_mask.any()
+        x0 = self.generate_random_noise(batch=gt_trajectory.shape[0], trj_steps=gt_trajectory.shape[1], device=gt_trajectory.device)
+        time = torch.rand(gt_trajectory.shape[0], device=gt_trajectory.device)
+        xt = self.flow_at_t(x0, gt_trajectory, time)
+        d_x = self.vector_field_at_t(gt_trajectory, xt, time)
 
         # Predict the noise residual
         pred = self.policy_forward_pass(
-            noisy_trajectory, timesteps, fixed_inputs
+            x0, time, fixed_inputs
         )
 
         # Compute loss
@@ -401,8 +357,8 @@ class DiffuserActor(BaseImagePolicy):
             trans = layer_pred[..., :3]
             rot = layer_pred[..., 3:9]
             loss = (
-                30 * F.l1_loss(trans, noise[..., :3], reduction='mean')
-                + 10 * F.l1_loss(rot, noise[..., 3:9], reduction='mean')
+                30 * F.mse_loss(trans, d_x[..., :3], reduction='mean') + 
+                + 10 * F.mse_loss(rot, d_x[..., 3:9], reduction='mean')
             )
             if torch.numel(gt_openess) > 0:
                 openess = layer_pred[..., 9:]
@@ -750,7 +706,7 @@ def test():
     nhist = 3
     image_size = (256, 256)
 
-    model = DiffuserActor(
+    model = DiffuserActorFLowMatching(
         backbone="clip",
         image_size=(256, 256),
         embedding_dim=192,
@@ -760,7 +716,7 @@ def test():
         gripper_loc_bounds=[[-1, -1, -1], [1, 1, 1]],
         rotation_parametrization='6D',
         quaternion_format='xyzw',
-        diffusion_timesteps=100,
+        num_inference_steps=100,
         nhist=nhist,
         nhorizon=horizon,
         relative=False,

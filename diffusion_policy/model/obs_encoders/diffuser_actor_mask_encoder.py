@@ -51,16 +51,16 @@ class DiffuserActorEncoder(ModuleAttrMixin):
             # at 1/4 resolution (32x32)
             # Fine RGB features are the 1st layer of the feature pyramid
             # at 1/2 resolution (64x64)
-            self.coarse_feature_map = ['res2', 'res1', 'res1', 'res1']
+            self.coarse_feature_map = ['res3', 'res2']
             self.feature_map_pyramid = self.coarse_feature_map
-            self.downscaling_factor_pyramid = [4, 2, 2, 2]
+            self.downscaling_factor_pyramid = [8, 4]
         elif self.image_size == (256, 256):
             # Coarse RGB features are the 3rd layer of the feature pyramid
             # at 1/8 resolution (32x32)
             # Fine RGB features are the 1st layer of the feature pyramid
             # at 1/2 resolution (128x128)
-            self.feature_map_pyramid = ['res3', 'res1', 'res1', 'res1']
-            self.downscaling_factor_pyramid = [8, 2, 2, 2]
+            self.feature_map_pyramid = ['res3', 'res2', 'res2']
+            self.downscaling_factor_pyramid = [8, 4, 4]
 
         # 3D relative positional embeddings
         self.relative_pe_layer = RotaryPositionEncoding3D(embedding_dim)
@@ -161,6 +161,68 @@ class DiffuserActorEncoder(ModuleAttrMixin):
         )
 
         return gripper_feats, gripper_pos
+    
+    def mask_out_features_pcd(self, mask, rgb_features, pcd, n_min=0, n_max=1000000):
+        """
+        Masks out features and point cloud data based on a given mask.
+
+        Args:
+            mask (torch.Tensor): (B, ncam, 1, H, W)
+            rgb_features (torch.Tensor): (B, ncam, F, H, W)
+            pcd (torch.Tensor): (B, ncam, 3, H, W)
+            n_min (int, optional): 
+            n_max (int, optional): 
+        Returns:
+            rgb_features (torch.Tensor): (B, N, F)
+            pcd (torch.Tensor): (B, N, 3)
+        """
+        this_mask = mask.clone()
+        b, v, _, h, w = rgb_features.shape
+        this_mask = F.interpolate(this_mask.flatten(0, 1).float(), (h, w), mode='nearest').bool().reshape(b, v, h, w)
+
+        B = this_mask.size(0)
+        n = this_mask.view(B, -1).count_nonzero(dim=-1)
+        n_sample = torch.clamp(n.max(), n_min, n_max)
+        diff = n_sample - n
+        neg_inds = (~this_mask.view(B, -1)).nonzero(as_tuple=True)[1]
+        neg_indsn = (~this_mask.view(B, -1)).count_nonzero(dim=-1)
+        neg_indsn = torch.cat([torch.zeros(1, device=mask.device), torch.cumsum(neg_indsn, dim=0)])
+        idx0 = torch.tensor([], device=mask.device, dtype=torch.int)
+        idx1 = torch.tensor([], device=mask.device, dtype=torch.int)
+        for i in range(B):
+            offset = diff[i].int().item()
+            if offset > 0:
+                neg_i = neg_indsn[i].int().item()
+                idx0 = torch.cat((idx0, torch.full((offset,), i, device=mask.device)))
+                idx1 = torch.cat((idx1, neg_inds[neg_i:neg_i + offset]))
+        fill_inds = (idx0, idx1)
+        this_mask.view(B, -1)[fill_inds] = True
+        idx = this_mask.view(B, -1).nonzero(as_tuple=True)
+
+        pos_inds = this_mask.view(B, -1).nonzero(as_tuple=True)[1]
+        pos_indsn = this_mask.view(B, -1).count_nonzero(dim=-1)
+        pos_indsn = torch.cat([torch.zeros(1, device=mask.device), torch.cumsum(pos_indsn, dim=0)])
+        idx0 = torch.tensor([], device=mask.device, dtype=torch.int)
+        idx1 = torch.tensor([], device=mask.device, dtype=torch.int)
+        for i in range(B):
+            offset = -diff[i].int().item()
+            if offset > 0:
+                pos_i = pos_indsn[i].int().item()
+                idx0 = torch.cat((idx0, torch.full((offset,), i, device=mask.device)))
+                idx1 = torch.cat((idx1, pos_inds[pos_i:pos_i + offset]))
+
+        fill_inds = (idx0, idx1)
+        this_mask.view(B, -1)[fill_inds] = False
+        idx = this_mask.view(B, -1).nonzero(as_tuple=True)
+
+        rgb_features = einops.rearrange(rgb_features, 'b v c h w -> b (v h w) c')
+        rgb_features = rgb_features[idx].reshape(B, n_sample, -1)
+
+        pcd = pcd[idx].reshape(B, n_sample, -1)
+
+        return rgb_features, pcd
+
+
 
     def encode_images(self, rgb, pcd):
         """
@@ -216,28 +278,7 @@ class DiffuserActorEncoder(ModuleAttrMixin):
             pcd_pyramid.append(pcd_i)
 
         return rgb_feats_pyramid, pcd_pyramid
-    
-    def mask_image_features_pcd(self, mask, image_features, pcd):
-        """
-        Mask image features and point cloud data based on a binary mask.
 
-        Args:
-            - mask: (B, N, H, W)
-            - image_features: (B, N, D, H, W)
-            - pcd: (B, N, 3, H, W)
-
-        Returns:
-            - masked_image_features: (B, M, D)
-            - masked_pcd: (B, M, 3)
-        """
-        B, N, D, H, W = image_features.shape
-        mask = F.interpolate(
-                mask,
-                (H, W),
-                mode='bilinear'
-            )
-        
-        return masked_image_features, masked_pcd
     def encode_instruction(self, instruction):
         """
         Compute language features/pos embeddings on top of CLIP features.

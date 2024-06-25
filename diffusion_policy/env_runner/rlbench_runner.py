@@ -32,6 +32,7 @@ class RLBenchRunner(BaseImageRunner):
                 apply_rgb=False,
                 apply_depth=False,
                 apply_pc=False,
+                apply_mask=False,
                 apply_cameras=("left_shoulder", "right_shoulder", "wrist", "front"),
                 apply_low_dim_pcd=False,
                 apply_pose=False,
@@ -52,6 +53,7 @@ class RLBenchRunner(BaseImageRunner):
                             apply_cameras=apply_cameras,
                             apply_low_dim_pcd=apply_low_dim_pcd,
                             apply_pose=apply_pose,
+                            apply_mask=apply_mask,
                             collision_checking=collision_checking,
                             obs_history_from_planner=obs_history_from_planner,
                             obs_history_augmentation_every_n=obs_history_augmentation_every_n,
@@ -96,13 +98,27 @@ class RLBenchRunner(BaseImageRunner):
 
         name = mode + "_success_rate"
         log_data[name] = log_data.pop("success_rate")
-        rgbs_ls = log_data.pop("rgbs_ls")
+        rgbs_ls = log_data.pop("rgbs")
+        obs_state_ls = log_data.pop("obs_state")
+        mask_ls = log_data.pop("mask")
 
         for i, rgbs in enumerate(rgbs_ls):
             if rgbs is not None:
                 sim_video = wandb.Video(rgbs, fps=30, format="mp4")
                 name = f"video/{mode}_{self.task_str}_{i}"
                 log_data[name] = sim_video
+        
+        for i, obs_state in enumerate(obs_state_ls):
+            if obs_state is not None:
+                sim_plots = wandb.Video(obs_state, fps=1, format="mp4")
+                name = f"video/{mode}_{self.task_str}_obs_state_{i}"
+                log_data[name] = sim_plots
+        
+        for i, mask in enumerate(mask_ls):
+            if mask is not None:
+                sim_plots = wandb.Video(mask, fps=1, format="mp4")
+                name = f"video/{mode}_{self.task_str}_mask_{i}"
+                log_data[name] = sim_plots
         
         return log_data
     
@@ -123,7 +139,7 @@ def test():
 
     OmegaConf.resolve(cfg)
     policy : SE3FlowMatchingPolicy = hydra.utils.instantiate(cfg.policy)
-    checkpoint_path = "/home/felix/Workspace/diffusion_policy_felix/data/outputs/2024.06.18/14.22.14_train_flow_matching_unet_lowdim_feat_pcd_open_drawer/checkpoints/latest.ckpt"
+    checkpoint_path = "/home/felix/Workspace/diffusion_policy_felix/data/outputs/2024.06.22/10.42.07_train_diffuser_actor_flow_matching_se3_masked_open_drawer_image/checkpoints/epoch=5700-train_loss=0.220.ckpt"
     checkpoint = torch.load(checkpoint_path)
 
     dataset = hydra.utils.instantiate(cfg.task.dataset)
@@ -150,7 +166,7 @@ def test():
 def test_replay():
     import torch
     import numpy as np
-    from diffusion_policy.env.rlbench.rlbench_utils import Actioner, task_file_to_task_class, keypoint_discovery, get_actions_from_demo
+    from diffusion_policy.env.rlbench.rlbench_utils import Actioner, task_file_to_task_class, get_actions_from_demo
     from rlbench.utils import get_stored_demos
     import os
 
