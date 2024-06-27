@@ -3,7 +3,6 @@ defaults:
   - _self_
   - task: open_drawer_image
 
-
 name: train_diffuser_actor
 _target_: diffusion_policy.workspace.train_diffuser_actor.TrainingWorkspace
 
@@ -20,7 +19,7 @@ mode: train
 policy:
   _target_: diffusion_policy.policy.diffuser_actor.DiffuserActor
   backbone: "clip"
-  image_size: [128, 128]
+  image_size: ${task.image_size}
   embedding_dim: ${embedding_dim}
   num_vis_ins_attn_layers: 2
   use_instruction: false
@@ -35,14 +34,14 @@ policy:
   lang_enhanced: false
 
 dataloader:
-  batch_size: 2
-  num_workers: 1
+  batch_size: 32
+  num_workers: 0
   shuffle: True
-  pin_memory: True
+  pin_memory: False
   persistent_workers: False
 
 val_dataloader:
-  batch_size: 2
+  batch_size: 32
   num_workers: 0
   shuffle: False
   pin_memory: False

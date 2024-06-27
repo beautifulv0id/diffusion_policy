@@ -8,6 +8,7 @@ from diffusion_policy.env.rlbench.rlbench_env import RLBenchEnv
 from diffusion_policy.env.rlbench.rlbench_utils import task_file_to_task_class
 from typing import List
 import wandb
+from diffusion_policy.env_runner.rlbench_utils import _evaluate_task_on_demos
 
 class RLBenchRunner(BaseImageRunner):
     def __init__(self, 
@@ -16,7 +17,7 @@ class RLBenchRunner(BaseImageRunner):
                 task_str: str,
                 max_steps: int,
                 max_episodes: int,
-                max_rtt_tries: int = 1,
+                max_rrt_tries: int = 1,
                 n_action_steps: int = 1,
                 demo_tries: int = 1,
                 headless: bool = True,
@@ -65,7 +66,7 @@ class RLBenchRunner(BaseImageRunner):
         self.env = env
         self.action_dim = action_dim
         self.max_steps = max_steps
-        self.max_rtt_tries = max_rtt_tries
+        self.max_rrt_tries = max_rrt_tries
         self.demo_tries = demo_tries
         self.n_train_vis = n_train_vis
         self.n_val_vis = n_val_vis
@@ -82,19 +83,16 @@ class RLBenchRunner(BaseImageRunner):
         if len(demos) == 0:
             return {}
         
-        task_type = task_file_to_task_class(self.task_str)
-        task = self.env.env.get_task(task_type)
-        log_data = self.env._evaluate_task_on_demos(
-            demos=demos[:self.max_episodes],
-            task_str=self.task_str,
-            task=task,
-            max_steps=self.max_steps,
-            actioner=actioner,
-            max_rtt_tries=self.max_rtt_tries,
-            demo_tries=self.demo_tries,
-            verbose=True,
-            n_visualize=n_vis,
-        )
+        log_data = _evaluate_task_on_demos(env=self.env,
+                                task_str=self.task_str,
+                                demos=demos[:self.max_episodes],
+                                max_steps=self.max_steps,
+                                actioner=actioner,
+                                max_rrt_tries=self.max_rrt_tries,
+                                demo_tries=self.demo_tries,
+                                n_visualize=n_vis,
+                                verbose=True)
+
 
         name = mode + "_success_rate"
         log_data[name] = log_data.pop("success_rate")

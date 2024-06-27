@@ -1,4 +1,6 @@
 if __name__ == "__main__":
+    import multiprocessing as mp
+    mp.set_start_method('spawn')
     import sys
     import os
     import pathlib
@@ -53,6 +55,17 @@ class TrainingWorkspace(BaseWorkspace):
 
     def run(self):
         cfg = copy.deepcopy(self.cfg)
+
+        if cfg.training.debug:
+            cfg.training.num_epochs = 2
+            cfg.training.max_train_steps = 3
+            cfg.training.max_val_steps = 3
+            cfg.training.rollout_every = 1
+            cfg.training.checkpoint_every = 1
+            cfg.training.val_every = 1
+            cfg.training.sample_every = 1
+            cfg.task.env_runner.max_episodes = 1
+            cfg.task.env_runner.max_steps = 2
 
         # resume training
         if cfg.training.resume:
@@ -139,15 +152,6 @@ class TrainingWorkspace(BaseWorkspace):
         # save batch for sampling
         train_sampling_batch = None
         val_sampling_batch = None
-
-        if cfg.training.debug:
-            cfg.training.num_epochs = 2
-            cfg.training.max_train_steps = 3
-            cfg.training.max_val_steps = 3
-            cfg.training.rollout_every = 1
-            cfg.training.checkpoint_every = 1
-            cfg.training.val_every = 1
-            cfg.training.sample_every = 1
 
         # training loop
         log_path = os.path.join(self.output_dir, 'logs.json.txt')

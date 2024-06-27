@@ -1,7 +1,9 @@
 if __name__ == "__main__":
+    import multiprocessing
     import sys
     import os
     import pathlib
+    multiprocessing.set_start_method('spawn')
 
     ROOT_DIR = str(pathlib.Path(__file__).parent.parent.parent)
     sys.path.append(ROOT_DIR)
@@ -114,11 +116,11 @@ class TrainingWorkspace(BaseWorkspace):
             config=OmegaConf.to_container(cfg, resolve=True),
             **cfg.logging
         )
-        # wandb.config.update(
-        #     {
-        #         "output_dir": self.output_dir,
-        #     }
-        # )
+        wandb.config.update(
+            {
+                "output_dir": self.output_dir,
+            }
+        )
 
         # configure checkpoint
         topk_manager = TopKCheckpointManager(
@@ -148,6 +150,9 @@ class TrainingWorkspace(BaseWorkspace):
             cfg.training.checkpoint_every = 1
             cfg.training.val_every = 1
             cfg.training.sample_every = 1
+            image = wandb.Image(dataset.get_data_visualization(), caption="Dataset")
+            wandb.log({"dataset": image})
+
 
         # training loop
         log_path = os.path.join(self.output_dir, 'logs.json.txt')
@@ -257,10 +262,10 @@ class TrainingWorkspace(BaseWorkspace):
 
 
                     ## Run Experiment related Validation ## #TODO: as far as I see, this currently has no effect!
-                    if (self.epoch % cfg.training.model_evaluation_every) == 0:
-                        evaluation_log = self.model.evaluate(train_sampling_batch)
-                        # log all
-                        step_log.update(evaluation_log)
+                    # if (self.epoch % cfg.training.model_evaluation_every) == 0:
+                    #     evaluation_log = self.model.evaluate(train_sampling_batch)
+                    #     # log all
+                    #     step_log.update(evaluation_log)
 
                     # sample on a training batch
                     if (self.epoch % cfg.training.sample_every) == 0:

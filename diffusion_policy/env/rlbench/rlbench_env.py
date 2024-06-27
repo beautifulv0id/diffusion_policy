@@ -12,6 +12,7 @@ from typing import List
 from diffusion_policy.common.pytorch_util import dict_apply, compare_dicts
 from rlbench.environment import Environment
 from rlbench.demo import Demo
+from rlbench.backend.observation import Observation
 from rlbench.task_environment import TaskEnvironment
 from rlbench.action_modes.action_mode import MoveArmThenGripper
 from rlbench.action_modes.gripper_action_modes import Discrete
@@ -26,13 +27,13 @@ from pyrep.const import PrimitiveShape
 from pyrep.objects.vision_sensor import VisionSensor
 import wandb.sdk.data_types.video as wv
 from diffusion_policy.env.rlbench.rlbench_utils import CircleCameraMotion
-from diffusion_policy.common.rlbench_util import extract_obs, create_obs_config, _keypoint_discovery, create_obs_state_plot
+from diffusion_policy.common.rlbench_util import extract_obs, create_obs_config, _keypoint_discovery, create_obs_state_plot, CAMERAS
 from diffusion_policy.common.pytorch_util import print_dict
 from diffusion_policy.common.visualization_se3 import visualize_frames, visualize_poses_and_actions
 from diffusion_policy.model.common.so3_util import quaternion_to_matrix
 
 MASK_IDS = {
-    "open_drawer" : [79, 95] # from 0 to 200
+    "open_drawer" : [79, 103] # from 0 to 200
 }
 
 import psutil
@@ -180,6 +181,7 @@ class RLBenchEnv:
         n_action_steps=1,
         render_image_size=[128, 128],
         adaptor=None,
+        **kwargs
     ):
 
         # setup required inputs
@@ -195,7 +197,7 @@ class RLBenchEnv:
 
         # setup RLBench environments
         self.obs_config = create_obs_config(
-            image_size, apply_rgb, apply_depth, apply_pc, apply_mask, apply_cameras
+            image_size, apply_rgb, apply_depth, apply_pc, apply_mask, apply_cameras, **kwargs
         )
 
         self.action_mode = MoveArmThenGripper(
@@ -328,8 +330,11 @@ class RLBenchEnv:
 
     def store_obs(self, obs):
         self.obs_history.append(obs)
-        self.obs_history = self.obs_history[::-1][:self.obs_history_augmentation_every_n * self.n_obs_steps][::-1]
-
+        if self.obs_history_from_planner:
+            self.obs_history = self.obs_history[::-1][:self.obs_history_augmentation_every_n * self.n_obs_steps][::-1]
+        else:
+            self.obs_history = self.obs_history[-self.n_obs_steps:]
+            
     def get_obs_history(self):
         if self.obs_history_from_planner:
             observations = self.obs_history[::-1][::self.obs_history_augmentation_every_n][::-1][-self.n_obs_steps:]
@@ -493,7 +498,7 @@ class RLBenchEnv:
                     variation=variation,
                     num_demos=num_demos // len(task_variations) + 1,
                     actioner=actioner,
-                    max_rtt_tries=max_tries,
+                    max_rrt_tries=max_tries,
                     verbose=verbose,
                 )
             )
@@ -519,7 +524,7 @@ class RLBenchEnv:
         variation: int,
         num_demos: int,
         actioner: Actioner,
-        max_rtt_tries: int = 1,
+        max_rrt_tries: int = 1,
         demo_tries: int = 1,
         verbose: bool = False,
     ):
@@ -542,7 +547,7 @@ class RLBenchEnv:
             demos=demos,
             max_steps=max_steps,
             actioner=actioner,
-            max_rtt_tries=max_rtt_tries,
+            max_rrt_tries=max_rrt_tries,
             demo_tries=demo_tries,
             verbose=verbose,
         )
@@ -698,7 +703,8 @@ class RLBenchEnv:
             valid = True
 
         self.env.shutdown()
-        return success_rate, demo_valid, demo_success_rates    
+        return success_rate, demo_valid, demo_success_rates   
+
 
     @torch.no_grad()
     def _evaluate_task_on_demos(self,       
@@ -707,7 +713,7 @@ class RLBenchEnv:
                                 demos: List[Demo],  
                                 max_steps: int,
                                 actioner: Actioner,
-                                max_rtt_tries: int = 1,
+                                max_rrt_tries: int = 1,
                                 demo_tries: int = 1,
                                 n_visualize: int = 0,
                                 verbose: bool = False):
@@ -752,7 +758,7 @@ class RLBenchEnv:
 
                 actioner.load_episode(task_str, demo.variation_number)
 
-                move = Mover(task, max_tries=max_rtt_tries)
+                move = Mover(task, max_tries=max_rrt_tries)
                 reward = 0.0
                 max_reward = 0.0
 
@@ -822,7 +828,7 @@ class RLBenchEnv:
                         obs_state.append(create_obs_state_plot(obs_dict))
                         obs_state.append(create_obs_state_plot(obs_dict, use_mask=True))
                         if self.apply_mask:
-                            logging_masks.append(masks[-1,-1].cpu().numpy().transpose(1, 2, 0))
+                            logging_masks.append((masks[-1,-1].int() * 255).expand(3, -1, -1).cpu().numpy().astype(np.uint8))
 
                     obs_dict = dict_apply(obs_dict, lambda x: x.type(dtype).to(device))
 
@@ -947,7 +953,8 @@ def write_video(rgbs, path, fps=30):
         writer.append_data(image.transpose(1, 2, 0))
     writer.close()
 
-def test_replay():
+def test_replay(result_dict=None):
+    print("Testing replay")
     TASK = "open_drawer_image"
     n_obs_steps = 3
     overrides = [
@@ -999,34 +1006,50 @@ def test_replay():
         action_dim=8,
     )
 
-    logs = env._evaluate_task_on_demos(
+    log_data = env._evaluate_task_on_demos(
         task_str=task_str,
         task=task,
         max_steps=3,
         demos=demos,
         actioner=replay_actioner,
-        max_rtt_tries=1,
+        max_rrt_tries=1,
         demo_tries=1,
         n_visualize=1,
         verbose=True,
     )
 
-    if len(logs["rgbs_ls"]) > 0:
-        write_video(logs["rgbs_ls"][0], "/home/felix/Workspace/diffusion_policy_felix/data/videos/rlbench_runner_test.mp4")
+    rgbs_ls = log_data.pop("rgbs")
+    obs_state_ls = log_data.pop("obs_state")
+    mask_ls = log_data.pop("mask")
+
+    if len(rgbs_ls) > 0:
+        write_video(rgbs_ls[0], "/home/felix/Workspace/diffusion_policy_felix/data/videos/rlbench_runner_test.mp4")
     else:
         print("No rgbs")
 
-    if len(logs["obs_plots_ls"]) > 0:
-        print("obs_plots_ls", len(logs["obs_plots_ls"][0]))
-        write_video(logs["obs_plots_ls"][0], "/home/felix/Workspace/diffusion_policy_felix/data/videos/rlbench_runner_obs_test.mp4", fps=1)
+    if len(obs_state_ls) > 0:
+        print("obs_state_ls", len(obs_state_ls[0]))
+        write_video(obs_state_ls[0], "/home/felix/Workspace/diffusion_policy_felix/data/videos/rlbench_runner_obs_state_test.mp4", fps=1)
     else:
         print("No obs")
+    
+    if len(mask_ls) > 0:
+        write_video(mask_ls[0], "/home/felix/Workspace/diffusion_policy_felix/data/videos/rlbench_runner_mask_test.mp4")
+    else:
+        print("No masks")
+
+    if result_dict is not None:
+        result_dict = {
+            "rgbs" : rgbs_ls,
+            "obs_state" : obs_state_ls,
+            "mask" : mask_ls,
+        }
 
 def test():    
     TASK = "open_drawer_image"
-    checkpoint_path = "/home/felix/Workspace/diffusion_policy_felix/data/outputs/2024.06.22/10.42.03_train_diffuser_actor_flow_matching_se3_masked_open_drawer_image/checkpoints/epoch=0900-train_loss=1.108.ckpt"
+    checkpoint_path = "/home/felix/Workspace/diffusion_policy_felix/data/outputs/2024.06.26/16.05.55_train_diffuser_actor_open_drawer_image/checkpoints/epoch=0900-train_loss=3.907.ckpt"
 
-    cfg = load_config("train_diffuser_actor_flow_matching_se3_masked.yaml", [f"task={TASK}"])
+    cfg = load_config("train_diffuser_actor.yaml", [f"task={TASK}"])
     dataset = load_dataset(cfg)
     policy : SE3FlowMatchingPolicy = load_model(checkpoint_path, cfg)
 
@@ -1057,7 +1080,7 @@ def test():
         max_steps=5,
         demos=dataset.demos[:1],
         actioner=actioner,
-        max_rtt_tries=3,
+        max_rrt_tries=3,
         demo_tries=1,
         n_visualize=1,
         verbose=True,
@@ -1123,60 +1146,14 @@ def test_dataset_simulation_consitency():
 
     compare_dicts(sim_obs[0], sample0['obs'])
 
-def get_masks():
-    from diffusion_policy.common.rlbench_util import CAMERAS
-    from PIL import Image
-    TASK = "open_drawer_image"
-    n_obs_steps = 3
-    overrides = [
-        f"task={TASK}", 
-        f"n_obs_steps={n_obs_steps}",
-        "task.obs_history_from_planner=False",
-        "task.use_keyframe_observations=True",
-        ]
-
-    cfg = load_config("train_diffuser_actor_flow_matching_se3_masked.yaml", overrides)
-    ds = load_dataset(cfg)
-
-    env : RLBenchEnv = hydra.utils.instantiate(cfg.task.env_runner, render_image_size=[1280//2, 720//2], output_dir="").env
-
-    task_str = "open_drawer"
-    task_type = task_file_to_task_class(task_str)
-    task = env.env.get_task(task_type)
-    task.set_variation(0)
-
-    demos = env.get_demo(task_str, 0, episode_index=0)
-    def mask_to_rgb_handles(mask):
-                # mask should be (w, h)
-                r = mask % 256
-                g = (mask // 256) % 256
-                b = (mask // (256 * 256)) % 256
-                return np.stack([r, g, b], axis=2)
-    print("launching")
-    env.launch()
-    descriptions, observation = task.reset_to_demo(demos[0])
-    for camera in CAMERAS:
-        print(camera)
-        rgb = getattr(observation, f"{camera}_rgb")
-        if rgb is None:
-            continue
-        mask = getattr(observation, f"{camera}_mask").squeeze()
-        print(np.unique(mask))
-        mask = mask_to_rgb_handles(mask).astype(np.uint8)
-        mask = Image.fromarray(mask, mode="RGB")
-        mask.save(f"/home/felix/Workspace/diffusion_policy_felix/data/masks/{task_str}_{camera}_mask.png")
-        rgb = Image.fromarray(rgb)
-        rgb.save(f"/home/felix/Workspace/diffusion_policy_felix/data/masks/{task_str}_{camera}_rgb.png")
-    env.shutdown()
 
 if __name__ == "__main__":
     from diffusion_policy.policy.flow_matching_SE3_lowdim_policy import SE3FlowMatchingPolicy
     from diffusion_policy.common.pytorch_util import dict_apply
     import imageio.v2 as iio
-    from diffusion_policy.common.rlbench_util import create_robomimic_from_rlbench_action
 
-    get_masks()
     # test()
     # test_replay()
     # test_dataset_simulation_consitency()
+
     print("Done!")

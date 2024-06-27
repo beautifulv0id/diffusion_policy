@@ -64,7 +64,7 @@ env_runner:
   task_str: stack_blocks
   max_episodes: 3
   max_steps: ${eval:'50 if ${use_keyframe_actions} else 150'}
-  max_rtt_tries: 10
+  max_rrt_tries: 10
   demo_tries: 1
   n_train_vis: 3
   n_val_vis: 3
