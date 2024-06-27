@@ -7,7 +7,6 @@ from diffusion_policy.dataset.base_dataset import BaseImageDataset, BaseLowdimDa
 from pathlib import Path
 from rlbench.utils import get_stored_demos
 from diffusion_policy.common.rlbench_util import create_dataset, create_obs_config, create_obs_state_plot, CAMERAS
-from rlbench.observation_config import ObservationConfig, CameraConfig
 from PIL import Image
 
 MASK_IDS_PERACT = {
@@ -125,14 +124,33 @@ class RLBenchDataset():
         self.val_dataset = val_dataset
         self.val_demo_begin = val_demo_begin
         self.n_obs = n_obs_steps
+        self.use_rgb = use_rgb
+        self.use_mask = use_mask
 
-        batch = self[40]
-        batch = dict_apply(batch, lambda x: x.unsqueeze(0))
-        img = create_obs_state_plot(batch['obs'], use_mask=True)
-        img = img.transpose(1,2,0)[:,:,:3]
-        img = Image.fromarray(img)
-        img.save("/home/felix/Workspace/diffusion_policy_felix/run_obs_img.png")
 
+        # batch = self[40]
+        # batch = dict_apply(batch, lambda x: x.unsqueeze(0))
+        # img = create_obs_state_plot(batch['obs'], use_mask=True)
+        # img = img.transpose(1,2,0)[:,:,:3]
+        # img = Image.fromarray(img)
+        # img.save("/home/felix/Workspace/diffusion_policy_felix/run_obs_img.png")
+
+    def get_data_visualization(self, num_samples=16):
+        if not self.use_rgb:
+            return None
+        idxs = np.random.randint(0, len(self), size=num_samples)
+        imgs = []
+        for idx in idxs:
+                data = self[idx]
+                data = dict_apply(data, lambda x: x.unsqueeze(0))
+                img = create_obs_state_plot(data['obs'], use_mask=False)
+                imgs.append(torch.from_numpy(img[:3,:,:]))
+                if self.use_mask:
+                    img = create_obs_state_plot(data['obs'], use_mask=True)
+                    imgs.append(torch.from_numpy(img[:3,:,:])) 
+        imgs = torch.stack(imgs) / 255.0
+        return imgs
+    
     def __len__(self) -> int:
         return len(self.dataset)
     
@@ -282,26 +300,25 @@ def test():
         image_size=(256, 256),
         n_obs_steps=3,
         horizon=1,
-        use_mask=True,
+        use_mask=False,
         use_keyframe_actions=True,
         use_keyframe_observations=True,
-        demo_augmentation_every_n=1,
+        demo_augmentation_every_n=10,
         obs_augmentation_every_n=10,
         use_low_dim_state=False,
         object_ids = MASK_IDS['open_drawer'],
         val_ratio=0
     )
 
-    data = dataset[60]
+    data = dataset[9]
     batch = dict_apply(data, lambda x: x.unsqueeze(0))
     print("Dataset length:", len(dataset))
-    print_dict(batch)
+    print_dict(data)
     print(len(dataset))
 
-    img = create_obs_state_plot(batch['obs'], use_mask=True)
-    img = img.transpose(1,2,0)[:,:,:3]
-    img = Image.fromarray(img)
-    img.save("obs_img.png")
+    img = dataset.get_data_visualization(9)
+    img = make_grid(img, nrow=4)
+    save_image(img, "data_visualization.png")
     return
 
     # visualize(batch['obs'], batch['action'])
@@ -352,4 +369,5 @@ def test():
     visualize_poses_and_actions(state_rotation, state_translation, action_rotation, action_translation)
 
 if __name__ == "__main__":
+    from torchvision.utils import make_grid, save_image
     test()

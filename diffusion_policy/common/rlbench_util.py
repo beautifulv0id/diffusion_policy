@@ -20,7 +20,6 @@ import io
 import einops
 import torch.nn.functional as F
 
-
 REMOVE_KEYS = ['joint_velocities', 'joint_positions', 'joint_forces',
                'gripper_open', 'gripper_pose',
                'gripper_joint_positions', 'gripper_touch_forces']
@@ -289,6 +288,7 @@ def create_obs_state_plot(obs, action=None, downsample=1, use_mask=False):
     buf.seek(0)
     image = np.array(Image.open(buf)).transpose(2, 0, 1)
     buf.close()
+    plt.close()
 
     # Image.fromarray(image).save('obs.png')
     return image
@@ -416,20 +416,6 @@ def extract_obs(obs: Observation,
         obs_dict['pcd'] = np.stack([obs_dict.pop('%s_point_cloud' % camera) for camera in cameras])
     if use_mask:
         mask = np.stack([obs_dict.pop('%s_mask' % camera) for camera in cameras])
-        # for m in mask:
-            # m = m.transpose(1, 2, 0).squeeze()
-            # print("min", np.min(m), "max", np.max(m))
-            # def mask_to_rgb_handles(mask):
-            #     mask = mask.reshape(mask.shape[0], mask.shape[1])
-            #     # mask should be (w, h)
-            #     r = mask % 256
-            #     g = (mask // 256)
-            #     b = (mask // (256 * 256))
-            #     return np.stack([r, g, b], axis=2)
-            # m = mask_to_rgb_handles(m).astype(np.uint8)
-            # # print(np.unique(m))
-            # mask_img = Image.fromarray(m)
-            # mask_img.save(f"/home/felix/Workspace/diffusion_policy_felix/0.png")
         mask = (mask > mask_ids[0]) & (mask < mask_ids[1])
         obs_dict['mask'] = mask.astype(np.bool)
         # obs_dict['obj_inds'] = obj_ids # TODO: remove this
@@ -591,7 +577,7 @@ def create_obs_action(demo,
                   use_keyframe_observations=False,
                   horizon=1,
                   episode_keypoints=None, 
-                  curr_kp_idx=0, 
+                  next_kp_idx=0, 
                   cameras=[], 
                   n_obs=2, 
                   use_low_dim_pcd=False, 
@@ -605,16 +591,17 @@ def create_obs_action(demo,
                   obs_augmentation_every_n=10):
     if use_keyframe_observations:
         observations = []
-        for i in reversed(range(0, n_obs)):
+        for i in reversed(range(1, n_obs)):
             offset = i
-            if curr_obs_idx == episode_keypoints[curr_kp_idx - 1]:
+            if curr_obs_idx == episode_keypoints[next_kp_idx - 1]:
                 offset +=1
-            if curr_kp_idx - offset < 0:
+            if next_kp_idx - offset < 0:
                 observations.append(demo[0])
             else:
-                observations.append(demo[episode_keypoints[curr_kp_idx - offset]])
+                observations.append(demo[episode_keypoints[next_kp_idx - offset]])
     else:
-        observations = [demo[max(0, curr_obs_idx - i * obs_augmentation_every_n)] for i in reversed(range(n_obs))]
+        observations = [demo[max(0, curr_obs_idx - i * obs_augmentation_every_n)] for i in reversed(range(1, n_obs))]
+    observations.append(demo[curr_obs_idx])
     obs_dicts = None
     for _, obs in enumerate(observations):
         obs_dict = extract_obs(obs, cameras=cameras, use_rgb=use_rgb, use_mask=use_mask, use_pcd=use_pcd, use_depth=use_depth, use_low_dim_pcd=use_low_dim_pcd, use_pose=use_pose, use_low_dim_state=use_low_dim_state, mask_ids=mask_ids)
@@ -626,8 +613,8 @@ def create_obs_action(demo,
     obs_dicts = {k: np.stack(v) for k, v in obs_dicts.items()}
 
     if use_keyframe_actions:
-        obs_tp1 = demo[episode_keypoints[curr_kp_idx]]
-        obs_tm1 = demo[episode_keypoints[max(0,curr_kp_idx - 1)]]
+        obs_tp1 = demo[episode_keypoints[next_kp_idx]]
+        obs_tm1 = demo[episode_keypoints[max(0,next_kp_idx - 1)]]
         obs2action_list = [obs_tm1, obs_tp1]
     else:
         obs2action_list = [observations[-1]]
@@ -650,17 +637,14 @@ def create_dataset(demos, cameras, demo_augmentation_every_n=10,
     dataset = []
     episode_begin = [0]
 
-    if use_keyframe_observations:
-        demo_augmentation_every_n = 1
 
     for demo in demos:
         episode_keypoints = _keypoint_discovery(demo)
         episode_keypoints = [0] + episode_keypoints
         next_keypoint = 1
         i = 0
-        while i < len(demo)-1:
+        for i in range(0, len(demo)-1):
             if i % demo_augmentation_every_n:
-                i += 1
                 continue
             
             if use_keyframe_actions:
@@ -668,13 +652,12 @@ def create_dataset(demos, cameras, demo_augmentation_every_n=10,
                     next_keypoint += 1
                 if i >= episode_keypoints[-1]:
                     break            
-            data = create_obs_action(demo=demo, curr_obs_idx=i, episode_keypoints=episode_keypoints, curr_kp_idx=next_keypoint, cameras=cameras, n_obs=n_obs, use_keyframe_actions=use_keyframe_actions, horizon=horizon,
+            data = create_obs_action(demo=demo, curr_obs_idx=i, episode_keypoints=episode_keypoints, next_kp_idx=next_keypoint, cameras=cameras, n_obs=n_obs, use_keyframe_actions=use_keyframe_actions, horizon=horizon,
                                     use_low_dim_pcd=use_low_dim_pcd, use_pcd=use_pcd, use_rgb=use_rgb, use_pose=use_pose, use_depth=use_depth,
                                     use_mask=use_mask, use_low_dim_state=use_low_dim_state, obs_augmentation_every_n=obs_augmentation_every_n,
                                     use_keyframe_observations=use_keyframe_observations, mask_ids=mask_ids)
             dataset.append(data)
             episode_begin.append(episode_begin[-1])
-            i += 1
         episode_begin[-1] = len(dataset)
         for obs in demo:
             remove_cameras_from_obs(obs, cameras)
