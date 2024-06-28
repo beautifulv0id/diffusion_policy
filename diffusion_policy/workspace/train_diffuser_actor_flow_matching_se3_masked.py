@@ -34,7 +34,7 @@ class TrainingWorkspace(BaseWorkspace):
 
     def __init__(self, cfg: OmegaConf, output_dir=None):
         super().__init__(cfg, output_dir=output_dir)
-
+        
         # set seed
         seed = cfg.training.seed
         torch.manual_seed(seed)
@@ -56,6 +56,13 @@ class TrainingWorkspace(BaseWorkspace):
     def run(self):
         cfg = copy.deepcopy(self.cfg)
 
+        # resume training
+        if cfg.training.resume:
+            lastest_ckpt_path = self.get_checkpoint_path()
+            if lastest_ckpt_path.is_file():
+                print(f"Resuming from checkpoint {lastest_ckpt_path}")
+                self.load_checkpoint(path=lastest_ckpt_path)
+    
         if cfg.training.debug:
             cfg.training.num_epochs = 2
             cfg.training.max_train_steps = 3
@@ -66,13 +73,7 @@ class TrainingWorkspace(BaseWorkspace):
             cfg.training.sample_every = 1
             cfg.task.env_runner.max_episodes = 1
             cfg.task.env_runner.max_steps = 2
-
-        # resume training
-        if cfg.training.resume:
-            lastest_ckpt_path = self.get_checkpoint_path()
-            if lastest_ckpt_path.is_file():
-                print(f"Resuming from checkpoint {lastest_ckpt_path}")
-                self.load_checkpoint(path=lastest_ckpt_path)
+            cfg.task.dataset.num_episodes = 1
 
         # configure data
         dataset = hydra.utils.instantiate(cfg.task.dataset)
@@ -107,6 +108,7 @@ class TrainingWorkspace(BaseWorkspace):
 
         # configure env
         # env_runner: BaseImageRunner
+
         if 'env_runner' in cfg.task.keys():
             # do this in order to avoid loading the data again
             if ("real_robot" in cfg.task.keys()):
@@ -125,13 +127,12 @@ class TrainingWorkspace(BaseWorkspace):
         wandb_run = wandb.init(
             dir=str(self.output_dir),
             config=OmegaConf.to_container(cfg, resolve=True),
-            **cfg.logging
-        )
-        # wandb.config.update(
-        #     {
-        #         "output_dir": self.output_dir,
-        #     }
-        # )
+            **cfg.logging)
+
+        if cfg.training.debug:
+            image = wandb.Image(dataset.get_data_visualization(), caption="Dataset")
+            wandb.log({"dataset": image})
+        
 
         # configure checkpoint
         topk_manager = TopKCheckpointManager(

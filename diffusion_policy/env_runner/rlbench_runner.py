@@ -109,7 +109,6 @@ class RLBenchRunner(BaseImageRunner):
                 name = f"video/{mode}_{self.task_str}_{i}"
                 log_data[name] = sim_video
         
-        print(obs_state_ls)
         for i, obs_state in enumerate(obs_state_ls):
             if obs_state is not None:
                 obs_state = wandb.Video(obs_state, fps=1, format="mp4")

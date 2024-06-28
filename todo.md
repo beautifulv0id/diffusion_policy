@@ -1,7 +1,8 @@
 # TODOs 📔
+- 
+- [ ] switch to real part last in dataset
 - [ ] I made a change to AdaLN unsqueeze(1) -> unsqueeze(0) - ok??
 - [ ] re-add workspace normalization
-- [ ] why does FM + image not work?
 - [ ] data augmentation
   - [ ] world frame rotation/translation
 - [ ] CLIP/Dino feature analysis
@@ -9,11 +10,13 @@
 - [ ] steps to full RGB + affordance mask
   - [ ] take only features from a sphere around keypoints
     - [x] equip open drawer w/ meaningful keypoints
-- [ ] check encoder from 3D diffusion policy
-- [ ] maybe add visualization where gripper should be
-- [ ] try out self attention for feature pcd encoding/decoding
 - [ ] Install correct torchvision version according to https://pypi.org/project/torchvision/
   - error message: ```/home/felix/miniforge3/envs/robodiff/lib/python3.9/site-packages/torchvision/io/image.py:13: UserWarning: Failed to load image Python extension: libtorch_cuda_cu.so: cannot open shared object file: No such file or directory```
+- [ ] fix KILL event in env_runner (due to oom)
+  - [ ] convert data to zarr and load via replay buffer
+- [x] check encoder from 3D diffusion policy
+- [x] maybe add visualization where gripper should be
+- [x] try out self attention for feature pcd encoding/decoding
 - [x] add bce error for open gripper
 - [x] generate keypoint dataset + clean dataset
   - [ ] rename {task}_keypoint to {task}

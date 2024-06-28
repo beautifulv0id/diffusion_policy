@@ -32,9 +32,6 @@ from diffusion_policy.common.pytorch_util import print_dict
 from diffusion_policy.common.visualization_se3 import visualize_frames, visualize_poses_and_actions
 from diffusion_policy.model.common.so3_util import quaternion_to_matrix
 
-MASK_IDS = {
-    "open_drawer" : [79, 103] # from 0 to 200
-}
 
 import psutil
 import time
@@ -333,7 +330,7 @@ class RLBenchEnv:
         if self.obs_history_from_planner:
             self.obs_history = self.obs_history[::-1][:self.obs_history_augmentation_every_n * self.n_obs_steps][::-1]
         else:
-            self.obs_history = self.obs_history[-1:]
+            self.obs_history = self.obs_history[-1:self.n_obs_steps]
             
     def get_obs_history(self):
         if self.obs_history_from_planner:
@@ -726,11 +723,9 @@ class RLBenchEnv:
             "rgbs" : [],
             "obs_state" : [],
             "mask" : [],
-            "mask_ids" : [],
         }
         # obs_dicts_ls = []
         n_obs_steps = self.n_obs_steps
-        mask_ids = MASK_IDS[task_str]
 
         for demo_id, demo in enumerate(demos):
             if verbose:
@@ -774,8 +769,7 @@ class RLBenchEnv:
                                                 use_pcd=self.apply_pc, 
                                                 use_mask=self.apply_mask, 
                                                 use_pose=self.apply_poses, 
-                                                use_low_dim_state=True, 
-                                                mask_ids=mask_ids)
+                                                use_low_dim_state=True)
                         obs_dict = dict_apply(obs_dict, lambda x: torch.from_numpy(x).unsqueeze(0))
 
                         if self.apply_rgb:

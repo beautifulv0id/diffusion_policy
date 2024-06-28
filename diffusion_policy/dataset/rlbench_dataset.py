@@ -9,22 +9,6 @@ from rlbench.utils import get_stored_demos
 from diffusion_policy.common.rlbench_util import create_dataset, create_obs_config, create_obs_state_plot, CAMERAS
 from PIL import Image
 
-MASK_IDS_PERACT = {
-    # "open_drawer" : [0, 200] # from 0 to 200
-    "open_drawer" : [305, 319], #[65473, 65487],
-    "put_item_in_drawer" : [65473, 65487],
-}
-
-MASK_IDS = {
-    "open_drawer" : [704, 718],
-}
-
-# peract: 
-# open_drawer: 65474 65477 65479 65484 65486
-
-# mine:
-# open_drawer: 105 107 112 114 117
-
 
 class RLBenchDataset():
     def __init__(self,
@@ -45,7 +29,6 @@ class RLBenchDataset():
             use_rgb = False,
             use_depth = False,
             use_mask = False,
-            object_ids = None,
             use_pose = False,
             use_low_dim_state=False,
             val_ratio=0.0,
@@ -58,11 +41,6 @@ class RLBenchDataset():
                                        apply_pc=use_pcd,
                                        apply_mask=use_mask,
                                        apply_cameras=cameras)
-
-        # if use_mask:
-        #     mask_ids = MASK_IDS[task_name]
-        # else:
-        #     mask_ids = None
 
         demos = get_stored_demos(amount = num_episodes,
                                      image_paths = False,
@@ -94,7 +72,6 @@ class RLBenchDataset():
                                         use_pose=use_pose,
                                         # use_depth=use_depth,
                                         use_mask=use_mask,
-                                        mask_ids=object_ids,
                                         horizon=horizon,
                                         use_keyframe_actions=use_keyframe_actions,
                                         use_low_dim_state=use_low_dim_state,
@@ -111,7 +88,6 @@ class RLBenchDataset():
                                         use_pose=use_pose,
                                         # use_depth=use_depth,
                                         use_mask=use_mask,
-                                        mask_ids=object_ids,
                                         horizon=horizon,
                                         use_keyframe_actions=use_keyframe_actions,
                                         use_low_dim_state=use_low_dim_state,
@@ -126,14 +102,6 @@ class RLBenchDataset():
         self.n_obs = n_obs_steps
         self.use_rgb = use_rgb
         self.use_mask = use_mask
-
-
-        # batch = self[40]
-        # batch = dict_apply(batch, lambda x: x.unsqueeze(0))
-        # img = create_obs_state_plot(batch['obs'], use_mask=True)
-        # img = img.transpose(1,2,0)[:,:,:3]
-        # img = Image.fromarray(img)
-        # img.save("/home/felix/Workspace/diffusion_policy_felix/run_obs_img.png")
 
     def get_data_visualization(self, num_samples=16):
         if not self.use_rgb:
@@ -306,7 +274,6 @@ def test():
         demo_augmentation_every_n=10,
         obs_augmentation_every_n=10,
         use_low_dim_state=False,
-        object_ids = MASK_IDS['open_drawer'],
         val_ratio=0
     )
 
@@ -330,29 +297,6 @@ def test():
 
     view = 2
 
-    # obj_ids = batch['obs']['mask'][0,view].int()
-    # mask = torch.zeros_like(obj_ids)
-    # # for id in MASK_IDS['open_drawer']:
-    # #     mask = mask | (obj_ids == id)
-    # mask = (obj_ids > 100) & (obj_ids < 280)
-    # mask = mask.bool()
-    img = batch['obs']['rgb'][0,view]
-    mask = batch['obs']['mask'][0,view]
-    save_img(img, mask)
-
-
-
-    # def save_mask_for_id(mask, rgb, id):
-    #     import matplotlib.pyplot as plt
-    #     mask = mask.int() == id
-    #     img = torch.where(mask, rgb, torch.zeros_like(rgb))
-    #     plt.imshow(img.permute(1,2,0))
-    #     plt.savefig(f"mask_{id}.png")
-
-    # for i in torch.unique(batch['obs']['mask'][0].int()):
-    #     save_mask_for_id(batch['obs']['mask'][0,view], batch['obs']['rgb'][0,view], i)
-
-    
     return 
 
     from diffusion_policy.common.visualization_se3 import visualize_frames, visualize_poses_and_actions

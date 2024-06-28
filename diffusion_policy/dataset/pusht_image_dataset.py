@@ -96,11 +96,17 @@ class PushTImageDataset(BaseImageDataset):
 
 def test():
     import os
-    zarr_path = os.path.expanduser('~/dev/diffusion_policy/data/pusht/pusht_cchi_v7_replay.zarr')
+    zarr_path = os.path.expanduser('~/Workspace/diffusion_policy_felix/data/pusht/pusht_cchi_v7_replay.zarr')
     dataset = PushTImageDataset(zarr_path, horizon=16)
+    item = dataset[0]
+
 
     # from matplotlib import pyplot as plt
     # normalizer = dataset.get_normalizer()
     # nactions = normalizer['action'].normalize(dataset.replay_buffer['action'])
     # diff = np.diff(nactions, axis=0)
     # dists = np.linalg.norm(np.diff(nactions, axis=0), axis=-1)
+
+
+if __name__ == '__main__':
+    test()

@@ -18,8 +18,6 @@ use_keyframe_observations: True
 dataset:
   _target_: diffusion_policy.dataset.rlbench_dataset.RLBenchImageDataset
   root: /home/felix/Workspace/diffusion_policy_felix/data/peract
-  object_ids: [305, 319] # peract dataset
-  # object_ids: [704, 718] # my dataset
   image_size: ${task.image_size}
   task_name: open_drawer
   cameras: ${task.cameras}

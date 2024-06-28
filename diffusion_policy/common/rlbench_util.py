@@ -344,8 +344,7 @@ def extract_obs(obs: Observation,
                 use_low_dim_pcd = False,
                 use_pose = False,
                 use_low_dim_state = False,
-                channels_last: bool = False,
-                mask_ids=None):
+                channels_last: bool = False):
     grip_mat = obs.gripper_matrix
     low_dim_pcd = obs.misc.get('low_dim_pcd', None)
     keypoint_poses = obs.misc.get('low_dim_poses', None)
@@ -416,7 +415,6 @@ def extract_obs(obs: Observation,
         obs_dict['pcd'] = np.stack([obs_dict.pop('%s_point_cloud' % camera) for camera in cameras])
     if use_mask:
         mask = np.stack([obs_dict.pop('%s_mask' % camera) for camera in cameras])
-        print("Unique mask ids", np.unique(mask))
         # objects of interest have id > 97
         # due to conversion errors some background pixels have id > 55
         mask = (mask > 97) & (mask < 256 * 256) 
@@ -586,7 +584,6 @@ def create_obs_action(demo,
                   use_pcd=False, 
                   use_rgb=False, 
                   use_mask=False,
-                  mask_ids=None,
                   use_depth=False,
                   use_pose=False, 
                   use_low_dim_state=False,
@@ -606,7 +603,7 @@ def create_obs_action(demo,
     observations.append(demo[curr_obs_idx])
     obs_dicts = None
     for _, obs in enumerate(observations):
-        obs_dict = extract_obs(obs, cameras=cameras, use_rgb=use_rgb, use_mask=use_mask, use_pcd=use_pcd, use_depth=use_depth, use_low_dim_pcd=use_low_dim_pcd, use_pose=use_pose, use_low_dim_state=use_low_dim_state, mask_ids=mask_ids)
+        obs_dict = extract_obs(obs, cameras=cameras, use_rgb=use_rgb, use_mask=use_mask, use_pcd=use_pcd, use_depth=use_depth, use_low_dim_pcd=use_low_dim_pcd, use_pose=use_pose, use_low_dim_state=use_low_dim_state)
         if obs_dicts is None:
             obs_dicts = {k: [] for k in obs_dict.keys()}
         for k in obs_dict.keys():
@@ -634,7 +631,7 @@ def create_dataset(demos, cameras, demo_augmentation_every_n=10,
                    obs_augmentation_every_n=10, n_obs=2, 
                    use_low_dim_pcd=False, use_rgb=False, 
                     use_keyframe_actions=True, horizon=1,
-                   use_pcd=False, use_mask=False, mask_ids=None,use_depth=False,
+                   use_pcd=False, use_mask=False,use_depth=False,
                     use_pose=False, use_low_dim_state=False, use_keyframe_observations=False):
     dataset = []
     episode_begin = [0]
@@ -657,7 +654,7 @@ def create_dataset(demos, cameras, demo_augmentation_every_n=10,
             data = create_obs_action(demo=demo, curr_obs_idx=i, episode_keypoints=episode_keypoints, next_kp_idx=next_keypoint, cameras=cameras, n_obs=n_obs, use_keyframe_actions=use_keyframe_actions, horizon=horizon,
                                     use_low_dim_pcd=use_low_dim_pcd, use_pcd=use_pcd, use_rgb=use_rgb, use_pose=use_pose, use_depth=use_depth,
                                     use_mask=use_mask, use_low_dim_state=use_low_dim_state, obs_augmentation_every_n=obs_augmentation_every_n,
-                                    use_keyframe_observations=use_keyframe_observations, mask_ids=mask_ids)
+                                    use_keyframe_observations=use_keyframe_observations)
             dataset.append(data)
             episode_begin.append(episode_begin[-1])
         episode_begin[-1] = len(dataset)

@@ -1,4 +1,4 @@
-from diffusion_policy.env.rlbench.rlbench_env import RLBenchEnv, MASK_IDS
+from diffusion_policy.env.rlbench.rlbench_env import RLBenchEnv
 from diffusion_policy.env.rlbench.rlbench_utils import task_file_to_task_class, Actioner, Mover
 from diffusion_policy.common.rlbench_util import extract_obs
 import torch
@@ -19,7 +19,7 @@ def _evaluate_task_on_demos(env_args : dict,
                             demos: List[Demo],  
                             max_steps: int,
                             actioner: Actioner,
-                            n_procs_max : int = 10, 
+                            n_procs_max : int = 1, 
                             max_rrt_tries: int = 1,
                             demo_tries: int = 1,
                             n_visualize: int = 0,
@@ -76,7 +76,6 @@ def _evaluate_task_on_demos_multiproc(proc_num : int,
     task.set_variation(0)
 
     n_obs_steps = env.n_obs_steps
-    mask_ids = MASK_IDS[task_str]
     
     for demo_id in range(proc_num, len(demos), num_procs):
         demo = demos[demo_id]
@@ -111,7 +110,7 @@ def _evaluate_task_on_demos_multiproc(proc_num : int,
             for step_id in range(max_steps):
                 # Fetch the current observation, and predict one action
                 for obs in env.get_obs_history():
-                    obs_dict = extract_obs(obs, cameras=env.apply_cameras, use_rgb=env.apply_rgb, use_pcd=env.apply_pc, use_mask=env.apply_mask, use_pose=env.apply_poses, use_low_dim_state=True, mask_ids=mask_ids)
+                    obs_dict = extract_obs(obs, cameras=env.apply_cameras, use_rgb=env.apply_rgb, use_pcd=env.apply_pc, use_mask=env.apply_mask, use_pose=env.apply_poses, use_low_dim_state=True)
                     obs_dict = dict_apply(obs_dict, lambda x: torch.from_numpy(x).unsqueeze(0))
 
                     if env.apply_rgb:
