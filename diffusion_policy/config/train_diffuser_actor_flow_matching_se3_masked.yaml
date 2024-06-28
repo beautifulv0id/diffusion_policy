@@ -1,14 +1,8 @@
 # Actually the task entry loads the yaml file inside task
 defaults:
   - _self_
-  - task: open_drawer_image
+  - task: open_drawer_image_mask
 
-task:
-  dataset:
-    use_mask: True
-  env_runner:
-    apply_mask: True
-  
 
 name: train_diffuser_actor_flow_matching_se3_masked
 _target_: diffusion_policy.workspace.train_diffuser_actor_flow_matching_se3_masked.TrainingWorkspace

@@ -1,11 +1,13 @@
+if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.set_start_method('spawn')
+
 from typing import Dict
 from diffusion_policy.policy.base_lowdim_policy import BaseLowdimPolicy
 from diffusion_policy.env_runner.base_image_runner import BaseImageRunner
-from rlbench.task_environment import TaskEnvironment
+from diffusion_policy.env.rlbench.rlbench_env import RLBenchEnv
 from rlbench.demo import Demo
 from diffusion_policy.env.rlbench.rlbench_utils import Actioner
-from diffusion_policy.env.rlbench.rlbench_env import RLBenchEnv
-from diffusion_policy.env.rlbench.rlbench_utils import task_file_to_task_class
 from typing import List
 import wandb
 from diffusion_policy.env_runner.rlbench_utils import _evaluate_task_on_demos
@@ -43,27 +45,28 @@ class RLBenchRunner(BaseImageRunner):
         self.task_str = task_str
 
         assert any([apply_rgb, apply_pc, apply_low_dim_pcd]), "At least one of apply_rgb, apply_pc, apply_low_dim_pcd must be True"
+        
+        self.env_args = {
+            "data_path" : data_root, 
+            "image_size" : image_size,
+            "render_image_size" : render_image_size,
+            "headless" : headless, 
+            "apply_rgb" : apply_rgb,
+            "apply_depth" : apply_depth,
+            "apply_pc" : apply_pc,
+            "apply_cameras" : apply_cameras,
+            "apply_low_dim_pcd" : apply_low_dim_pcd,
+            "apply_pose" : apply_pose,
+            "apply_mask" : apply_mask,
+            "collision_checking" : collision_checking,
+            "obs_history_from_planner" : obs_history_from_planner,
+            "obs_history_augmentation_every_n" : obs_history_augmentation_every_n,
+            "adaptor" : adaptor,
+            "n_obs_steps" : n_obs_steps,
+            "n_action_steps" : n_action_steps,
+        }
 
-        env = RLBenchEnv(data_path=data_root, 
-                            image_size=image_size,
-                            render_image_size=render_image_size,
-                            headless=headless, 
-                            apply_rgb=apply_rgb,
-                            apply_depth=apply_depth,
-                            apply_pc=apply_pc,
-                            apply_cameras=apply_cameras,
-                            apply_low_dim_pcd=apply_low_dim_pcd,
-                            apply_pose=apply_pose,
-                            apply_mask=apply_mask,
-                            collision_checking=collision_checking,
-                            obs_history_from_planner=obs_history_from_planner,
-                            obs_history_augmentation_every_n=obs_history_augmentation_every_n,
-                            adaptor=adaptor,
-                            n_obs_steps=n_obs_steps,
-                            n_action_steps=n_action_steps,
-                            ) 
         self.task_str = task_str
-        self.env = env
         self.action_dim = action_dim
         self.max_steps = max_steps
         self.max_rrt_tries = max_rrt_tries
@@ -83,7 +86,7 @@ class RLBenchRunner(BaseImageRunner):
         if len(demos) == 0:
             return {}
         
-        log_data = _evaluate_task_on_demos(env=self.env,
+        log_data = _evaluate_task_on_demos(env_args=self.env_args,
                                 task_str=self.task_str,
                                 demos=demos[:self.max_episodes],
                                 max_steps=self.max_steps,
@@ -106,17 +109,19 @@ class RLBenchRunner(BaseImageRunner):
                 name = f"video/{mode}_{self.task_str}_{i}"
                 log_data[name] = sim_video
         
+        print(obs_state_ls)
         for i, obs_state in enumerate(obs_state_ls):
             if obs_state is not None:
-                sim_plots = wandb.Video(obs_state, fps=1, format="mp4")
+                obs_state = wandb.Video(obs_state, fps=1, format="mp4")
                 name = f"video/{mode}_{self.task_str}_obs_state_{i}"
-                log_data[name] = sim_plots
+                log_data[name] = obs_state
         
         for i, mask in enumerate(mask_ls):
             if mask is not None:
                 sim_plots = wandb.Video(mask, fps=1, format="mp4")
                 name = f"video/{mode}_{self.task_str}_mask_{i}"
                 log_data[name] = sim_plots
+
         
         return log_data
     
@@ -178,7 +183,8 @@ def test_replay():
                                 headless=False,
                                 apply_rgb=True,
                                 apply_depth=False,
-                                apply_pc=True)
+                                apply_pc=True,
+                                apply_mask=True,)
     
     env = env_runner.env
     task_type = task_file_to_task_class(task_str)
@@ -190,7 +196,6 @@ def test_replay():
     class ReplayPolicy:
         def __init__(self, demo):
             self._actions = get_actions_from_demo(demo)
-            print(len(self._actions))
             self.idx = 0
             self.n_obs_steps = 2
 
@@ -212,6 +217,6 @@ def test_replay():
     print(results)
 
 if __name__ == "__main__":
-    # test_replay()
-    test()
+    test_replay()
+    # test()
     print("Done!")

@@ -333,13 +333,13 @@ class RLBenchEnv:
         if self.obs_history_from_planner:
             self.obs_history = self.obs_history[::-1][:self.obs_history_augmentation_every_n * self.n_obs_steps][::-1]
         else:
-            self.obs_history = self.obs_history[-self.n_obs_steps:]
+            self.obs_history = self.obs_history[-1:]
             
     def get_obs_history(self):
         if self.obs_history_from_planner:
             observations = self.obs_history[::-1][::self.obs_history_augmentation_every_n][::-1][-self.n_obs_steps:]
         else:
-            observations = self.obs_history[-self.n_obs_steps:]
+            observations = self.obs_history[-1:]
         return observations
 
     def start_recording(self):
@@ -726,6 +726,7 @@ class RLBenchEnv:
             "rgbs" : [],
             "obs_state" : [],
             "mask" : [],
+            "mask_ids" : [],
         }
         # obs_dicts_ls = []
         n_obs_steps = self.n_obs_steps
@@ -742,6 +743,7 @@ class RLBenchEnv:
                     obs_state = []
                     if self.apply_mask:
                         logging_masks = []
+                        mask_ids = []
 
                 rgbs = torch.Tensor([])
                 pcds = torch.Tensor([])
@@ -766,7 +768,14 @@ class RLBenchEnv:
                     log_resource_usage()
                     # Fetch the current observation, and predict one action
                     for obs in self.get_obs_history():
-                        obs_dict = extract_obs(obs, cameras=self.apply_cameras, use_rgb=self.apply_rgb, use_pcd=self.apply_pc, use_mask=self.apply_mask, use_pose=self.apply_poses, use_low_dim_state=True, mask_ids=mask_ids)
+                        obs_dict = extract_obs(obs, 
+                                                cameras=self.apply_cameras, 
+                                                use_rgb=self.apply_rgb, 
+                                                use_pcd=self.apply_pc, 
+                                                use_mask=self.apply_mask, 
+                                                use_pose=self.apply_poses, 
+                                                use_low_dim_state=True, 
+                                                mask_ids=mask_ids)
                         obs_dict = dict_apply(obs_dict, lambda x: torch.from_numpy(x).unsqueeze(0))
 
                         if self.apply_rgb:
@@ -800,6 +809,11 @@ class RLBenchEnv:
                         input = input.view((1, n_obs_steps, ) + sh_in[1:])
                         return input
 
+                    # TODO: remove this
+                    if self._recording:
+                        if self.apply_mask:
+                            mask_ids.append(obs_dict['mask_ids'])
+
                     # Prepare proprioception history
                     npad = n_obs_steps - grippers[-n_obs_steps:].shape[0]
                     obs_dict = dict()
@@ -829,7 +843,7 @@ class RLBenchEnv:
                         obs_state.append(create_obs_state_plot(obs_dict, use_mask=True))
                         if self.apply_mask:
                             logging_masks.append((masks[-1,-1].int() * 255).expand(3, -1, -1).cpu().numpy().astype(np.uint8))
-
+                            mask_ids.append(obs_dict)
                     obs_dict = dict_apply(obs_dict, lambda x: x.type(dtype).to(device))
 
                     out = actioner.predict(obs_dict)
@@ -878,6 +892,8 @@ class RLBenchEnv:
                     if self.apply_mask:
                         masks = np.array(logging_masks)
                         log_data["mask"].append(masks)
+                        mask_ids = np.array(mask_ids)
+                        log_data["mask_ids"].append(mask_ids)
 
                 total_reward += max_reward
 

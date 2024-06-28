@@ -10,6 +10,7 @@ from diffusion_policy.model.common.layers import (
     FFWRelativeSelfCrossAttentionModule
 )
 from diffusion_policy.model.obs_encoders.diffuser_actor_encoder import DiffuserActorEncoder
+
 from diffusion_policy.model.common.layers import ParallelAttention
 from diffusion_policy.model.common.position_encodings import (
     RotaryPositionEncoding3D,
@@ -45,7 +46,8 @@ class DiffuserActor(BaseImagePolicy):
                  nhist=3,
                  nhorizon=16,
                  relative=False,
-                 lang_enhanced=False):
+                 lang_enhanced=False,
+                 use_mask=False,):
         super().__init__()
         self._rotation_parametrization = rotation_parametrization
         self._quaternion_format = quaternion_format
@@ -79,20 +81,28 @@ class DiffuserActor(BaseImagePolicy):
         )
         self.n_steps = diffusion_timesteps
         self.nhorizon = nhorizon
+        self.use_mask = use_mask
         self.gripper_loc_bounds = torch.tensor(gripper_loc_bounds)
 
     def encode_inputs(self, visible_rgb, visible_pcd, instruction,
-                      curr_gripper):
+                      curr_gripper, mask=None):
         # Compute visual features/positional embeddings at different scales
         rgb_feats_pyramid, pcd_pyramid = self.encoder.encode_images(
             visible_rgb, visible_pcd
         )
-        # Keep only low-res scale
-        context_feats = einops.rearrange(
-            rgb_feats_pyramid[0],
-            "b ncam c h w -> b (ncam h w) c"
-        )
-        context = pcd_pyramid[0]
+
+        rgb_feats = rgb_feats_pyramid[0]
+        pcd = pcd_pyramid[0]
+
+        if self.use_mask:
+            context_feats, context = self.encoder.mask_out_features_pcd(mask, rgb_feats, pcd, n_min=128, n_max=1024)
+        else:
+            # Keep only low-res scale
+            context_feats = einops.rearrange(
+                rgb_feats_pyramid[0],
+                "b ncam c h w -> b (ncam h w) c"
+            )
+            context = pcd_pyramid[0]
 
         # Encode instruction (B, 53, F)
         instr_feats = None
@@ -197,7 +207,8 @@ class DiffuserActor(BaseImagePolicy):
         rgb_obs,
         pcd_obs,
         instruction,
-        curr_gripper
+        curr_gripper,
+        mask_obs=None
     ):
         # Normalize all pos
         pcd_obs = pcd_obs.clone()
@@ -210,7 +221,7 @@ class DiffuserActor(BaseImagePolicy):
 
         # Prepare inputs
         fixed_inputs = self.encode_inputs(
-            rgb_obs, pcd_obs, instruction, curr_gripper
+            rgb_obs, pcd_obs, instruction, curr_gripper, mask_obs
         )
 
         # Condition on start-end pose
@@ -310,7 +321,8 @@ class DiffuserActor(BaseImagePolicy):
         pcd_obs,
         instruction,
         curr_gripper,
-        run_inference=False
+        run_inference=False,
+        mask_obs=None
     ):
         """
         Arguments:
@@ -341,7 +353,8 @@ class DiffuserActor(BaseImagePolicy):
                 rgb_obs,
                 pcd_obs,
                 instruction,
-                curr_gripper
+                curr_gripper,
+                mask_obs
             )
         # Normalize all pos
         gt_trajectory = gt_trajectory.clone()
@@ -359,7 +372,7 @@ class DiffuserActor(BaseImagePolicy):
 
         # Prepare inputs
         fixed_inputs = self.encode_inputs(
-            rgb_obs, pcd_obs, instruction, curr_gripper
+            rgb_obs, pcd_obs, instruction, curr_gripper, mask_obs
         )
 
         # Condition on start-end pose
@@ -420,6 +433,7 @@ class DiffuserActor(BaseImagePolicy):
             instruction=None,
             curr_gripper=obs_dict['curr_gripper'],
             run_inference=True,
+            mask_obs=obs_dict.get('mask', None)
         )
 
         action = create_robomimic_from_rlbench_action(pred, rel_last=False)
@@ -442,6 +456,7 @@ class DiffuserActor(BaseImagePolicy):
             instruction=None,
             curr_gripper=batch['obs']['curr_gripper'],
             run_inference=False,
+            mask_obs=batch['obs'].get('mask', None)
         )
 
 

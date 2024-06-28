@@ -32,6 +32,7 @@ policy:
   nhorizon: ${horizon}
   relative: 0
   lang_enhanced: false
+  use_mask: ¢{task.dataset.use_mask}
 
 dataloader:
   batch_size: 32

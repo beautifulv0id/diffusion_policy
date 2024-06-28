@@ -14,7 +14,7 @@ from pyrep.errors import IKError, ConfigurationPathError
 from multiprocessing import Process, Manager
 
 @torch.no_grad()
-def _evaluate_task_on_demos(env : RLBenchEnv,  
+def _evaluate_task_on_demos(env_args : dict, 
                             task_str: str,
                             demos: List[Demo],  
                             max_steps: int,
@@ -28,7 +28,7 @@ def _evaluate_task_on_demos(env : RLBenchEnv,
 
     manager = Manager()
     proc_log_data = manager.dict()
-    processes = [Process(target=_evaluate_task_on_demos_multiproc, args=(i, n_procs, proc_log_data, env, task_str, demos, max_steps, actioner, max_rrt_tries, demo_tries, n_visualize, verbose)) for i in range(n_procs)]
+    processes = [Process(target=_evaluate_task_on_demos_multiproc, args=(i, n_procs, proc_log_data, env_args, task_str, demos, max_steps, actioner, max_rrt_tries, demo_tries, n_visualize, verbose)) for i in range(n_procs)]
     [p.start() for p in processes]
     [p.join() for p in processes]
 
@@ -51,7 +51,7 @@ def _evaluate_task_on_demos(env : RLBenchEnv,
 def _evaluate_task_on_demos_multiproc(proc_num : int, 
                                       num_procs : int,
                             proc_log_data : List[dict],
-                            env : RLBenchEnv,       
+                            env_args : dict,      
                             task_str: str,
                             demos: List[Demo],  
                             max_steps: int,
@@ -60,6 +60,7 @@ def _evaluate_task_on_demos_multiproc(proc_num : int,
                             demo_tries: int = 1,
                             n_visualize: int = 0,
                             verbose: bool = False):
+    env = RLBenchEnv(**env_args)
     env.launch()
     device = actioner.device
     dtype = actioner.dtype

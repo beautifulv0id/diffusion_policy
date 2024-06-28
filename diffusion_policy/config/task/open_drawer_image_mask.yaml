@@ -1,0 +1,63 @@
+name: open_drawer_image
+
+# image_size: [256, 256]
+image_size: [128, 128]
+
+gripper_loc_bounds: 
+  _target_: diffusion_policy.common.rlbench_util.get_gripper_loc_bounds
+  path: "/home/felix/Workspace/diffusion_policy_felix/diffusion_policy/tasks/18_peract_tasks_location_bounds.json"
+  buffer: 0.0
+  task: ${name}
+
+cameras: ['left_shoulder', 'right_shoulder', 'wrist', 'front']
+
+obs_augmentation_every_n: 10
+obs_history_from_planner: False
+use_keyframe_observations: True
+
+dataset:
+  _target_: diffusion_policy.dataset.rlbench_dataset.RLBenchImageDataset
+  root: /home/felix/Workspace/diffusion_policy_felix/data/peract
+  object_ids: [305, 319] # peract dataset
+  # object_ids: [704, 718] # my dataset
+  image_size: ${task.image_size}
+  task_name: open_drawer
+  cameras: ${task.cameras}
+  num_episodes: ${num_episodes}
+  variation: 0
+  n_obs_steps: ${n_obs_steps}
+  horizon: ${horizon}
+  use_keyframe_actions: ${use_keyframe_actions}
+  use_keyframe_observations: ${task.use_keyframe_observations}
+  demo_augmentation_every_n: 10
+  obs_augmentation_every_n: ${task.obs_augmentation_every_n}
+  val_ratio: 0.2
+  use_low_dim_state: false
+  use_mask: True
+  
+env_runner:
+  _target_: diffusion_policy.env_runner.rlbench_runner.RLBenchRunner
+  data_root: ${task.dataset.root}
+  task_str: "open_drawer"
+  max_episodes: 3
+  max_steps: ${eval:'4 if ${use_keyframe_actions} else 60'}
+  max_rrt_tries: 5
+  demo_tries: 1
+  n_train_vis: 3
+  n_val_vis: 3
+  n_obs_steps: ${n_obs_steps}
+  n_action_steps: ${n_action_steps}
+  obs_history_from_planner: ${task.obs_history_from_planner}
+  obs_history_augmentation_every_n: ${task.obs_augmentation_every_n}
+  collision_checking: True
+  action_dim: 8
+  headless: True
+  apply_rgb: True
+  apply_cameras: ${task.cameras}
+  apply_pc: True
+  apply_mask: True
+  apply_low_dim_pcd: false
+  apply_pose: false
+  image_size: ${task.image_size}
+  adaptor:
+    _target_: diffusion_policy.common.adaptors.Peract2Robomimic

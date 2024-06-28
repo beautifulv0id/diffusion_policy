@@ -22,7 +22,7 @@ class DiffuserActorEncoder(ModuleAttrMixin):
                  nhist=3,
                  num_attn_heads=8,
                  num_vis_ins_attn_layers=2,
-                 fps_subsampling_factor=5):
+                 fps_subsampling_factor=5,):
         super().__init__()
         assert backbone in ["resnet50", "resnet18", "clip"]
         assert image_size in [(128, 128), (256, 256)]
