@@ -436,7 +436,7 @@ class DiffuserActor(BaseImagePolicy):
             mask_obs=obs_dict.get('mask', None)
         )
 
-        action = create_robomimic_from_rlbench_action(pred, rel_last=False)
+        action = create_robomimic_from_rlbench_action(pred, quaternion_format = 'wxyz')
         result = {
             'action': action,
             'obs': obs_dict,
@@ -464,15 +464,20 @@ class DiffuserActor(BaseImagePolicy):
         log_dict = {}
 
         gt_action = batch['action']
-        gt_act_p = gt_action['act_p']
-        gt_act_r = gt_action['act_r']
+        gt_trajectory = gt_action['gt_trajectory']
+        gt_act_p = gt_trajectory[..., :3]
+        gt_act_r = gt_trajectory[..., 3:7]
+        if self._quaternion_format == 'xyzw':
+            gt_act_r = gt_act_r[..., (3, 0, 1, 2)]
+        gt_act_r = normalise_quat(gt_act_r)
+        gt_act_r = quaternion_to_matrix(gt_act_r)
+        gt_act_gr = gt_trajectory[..., 7]
 
         out = self.predict_action(batch['obs'])
         action = out['action']
         pred_act_p = action['act_p']
         pred_act_r = action['act_r']
         pred_act_gr = out['extra']['act_gr_pred']
-        # pred_act_ic = out['extra']['act_ic_pred']
 
         pos_error = torch.nn.functional.mse_loss(pred_act_p, gt_act_p)
 
@@ -481,13 +486,8 @@ class DiffuserActor(BaseImagePolicy):
         angle_error = log_map(relative_R)
         rot_error = torch.nn.functional.mse_loss(angle_error, torch.zeros_like(angle_error))
 
-        gt_act_gr = gt_action['act_gr']
         gr_error = torch.nn.functional.mse_loss(pred_act_gr, gt_act_gr)
         log_dict['train_gripper_mse_error'] = gr_error.item()
-
-        # gt_act_ic = gt_action['act_ic']
-        # ic_error = torch.nn.functional.mse_loss(pred_act_ic, gt_act_ic)
-        # log_dict['train_ignore_collisions_mse_error'] = ic_error.item()
 
         log_dict['train_position_mse_error'] = pos_error.item()
         log_dict['train_rotation_mse_error'] = rot_error.item()

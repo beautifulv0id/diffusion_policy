@@ -417,7 +417,7 @@ class DiffuserActorFLowMatching(BaseImagePolicy):
             run_inference=True,
         )
 
-        action = create_robomimic_from_rlbench_action(pred, rel_last=False)
+        action = create_robomimic_from_rlbench_action(pred, quaternion_format = 'wxyz')
         result = {
             'action': action,
             'obs': obs_dict,

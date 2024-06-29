@@ -262,13 +262,13 @@ def test():
     dataset = RLBenchImageDataset(
         root = "/home/felix/Workspace/diffusion_policy_felix/data/images/",
         task_name="open_drawer",
-        num_episodes=1,
+        num_episodes=-1,
         variation=0,
         cameras = ['left_shoulder', 'right_shoulder', 'front', 'overhead', 'wrist'],
         image_size=(256, 256),
         n_obs_steps=3,
         horizon=1,
-        use_mask=False,
+        use_mask=True,
         use_keyframe_actions=True,
         use_keyframe_observations=True,
         demo_augmentation_every_n=10,
@@ -283,9 +283,9 @@ def test():
     print_dict(data)
     print(len(dataset))
 
-    img = dataset.get_data_visualization(9)
-    img = make_grid(img, nrow=4)
-    save_image(img, "data_visualization.png")
+    # img = dataset.get_data_visualization(9)
+    # img = make_grid(img, nrow=4)
+    # save_image(img, "data_visualization.png")
     return
 
     # visualize(batch['obs'], batch['action'])

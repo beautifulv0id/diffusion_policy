@@ -131,12 +131,12 @@ def create_rlbench_action(rot: torch.Tensor, pos: torch.Tensor, gripper_open: to
         action = torch.cat([action, ignore_collision], dim=-1)
     return action
 
-def create_robomimic_from_rlbench_action(rlbench_action: torch.Tensor, rel_last: bool = True):
+def create_robomimic_from_rlbench_action(rlbench_action: torch.Tensor, quaternion_format: str = 'wxyz'):
     L = rlbench_action.shape[-1]
     pos = rlbench_action[:, :, :3]
     quat = rlbench_action[:, :, 3:7]
-    if rel_last:
-        quat = torch.cat([quat[..., [3]], quat[..., :3]])
+    if quaternion_format == 'xyzw':
+        quat = quat[..., [3, 0, 1, 2]]
     rot = quaternion_to_matrix(quat)
     action = {
             "act_r": rot,
@@ -211,18 +211,26 @@ def mask_out_features_pcd(mask, rgbs, pcd, n_min = 0, n_max=1000000):
 
     return rgbs, pcd
 
-def create_obs_state_plot(obs, action=None, downsample=1, use_mask=False):
+def create_obs_state_plot(obs, action=None, downsample=1, use_mask=False, quaternion_format: str = 'wxyz'):
     pcd = obs['pcd']
     rgb = obs['rgb']
     mask = obs['mask'] if use_mask else None
     curr_gripper = obs['curr_gripper']
-    out = create_robomimic_from_rlbench_action(curr_gripper, rel_last=False)
+    out = create_robomimic_from_rlbench_action(curr_gripper, quaternion_format=quaternion_format)
     curr_gripper_rot = out['act_r'].squeeze(0).float()
     curr_gripper_pos = out['act_p'].squeeze(0).float()
 
-    n_obs = curr_gripper_rot.shape[0]
+    if action is not None:
+        out = create_robomimic_from_rlbench_action(action, quaternion_format=quaternion_format)
+        action_rot = out['act_r'].squeeze(0).float()
+        action_pos = out['act_p'].squeeze(0).float()
 
-    colors = cm.get_cmap('Reds',  n_obs+ 1)
+    n_obs = curr_gripper_rot.shape[0]
+    n_actions = action_rot.shape[0] if action is not None else 0
+
+    obs_colors = cm.get_cmap('Blues',  n_obs+ 1)
+    action_colors = cm.get_cmap('Reds',  n_actions)
+
 
     def create_gripper_pts(scale = 0.2):
         gripper_pts = torch.tensor([
@@ -242,7 +250,7 @@ def create_obs_state_plot(obs, action=None, downsample=1, use_mask=False):
 
         return gripper_pts
     
-    def plot_gripper(ax, gripper_pos, gripper_rot, scale = 0.2):
+    def plot_gripper(ax, gripper_pos, gripper_rot, scale = 0.2, colors=obs_colors):
         gripper_pts = create_gripper_pts(scale)
         gripper_pts = einsum('nij,kj->nki', gripper_rot, gripper_pts)
         gripper_pts = gripper_pts + gripper_pos.unsqueeze(1)
@@ -252,6 +260,17 @@ def create_obs_state_plot(obs, action=None, downsample=1, use_mask=False):
                 line = ax.plot(gripper_pts_i[j:j+2,0], gripper_pts_i[j:j+2,1], gripper_pts_i[j:j+2,2], linewidth=1, zorder=10, color=colors(i+1))
                 if j == 0:
                     line[0].set_label(f"Gripper t={i-n_obs+1}")
+    
+    def plot_action(ax, action_pos, action_rot, scale = 0.1, linewidth=4, colors=action_colors):
+        gripper_pts = create_gripper_pts(scale)
+        gripper_pts = einsum('nij,kj->nki', action_rot, gripper_pts)
+        gripper_pts = gripper_pts + action_pos.unsqueeze(1)
+        gripper_pts = gripper_pts.reshape(action_pos.shape[0], -1, 3).numpy()
+        for i, gripper_pts_i in enumerate(gripper_pts):
+            for j in range(0, len(gripper_pts_i), 2):
+                line = ax.plot(gripper_pts_i[j:j+2,0], gripper_pts_i[j:j+2,1], gripper_pts_i[j:j+2,2], linewidth=linewidth, zorder=10, color=colors(i+1))
+                if j == 0:
+                    line[0].set_label(f"Action t={i+1}")
 
     def plot_pcd(ax, pcd, rgb, mask=None):
         if downsample > 1:
@@ -282,6 +301,8 @@ def create_obs_state_plot(obs, action=None, downsample=1, use_mask=False):
     ax.set_ylim3d(-RADIUS / 2, RADIUS / 2)
     plot_pcd(ax, pcd, rgb, mask)
     plot_gripper(ax, curr_gripper_pos, curr_gripper_rot, scale=0.1)
+    if action is not None:
+        plot_action(ax, action_pos, action_rot)
     ax.legend()
     buf = io.BytesIO()
     plt.savefig(buf, format='png')
