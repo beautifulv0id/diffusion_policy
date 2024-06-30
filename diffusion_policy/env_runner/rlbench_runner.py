@@ -127,7 +127,6 @@ class RLBenchRunner(BaseImageRunner):
 import hydra
 from hydra import compose, initialize
 from omegaconf import OmegaConf
-from diffusion_policy.policy.diffusion_unet_lowdim_relative_policy import DiffusionUnetLowDimRelativePolicy
 import pathlib
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)

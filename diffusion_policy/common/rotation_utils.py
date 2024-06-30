@@ -1,6 +1,4 @@
-from theseus.geometry.so3 import SO3
 import torch
-import torch.nn.functional as F
 
 """
 Below is taken from 3D Diffuser Actor
