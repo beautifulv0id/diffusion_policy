@@ -1,7 +1,7 @@
 # Actually the task entry loads the yaml file inside task
 defaults:
   - _self_
-  - task: open_drawer_image
+  - task: open_drawer_image_3DDA
 
 name: train_diffuser_actor
 _target_: diffusion_policy.workspace.train_diffuser_actor.TrainingWorkspace
@@ -26,7 +26,8 @@ policy:
   fps_subsampling_factor: 5
   gripper_loc_bounds: ${task.gripper_loc_bounds}
   rotation_parametrization: '6D'
-  quaternion_format: 'wxyz' #'xyzw'
+  quaternion_format: 'xyzw' # 3DDA
+  # quaternion_format: 'wxyz' # 'xyzw'
   diffusion_timesteps: 100
   nhist: ${n_obs_steps}
   nhorizon: ${horizon}
@@ -35,14 +36,14 @@ policy:
   use_mask: ${task.dataset.use_mask}
 
 dataloader:
-  batch_size: 32
+  batch_size: 4
   num_workers: 0
   shuffle: True
   pin_memory: False
   persistent_workers: False
 
 val_dataloader:
-  batch_size: 32
+  batch_size: 4
   num_workers: 0
   shuffle: False
   pin_memory: False

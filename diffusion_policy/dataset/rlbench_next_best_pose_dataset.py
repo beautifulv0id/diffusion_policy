@@ -4,8 +4,9 @@ import zarr
 import copy
 from diffusion_policy.common.rlbench_util import create_obs_state_plot
 from diffusion_policy.common.pytorch_util import dict_apply, print_dict
+from diffusion_policy.dataset.rlbench_utils import Resize
 
-def create_sample_indices(episode_ends, keypoints, keypoint_ends, n_obs, n_skip=1, episode_start=0, keypoint_start=0):
+def create_sample_indices(episode_ends, keypoints, keypoint_ends, n_obs, use_keypoint_obs_only=True, n_skip=1, episode_start=0, keypoint_start=0):
     indices = []
     episode_ends = np.concatenate([[episode_start], episode_ends])
     keypoint_ends = np.concatenate([[keypoint_start], keypoint_ends])
@@ -15,6 +16,9 @@ def create_sample_indices(episode_ends, keypoints, keypoint_ends, n_obs, n_skip=
         episode_end = episode_ends[ep_idx+1]
         next_keypoint_idx = 0
         for obs_idx in range(episode_start, episode_end, n_skip):
+            if use_keypoint_obs_only:
+                if obs_idx not in episode_keypoints and obs_idx != episode_start:
+                    continue
             while obs_idx >= episode_keypoints[next_keypoint_idx] and next_keypoint_idx < len(episode_keypoints) - 1:
                 next_keypoint_idx += 1
             if obs_idx >= episode_keypoints[next_keypoint_idx]:
@@ -61,11 +65,18 @@ class RLBenchNextBestPoseDataset(torch.utils.data.Dataset):
                  use_pcd = True,
                  use_mask = True,
                  use_low_dim_state = True,
+                 use_keypoint_obs_only = True,
                  n_skip = 1,
                  n_obs_steps = 3,
                  n_episodes = 1,
                  val_ratio = 0.1,
+                 image_rescale=(1.0, 1.0),
                  ):
+        
+        self._training = True
+
+        if self._training:
+            self._resize = Resize(scales=image_rescale)
         
         # read from zarr dataset
         dataset_root = zarr.open(dataset_path, 'r')
@@ -76,7 +87,7 @@ class RLBenchNextBestPoseDataset(torch.utils.data.Dataset):
 
         for camera in cameras:
             if use_rgb:
-                # float32, [0,255], (N,3,H,W)
+                # float32, [0,255] -> [0,1], (N,3,H,W)
                 image_data = data_root[f'{camera}_rgb'][:]
                 image_data = image_data.astype(np.float32) / 255.0
                 camera_data[f'{camera}_rgb'] = image_data
@@ -128,7 +139,8 @@ class RLBenchNextBestPoseDataset(torch.utils.data.Dataset):
             keypoints=keypoints,
             keypoint_ends=keypoint_ends[:n_episodes-n_val],
             n_obs=n_obs_steps,
-            n_skip=n_skip
+            n_skip=n_skip,
+            use_keypoint_obs_only=use_keypoint_obs_only
         )
         if n_val > 0:
             val_indices = create_sample_indices(
@@ -137,6 +149,7 @@ class RLBenchNextBestPoseDataset(torch.utils.data.Dataset):
                 keypoint_ends=keypoint_ends[n_episodes-n_val:],
                 n_obs=n_obs_steps,
                 n_skip=n_skip,
+                use_keypoint_obs_only=use_keypoint_obs_only,
                 episode_start=episode_ends[n_episodes-n_val-1],
                 keypoint_start=keypoint_ends[n_episodes-n_val-1]
             )
@@ -180,6 +193,10 @@ class RLBenchNextBestPoseDataset(torch.utils.data.Dataset):
             use_low_dim_state=self.use_low_dim_state
         )
         sample = dict_apply(sample, lambda x: torch.tensor(x))
+
+        if self._training:
+            sample['obs'].update(self._resize(rgb=sample['obs']['rgb'], pcd=sample['obs']['pcd'], mask=sample['obs'].get('mask', None)))
+
         return sample
 
     def get_validation_dataset(self):
@@ -209,7 +226,7 @@ if __name__ == "__main__":
     from PIL import Image
     from torchvision.utils import make_grid, save_image
     dataset_path = '/home/felix/Workspace/diffusion_policy_felix/data/rlbench.zarr'
-    dataset = RLBenchNextBestPoseDataset(dataset_path, n_skip=1, n_episodes=1, val_ratio=0.1, use_mask=False)    
+    dataset = RLBenchNextBestPoseDataset(dataset_path, n_skip=1, n_episodes=-1, val_ratio=0.1, use_mask=True, image_rescale=(0.7, 1.25))
     print(len(dataset)) 
     print_dict(dataset[0])
     # val_set = dataset.get_validation_dataset()

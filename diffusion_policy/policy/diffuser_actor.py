@@ -435,8 +435,7 @@ class DiffuserActor(BaseImagePolicy):
             run_inference=True,
             mask_obs=obs_dict.get('mask', None)
         )
-
-        action = create_robomimic_from_rlbench_action(pred, quaternion_format = 'wxyz')
+        action = create_robomimic_from_rlbench_action(pred, quaternion_format = self._quaternion_format)
         result = {
             'action': action,
             'obs': obs_dict,
