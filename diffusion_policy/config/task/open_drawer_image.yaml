@@ -5,7 +5,7 @@ image_size: [128, 128]
 
 gripper_loc_bounds: 
   _target_: diffusion_policy.common.rlbench_util.get_gripper_loc_bounds
-  path: "/home/felix/Workspace/diffusion_policy_felix/diffusion_policy/tasks/18_peract_tasks_location_bounds.json"
+  path: "${oc.env:DIFFUSION_POLICY_ROOT}/diffusion_policy/tasks/18_peract_tasks_location_bounds.json"
   buffer: 0.0
   task: ${name}
 
@@ -17,7 +17,7 @@ use_keyframe_observations: True
 
 dataset:
   _target_: diffusion_policy.dataset.rlbench_dataset.RLBenchImageDataset
-  root: /home/felix/Workspace/diffusion_policy_felix/data/peract
+  root: {oc.env:DIFFUSION_POLICY_ROOT}/data/peract
   image_size: ${task.image_size}
   task_name: open_drawer
   cameras: ${task.cameras}

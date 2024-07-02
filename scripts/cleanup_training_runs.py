@@ -8,7 +8,7 @@ entity = "felix-herrmann"
 project = "diffusion_policy_debug"
 
 arg_parser = argparse.ArgumentParser()
-arg_parser.add_argument("--root", type=str, default="/home/felix/Workspace/diffusion_policy_felix/data/outputs")
+arg_parser.add_argument("--root", type=str, default=os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data/outputs'))
 args = arg_parser.parse_args()
 
 def bad_run(path):

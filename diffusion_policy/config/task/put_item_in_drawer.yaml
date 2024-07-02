@@ -32,7 +32,7 @@ shape_meta: &shape_meta
 
 gripper_loc_bounds: 
   _target_: diffusion_policy.common.rlbench_util.get_gripper_loc_bounds
-  path: "/home/felix/Workspace/diffusion_policy_felix/diffusion_policy/tasks/18_peract_tasks_location_bounds.json"
+  path: "${oc.env:DIFFUSION_POLICY_ROOT}/diffusion_policy/tasks/18_peract_tasks_location_bounds.json"
   buffer: 0.0
   task: ${name}
 
@@ -42,7 +42,7 @@ use_keyframe_observations: False
 
 dataset:
   _target_: diffusion_policy.dataset.rlbench_dataset.RLBenchLowdimDataset
-  root: /home/felix/Workspace/diffusion_policy_felix/data/keypoint/train
+  root: {oc.env:DIFFUSION_POLICY_ROOT}/data/keypoint/train
   task_name: put_item_in_drawer
   cameras: []
   num_episodes: ${num_episodes}

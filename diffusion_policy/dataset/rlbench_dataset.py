@@ -258,9 +258,11 @@ def test():
     from diffusion_policy.common.rlbench_util import create_rlbench_action
     from diffusion_policy.env.rlbench.rlbench_env import visualize
     from PIL import Image
-
+    import os
+    root_dir = os.environ['DIFFUSION_POLICY_ROOT']
+    data_root = os.path.join(root_dir, "data/images")
     dataset = RLBenchImageDataset(
-        root = "/home/felix/Workspace/diffusion_policy_felix/data/images/",
+        root = data_root,
         task_name="open_drawer",
         num_episodes=-1,
         variation=0,

@@ -238,7 +238,8 @@ class RLBenchNextBestPoseDataset(torch.utils.data.Dataset):
 
 def speed_test():
     import time
-    dataset_path = '/home/felix/Workspace/diffusion_policy_felix/data/rlbench.zarr'
+    import os
+    dataset_path = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], "data/rlbench.zarr")
     dataset = RLBenchNextBestPoseDataset(dataset_path, n_skip=1, n_episodes=-1, val_ratio=0.1, use_mask=True, image_rescale=(0.7, 1.25), cache_size=100)
     print(len(dataset)) 
     start = time.time()
@@ -251,7 +252,7 @@ if __name__ == "__main__":
     from PIL import Image
     from torchvision.utils import make_grid, save_image
     speed_test()
-    # dataset_path = '/home/felix/Workspace/diffusion_policy_felix/data/rlbench.zarr'
+    # dataset_path = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], "data/rlbench.zarr")
     # dataset = RLBenchNextBestPoseDataset(dataset_path, n_skip=1, n_episodes=-1, val_ratio=0.1, use_mask=True, image_rescale=(0.7, 1.25))
     # print(len(dataset)) 
     # print_dict(dataset[0])

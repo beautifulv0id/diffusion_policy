@@ -1,4 +1,4 @@
-cd /home/felix/Workspace/diffusion_policy_felix/diffusion_policy/workspace
+cd ${DIFFUSION_POLICY_ROOT}/diffusion_policy/workspace
 . ~/miniforge3/etc/profile.d/conda.sh
 conda activate robodiff
 

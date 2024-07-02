@@ -22,14 +22,14 @@ shape_meta: &shape_meta
 
 gripper_loc_bounds: 
   _target_: diffusion_policy.common.rlbench_util.get_gripper_loc_bounds
-  path: "/home/felix/Workspace/diffusion_policy_felix/diffusion_policy/tasks/18_peract_tasks_location_bounds.json"
+  path: "${oc.env:DIFFUSION_POLICY_ROOT}/diffusion_policy/tasks/18_peract_tasks_location_bounds.json"
   buffer: 0.0
   task: ${name}
 
 
 dataset:
   _target_: diffusion_policy.dataset.rlbench_dataset.RLBenchDataset
-  root: /home/felix/Workspace/diffusion_policy_felix/data/peract
+  root: {oc.env:DIFFUSION_POLICY_ROOT}/data/peract
   task_name: ${task.name}
   cameras: []
   num_episodes: ${num_episodes}

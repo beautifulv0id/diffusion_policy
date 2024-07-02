@@ -24,7 +24,7 @@ from absl import flags
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string('save_path',
-                    '/home/felix/Workspace/diffusion_policy_felix/data/my_data',
+                    os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data', 'images'),
                     'Where to save the demos.')
 flags.DEFINE_list('tasks', ['open_drawer'],
                   'The tasks to collect. If empty, all tasks are collected.')

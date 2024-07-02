@@ -597,9 +597,9 @@ class RLBenchEnv:
         self.launch()
 
         successful_tries = 0
-        task.reset_to_demo(demo)
 
         for i in range(demo_consistency_tries):
+            task.reset_to_demo(demo)
             gt_keyframe_actions = []
             gt_obs = []
             for f in _keypoint_discovery(demo):
@@ -665,7 +665,7 @@ class RLBenchEnv:
                     continue
 
                 successful_ties = self._verify_demo(
-                    demo, task, max_rrt_tries, demo_consistency_tries
+                    demo, task, max_rrt_tries, demo_consistency_tries, verbose
                 )
                 
                 if successful_ties == demo_consistency_tries:
@@ -882,164 +882,3 @@ class RLBenchEnv:
         log_data.update( {
             "successful_demos": successful_demos,
         })
-
-import hydra
-from hydra import compose, initialize
-from omegaconf import OmegaConf
-
-OmegaConf.register_new_resolver("eval", eval, replace=True)
-
-def test_verify_demos():
-    data_path = "/home/felix/Workspace/diffusion_policy_felix/data/peract"
-    env = RLBenchEnv(
-        data_path=data_path,
-        headless=False,
-        collision_checking=False,
-        obs_history_augmentation_every_n=2,
-    )
-    sr, demo_valid, success_rates = env.verify_demos(
-        task_str="open_drawer",
-        variation=0,
-        num_demos=1,
-        max_rrt_tries=10,
-        demo_consistency_tries=10,
-        verbose=True,
-    )
-    print("Success rate: ", sr)
-    print("Valid demos: ", np.count_nonzero(demo_valid))
-    print("Invalid demos: ", np.count_nonzero(~demo_valid))
-    print("Success rates: ", success_rates)
-    return
-
-def test_evaluation():
-    pass
-
-def load_config(config_name, overrides):
-    with initialize(version_base=None, config_path="../../config"):
-        cfg = compose(config_name=config_name, overrides=overrides)
-    OmegaConf.resolve(cfg)
-    return cfg
-
-def load_model(checkpoint_path, cfg):
-    OmegaConf.resolve(cfg)
-    policy = hydra.utils.instantiate(cfg.policy)
-    checkpoint = torch.load(checkpoint_path)
-    policy.load_state_dict(checkpoint["state_dicts"]['model'])
-    return policy
-
-def load_dataset(cfg):
-    dataset = hydra.utils.instantiate(cfg.task.dataset)
-    return dataset
-
-def test():    
-    TASK = "open_drawer_image"
-    checkpoint_path = "/home/felix/Workspace/diffusion_policy_felix/data/outputs/2024.06.26/16.05.55_train_diffuser_actor_open_drawer_image/checkpoints/epoch=0900-train_loss=3.907.ckpt"
-
-    cfg = load_config("train_diffuser_actor.yaml", [f"task={TASK}"])
-    dataset = load_dataset(cfg)
-    policy : SE3FlowMatchingPolicy = load_model(checkpoint_path, cfg)
-
-    policy = policy.to("cuda")
-
-    policy.eval()
-    batch = dict_apply(dataset[0], lambda x: x.unsqueeze(0).float().cuda())
-
-    env : RLBenchEnv = hydra.utils.instantiate(cfg.task.env_runner, render_image_size=[1280//2, 720//2], output_dir="").env
-
-    task_str = "open_drawer"
-    task_type = task_file_to_task_class(task_str)
-    task = env.env.get_task(task_type)
-    task.set_variation(0)
-
-    actioner = Actioner(
-        policy=policy,
-        instructions={task_str: [[torch.rand(10)],[torch.rand(10)],[torch.rand(10)]]},
-        action_dim=7,
-    )
-
-    eval_dict = policy.evaluate(batch)
-    print_dict(eval_dict)
-
-    logs = env._evaluate_task_on_demos(
-        task_str=task_str,
-        task=task,
-        max_steps=5,
-        demos=dataset.demos[:1],
-        actioner=actioner,
-        max_rrt_tries=3,
-        demo_tries=1,
-        n_visualize=1,
-        verbose=True,
-    )
-
-    write_video(logs["rgbs_ls"][0], f"/home/felix/Workspace/diffusion_policy_felix/data/videos/{cfg.name}.mp4")
-    
-
-
-def test_dataset_simulation_consitency():
-    from diffusion_policy.dataset.rlbench_dataset import RLBenchLowdimDataset
-    from diffusion_policy.common.adaptors import Peract2Robomimic
-    data_path = "/home/felix/Workspace/diffusion_policy_felix/data/keypoint/train"
-    task_str = "stack_blocks"
-    n_obs_steps = 2
-    obs_history_augmentation_every_n=10
-    dataset = RLBenchLowdimDataset(
-        root=data_path,
-        task_name=task_str,
-        n_obs_steps=n_obs_steps,
-        variation=0,
-        num_episodes=1,
-        obs_augmentation_every_n=obs_history_augmentation_every_n,
-        use_low_dim_state=True,
-        use_low_dim_pcd=False
-    )
-
-    sample0 = dict_apply(dataset[0], lambda x: x.unsqueeze(0).float())
-
-    env = RLBenchEnv(
-        data_path=data_path,
-        headless=True,
-        obs_history_augmentation_every_n=10,
-        n_obs_steps=n_obs_steps,
-        apply_rgb=False,
-        apply_pc=False,
-        apply_depth=False,
-        apply_low_dim_pcd=False,
-        render_image_size=[1280//2, 720//2],
-        apply_pose=True,
-        adaptor=Peract2Robomimic()
-    )
-
-    task_type = task_file_to_task_class(task_str)
-    task = env.env.get_task(task_type)
-
-    sim_obs, sim_acts = env.get_first_observation(
-        task = task,
-        task_str = task_str,
-        demos = dataset.demos[:1],
-        max_steps=10,
-        actioner=sample0['obs']['robot0_eef_pos'],
-    )
-
-    print("Dataset obs")
-    print_dict(sample0['obs'])
-    print()
-    print("Simulation obs")
-    print_dict(sim_obs[0])
-    print()
-    print("Adapted simulation obs")
-    print_dict(Peract2Robomimic().unadapt({'obs': sim_obs[0]})['obs'])
-
-    compare_dicts(sim_obs[0], sample0['obs'])
-
-
-if __name__ == "__main__":
-    from diffusion_policy.policy.flow_matching_SE3_lowdim_policy import SE3FlowMatchingPolicy
-    from diffusion_policy.common.pytorch_util import dict_apply
-    import imageio.v2 as iio
-
-    # test()
-    # test_replay()
-    # test_dataset_simulation_consitency()
-
-    print("Done!")

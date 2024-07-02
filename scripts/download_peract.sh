@@ -21,7 +21,7 @@
 
 tasks=open_drawer,put_item_in_drawer,stack_blocks,turn_tab,sweep_to_dustpan_of_size,reach_and_drag,close_jar
 
-save_path=/home/felix/Workspace/diffusion_policy_felix/data/peract
+save_path=${DIFFUSION_POLICY_ROOT}/data/peract
 
 mkdir -p $save_path
 mkdir -p $save_path/train

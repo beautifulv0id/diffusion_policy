@@ -1,4 +1,4 @@
-save_path=/home/felix/Workspace/diffusion_policy_felix/data/image
+save_path=${DIFFUSION_POLICY_ROOT}/data/image
 image_size=128,128
 variations=1
 episodes_per_task=50
@@ -7,7 +7,7 @@ processes=5
 tasks=open_drawer,stack_blocks,put_item_in_drawer,sweep_to_dustpan_of_size,turn_tap
 high_dim=True
 
-cd /home/felix/Workspace/diffusion_policy_felix/installs/RLBench/tools
+cd ${DIFFUSION_POLICY_ROOT}/installs/RLBench/tools
 xvfb-run -a /home/felix/miniforge3/envs/robodiff/bin/python3 dataset_generator.py \
 --tasks=$tasks \
 --all_variations=False \

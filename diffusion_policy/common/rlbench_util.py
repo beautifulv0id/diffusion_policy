@@ -1,3 +1,6 @@
+if __name__ == "__main__":
+    import matplotlib
+    matplotlib.use('Agg')
 
 from rlbench.demo import Demo
 from typing import List
