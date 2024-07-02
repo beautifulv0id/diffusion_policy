@@ -6,8 +6,7 @@ import tap
 
 
 class Arguments(tap.Tap):
-    root_dir: Path
-
+    root_dir: Path = Path(os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data', 'peract', 'raw'))
 
 def main(root_dir, task):
     variations = os.listdir(f'{root_dir}/{task}/all_variations/episodes')

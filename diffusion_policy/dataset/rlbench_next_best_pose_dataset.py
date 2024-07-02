@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import zarr
 import copy
+from time import time
 from diffusion_policy.common.rlbench_util import create_obs_state_plot
 from diffusion_policy.common.pytorch_util import dict_apply, print_dict
 from diffusion_policy.dataset.rlbench_utils import Resize
@@ -71,6 +72,7 @@ class RLBenchNextBestPoseDataset(torch.utils.data.Dataset):
                  n_episodes = 1,
                  val_ratio = 0.1,
                  image_rescale=(1.0, 1.0),
+                 cache_size=0
                  ):
         
         self._training = True
@@ -171,11 +173,16 @@ class RLBenchNextBestPoseDataset(torch.utils.data.Dataset):
         self.use_low_dim_state = use_low_dim_state
         self.demos = demos[:n_episodes-n_val]
         self.val_demos = demos[n_episodes-n_val:]
+        self._cache = dict()
+        self._cache_size = cache_size
 
     def __len__(self):
         return len(self.indices)
     
     def __getitem__(self, idx):
+        if idx in self._cache:
+            return self._cache[idx]
+        
         indices = self.indices[idx]
         obs_idxs, next_keypoint_idx = indices
         sample = collate_samples(
@@ -196,6 +203,13 @@ class RLBenchNextBestPoseDataset(torch.utils.data.Dataset):
 
         if self._training:
             sample['obs'].update(self._resize(rgb=sample['obs']['rgb'], pcd=sample['obs']['pcd'], mask=sample['obs'].get('mask', None)))
+
+        if len(self._cache) == self._cache_size and self._cache_size > 0:
+            key = list(self._cache.keys())[int(time()) % self._cache_size]
+            del self._cache[key]
+
+        if len(self._cache) < self._cache_size:
+            self._cache[idx] = sample
 
         return sample
 
@@ -222,21 +236,33 @@ class RLBenchNextBestPoseDataset(torch.utils.data.Dataset):
         return imgs
 
 
+def speed_test():
+    import time
+    dataset_path = '/home/felix/Workspace/diffusion_policy_felix/data/rlbench.zarr'
+    dataset = RLBenchNextBestPoseDataset(dataset_path, n_skip=1, n_episodes=-1, val_ratio=0.1, use_mask=True, image_rescale=(0.7, 1.25), cache_size=100)
+    print(len(dataset)) 
+    start = time.time()
+    for i in range(100000):
+        data = dataset[i % len(dataset)]
+    print(time.time() - start)
+
+
 if __name__ == "__main__":
     from PIL import Image
     from torchvision.utils import make_grid, save_image
-    dataset_path = '/home/felix/Workspace/diffusion_policy_felix/data/rlbench.zarr'
-    dataset = RLBenchNextBestPoseDataset(dataset_path, n_skip=1, n_episodes=-1, val_ratio=0.1, use_mask=True, image_rescale=(0.7, 1.25))
-    print(len(dataset)) 
-    print_dict(dataset[0])
+    speed_test()
+    # dataset_path = '/home/felix/Workspace/diffusion_policy_felix/data/rlbench.zarr'
+    # dataset = RLBenchNextBestPoseDataset(dataset_path, n_skip=1, n_episodes=-1, val_ratio=0.1, use_mask=True, image_rescale=(0.7, 1.25))
+    # print(len(dataset)) 
+    # print_dict(dataset[0])
     # val_set = dataset.get_validation_dataset()
     # print(len(val_set))
     # print_dict(val_set[0])
 
-    rgb = dataset[0]['obs']['rgb']
-    img = make_grid(rgb, nrow=3)
-    save_image(img, 'rgb.png')
+    # rgb = dataset[0]['obs']['rgb']
+    # img = make_grid(rgb, nrow=3)
+    # save_image(img, 'rgb.png')
             
-    img = dataset.get_data_visualization(20)
-    img = make_grid(img, nrow=4)
-    save_image(img, "data_visualization.png")
+    # img = dataset.get_data_visualization(20)
+    # img = make_grid(img, nrow=4)
+    # save_image(img, "data_visualization.png")

@@ -438,7 +438,8 @@ def extract_obs(obs: Observation,
         mask = np.stack([obs_dict.pop('%s_mask' % camera) for camera in cameras])
         # objects of interest have id > 97
         # due to conversion errors some background pixels have id > 55
-        mask = (mask > 97) & (mask < 256 * 256) 
+        print(np.unique(mask))
+        mask = (mask > 93) & (mask < 256 * 256) 
         obs_dict['mask'] = mask.astype(np.bool)
 
     if use_low_dim_pcd:

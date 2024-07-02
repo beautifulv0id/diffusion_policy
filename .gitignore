@@ -8,6 +8,7 @@ data_local
 _wandb
 my_tests
 **/.DS_Store
+installs
 
 fuse.cfg
 

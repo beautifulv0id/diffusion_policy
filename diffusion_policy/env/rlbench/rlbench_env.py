@@ -219,6 +219,8 @@ class RLBenchEnv:
         self._gripper_dummmies = None
         self._observation_dummies = None
         self._keypoints = None
+
+        
     
     def create_gripper_dummies(self, num_grippers) -> Dummy:
         
@@ -724,21 +726,23 @@ class RLBenchEnv:
             "obs_state" : [],
             "mask" : [],
         }
-        # obs_dicts_ls = []
+        task_type = task_file_to_task_class(task_str)
+        task : TaskEnvironment = env.env.get_task(task_type)
+        task.set_variation(0)
+
         n_obs_steps = self.n_obs_steps
-
-        for demo_id, demo in enumerate(demos):
+        
+        for demo_id in range(proc_num, len(demos), num_procs):
+            demo = demos[demo_id]
             if verbose:
-                print()
-                print(f"Starting demo {demo_id}")
-
+                    print()
+                    print(f"Starting demo {demo_id}")
             for demo_try_i in range(demo_tries):
                 if demo_id < n_visualize and demo_try_i == 0:
                     self.start_recording()
                     obs_state = []
                     if self.apply_mask:
                         logging_masks = []
-                        mask_ids = []
 
                 rgbs = torch.Tensor([])
                 pcds = torch.Tensor([])
@@ -752,7 +756,6 @@ class RLBenchEnv:
                 descriptions, observation = task.reset_to_demo(demo)
                 self.store_obs(observation)
                 self.record_frame(observation)
-
                 actioner.load_episode(task_str, demo.variation_number)
 
                 move = Mover(task, max_tries=max_rrt_tries)
@@ -760,16 +763,9 @@ class RLBenchEnv:
                 max_reward = 0.0
 
                 for step_id in range(max_steps):
-                    log_resource_usage()
                     # Fetch the current observation, and predict one action
                     for obs in self.get_obs_history():
-                        obs_dict = extract_obs(obs, 
-                                                cameras=self.apply_cameras, 
-                                                use_rgb=self.apply_rgb, 
-                                                use_pcd=self.apply_pc, 
-                                                use_mask=self.apply_mask, 
-                                                use_pose=self.apply_poses, 
-                                                use_low_dim_state=True)
+                        obs_dict = extract_obs(obs, cameras=self.apply_cameras, use_rgb=self.apply_rgb, use_pcd=self.apply_pc, use_mask=self.apply_mask, use_pose=self.apply_poses, use_low_dim_state=True)
                         obs_dict = dict_apply(obs_dict, lambda x: torch.from_numpy(x).unsqueeze(0))
 
                         if self.apply_rgb:
@@ -803,11 +799,6 @@ class RLBenchEnv:
                         input = input.view((1, n_obs_steps, ) + sh_in[1:])
                         return input
 
-                    # TODO: remove this
-                    if self._recording:
-                        if self.apply_mask:
-                            mask_ids.append(obs_dict['mask_ids'])
-
                     # Prepare proprioception history
                     npad = n_obs_steps - grippers[-n_obs_steps:].shape[0]
                     obs_dict = dict()
@@ -834,10 +825,11 @@ class RLBenchEnv:
 
                     if self._recording:
                         obs_state.append(create_obs_state_plot(obs_dict))
-                        obs_state.append(create_obs_state_plot(obs_dict, use_mask=True))
+                        if self.apply_mask:
+                            obs_state.append(create_obs_state_plot(obs_dict, use_mask=True))
                         if self.apply_mask:
                             logging_masks.append((masks[-1,-1].int() * 255).expand(3, -1, -1).cpu().numpy().astype(np.uint8))
-                            mask_ids.append(obs_dict)
+
                     obs_dict = dict_apply(obs_dict, lambda x: x.type(dtype).to(device))
 
                     out = actioner.predict(obs_dict)
@@ -886,8 +878,6 @@ class RLBenchEnv:
                     if self.apply_mask:
                         masks = np.array(logging_masks)
                         log_data["mask"].append(masks)
-                        mask_ids = np.array(mask_ids)
-                        log_data["mask_ids"].append(mask_ids)
 
                 total_reward += max_reward
 
@@ -905,9 +895,8 @@ class RLBenchEnv:
                     f"Total reward: {total_reward:.2f}/{(demo_id+1) * demo_tries}"                )
 
         log_data.update( {
-            "success_rate": successful_demos / (len(demos) * demo_tries),
+            "successful_demos": successful_demos,
         })
-        return log_data
 
 import hydra
 from hydra import compose, initialize
@@ -956,104 +945,6 @@ def load_model(checkpoint_path, cfg):
 def load_dataset(cfg):
     dataset = hydra.utils.instantiate(cfg.task.dataset)
     return dataset
-
-def write_video(rgbs, path, fps=30):
-    writer = iio.get_writer(path, fps=fps, format='FFMPEG', mode='I')
-    for image in rgbs:
-        writer.append_data(image.transpose(1, 2, 0))
-    writer.close()
-
-def test_replay(result_dict=None):
-    print("Testing replay")
-    TASK = "open_drawer_image"
-    n_obs_steps = 3
-    overrides = [
-        f"task={TASK}", 
-        f"n_obs_steps={n_obs_steps}",
-        "task.obs_history_from_planner=False",
-        "task.use_keyframe_observations=True",
-        "num_episodes=1",
-        ]
-
-    data_path = "/home/felix/Workspace/diffusion_policy_felix/data/peract"
-    cfg = load_config("train_diffuser_actor_flow_matching_se3_masked.yaml", overrides)
-    dataset = load_dataset(cfg)
-
-    env : RLBenchEnv = hydra.utils.instantiate(cfg.task.env_runner, render_image_size=[1280//2, 720//2], output_dir="").env
-
-    task_str = "open_drawer"
-    task_type = task_file_to_task_class(task_str)
-    task = env.env.get_task(task_type)
-    task.set_variation(0)
-
-    demos = env.get_demo(task_str, 0, episode_index=0)
-
-    class ReplayPolicy:
-        def __init__(self, demo):
-            self._actions = get_actions_from_demo(demo)
-            self.idx = 0
-            self.n_obs_steps = n_obs_steps
-
-        def predict_action(self, obs):
-            action = self._actions[self.idx % len(self._actions)]
-            self.idx += 1
-            return {
-                'rlbench_action' : 
-                    action.cpu().numpy()
-            }
-        
-        def eval(self):
-            pass
-
-        def parameters(self):
-            return iter([torch.empty(0)])
-
-    policy = ReplayPolicy(demos[0])
-        
-    replay_actioner = Actioner(
-        policy=policy,
-        instructions={task_str: [[torch.rand(10)],[torch.rand(10)],[torch.rand(10)]]},
-        action_dim=8,
-    )
-
-    log_data = env._evaluate_task_on_demos(
-        task_str=task_str,
-        task=task,
-        max_steps=3,
-        demos=demos,
-        actioner=replay_actioner,
-        max_rrt_tries=1,
-        demo_tries=1,
-        n_visualize=1,
-        verbose=True,
-    )
-
-    rgbs_ls = log_data.pop("rgbs")
-    obs_state_ls = log_data.pop("obs_state")
-    mask_ls = log_data.pop("mask")
-
-    if len(rgbs_ls) > 0:
-        write_video(rgbs_ls[0], "/home/felix/Workspace/diffusion_policy_felix/data/videos/rlbench_runner_test.mp4")
-    else:
-        print("No rgbs")
-
-    if len(obs_state_ls) > 0:
-        print("obs_state_ls", len(obs_state_ls[0]))
-        write_video(obs_state_ls[0], "/home/felix/Workspace/diffusion_policy_felix/data/videos/rlbench_runner_obs_state_test.mp4", fps=1)
-    else:
-        print("No obs")
-    
-    if len(mask_ls) > 0:
-        write_video(mask_ls[0], "/home/felix/Workspace/diffusion_policy_felix/data/videos/rlbench_runner_mask_test.mp4")
-    else:
-        print("No masks")
-
-    if result_dict is not None:
-        result_dict = {
-            "rgbs" : rgbs_ls,
-            "obs_state" : obs_state_ls,
-            "mask" : mask_ls,
-        }
 
 def test():    
     TASK = "open_drawer_image"
