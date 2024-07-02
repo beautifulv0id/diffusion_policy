@@ -12,6 +12,7 @@ from typing import List
 import wandb
 from diffusion_policy.env_runner.rlbench_utils import _evaluate_task_on_demos
 
+
 class RLBenchRunner(BaseImageRunner):
     def __init__(self, 
                  output_dir,
@@ -65,6 +66,7 @@ class RLBenchRunner(BaseImageRunner):
             "n_obs_steps" : n_obs_steps,
             "n_action_steps" : n_action_steps,
         }
+
 
         self.task_str = task_str
         self.action_dim = action_dim
@@ -123,98 +125,3 @@ class RLBenchRunner(BaseImageRunner):
 
         
         return log_data
-    
-import hydra
-from hydra import compose, initialize
-from omegaconf import OmegaConf
-import pathlib
-
-OmegaConf.register_new_resolver("eval", eval, replace=True)
-
-def test():
-    import torch
-    from diffusion_policy.policy.flow_matching_SE3_lowdim_policy import SE3FlowMatchingPolicy
-
-    with initialize(version_base=None, config_path="../config"):
-        cfg = compose(config_name="train_flow_matching_SE3_lowdim_feat_pcd_workspace.yaml", overrides=["task=open_drawer","model=feat_pcd_tit"])
-
-    OmegaConf.resolve(cfg)
-    policy : SE3FlowMatchingPolicy = hydra.utils.instantiate(cfg.policy)
-    checkpoint_path = "/home/felix/Workspace/diffusion_policy_felix/data/outputs/2024.06.22/10.42.07_train_diffuser_actor_flow_matching_se3_masked_open_drawer_image/checkpoints/epoch=5700-train_loss=0.220.ckpt"
-    checkpoint = torch.load(checkpoint_path)
-
-    dataset = hydra.utils.instantiate(cfg.task.dataset)
-    val_dataset = dataset.get_validation_dataset()
-
-    policy.load_state_dict(checkpoint["state_dicts"]['model'])
-    env_runner = RLBenchRunner(output_dir=str(pathlib.Path(__file__).parent.parent.parent / "data"),
-                                data_root=cfg.task.dataset.root,
-                                task_str=cfg.task.dataset.task_name,
-                                max_steps=50,
-                                render_image_size=[1280, 720],
-                                max_episodes=1,
-                                apply_low_dim_pcd=True,
-                                apply_pose=True,
-                                headless=False)
-
-    env_runner.n_val_vis = 0
-    env_runner.n_train_vis = 0
-
-    results = env_runner.run(policy, demos=dataset.demos)
-    print(results)
-
-
-def test_replay():
-    import torch
-    import numpy as np
-    from diffusion_policy.env.rlbench.rlbench_utils import Actioner, task_file_to_task_class, get_actions_from_demo
-    from rlbench.utils import get_stored_demos
-    import os
-
-    data_path = "/home/felix/Workspace/diffusion_policy_felix/data/peract"
-    task_str = "open_drawer"
-    env_runner = RLBenchRunner(output_dir="/home/felix/Workspace/diffusion_policy_felix/data/videos/rlbench_runner_test",
-                                data_root=data_path,
-                                task_str=task_str,
-                                max_steps=3,
-                                max_episodes=1,
-                                headless=False,
-                                apply_rgb=True,
-                                apply_depth=False,
-                                apply_pc=True,
-                                apply_mask=True,)
-    
-    env = env_runner.env
-    task_type = task_file_to_task_class(task_str)
-    task = env.env.get_task(task_type)
-    variation = 0
-    task.set_variation(variation)
-    demos = env.get_demo(task_str, variation, episode_index=0)
-
-    class ReplayPolicy:
-        def __init__(self, demo):
-            self._actions = get_actions_from_demo(demo)
-            self.idx = 0
-            self.n_obs_steps = 2
-
-        def predict_action(self, obs):
-            return {
-                "action": self._actions.pop(0).unsqueeze(0),
-            }
-        
-        def eval(self):
-            pass
-
-        def parameters(self):
-            return iter([torch.empty(0)])
-
-    policy = ReplayPolicy(demos[0])
-    env_runner.n_val_vis = 0
-    env_runner.n_train_vis = 0
-    results = env_runner.run(policy, demos)
-    print(results)
-
-if __name__ == "__main__":
-    test_replay()
-    # test()
-    print("Done!")

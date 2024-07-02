@@ -33,21 +33,6 @@ from diffusion_policy.common.visualization_se3 import visualize_frames, visualiz
 from diffusion_policy.model.common.so3_util import quaternion_to_matrix
 
 
-import psutil
-import time
-import logging
-
-# Set up logging
-logging.basicConfig(filename='resource_usage.log', level=logging.INFO)
-
-def log_resource_usage():
-    process = psutil.Process()
-    memory_info = process.memory_info()
-    cpu_percent = process.cpu_percent(interval=1)
-    logging.info(f"Memory Usage: {memory_info.rss / (1024 * 1024)} MB")
-    logging.info(f"CPU Usage: {cpu_percent} %")
-
-
 def visualize(obs, action=None):
     state_rotation = [v for k, v in obs.items() if 'rot' in k]
     state_translation = [v for k, v in obs.items() if 'pos' in k]
