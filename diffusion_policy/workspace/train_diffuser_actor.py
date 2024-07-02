@@ -64,6 +64,8 @@ class TrainingWorkspace(BaseWorkspace):
             if lastest_ckpt_path.is_file():
                 print(f"Resuming from checkpoint {lastest_ckpt_path}")
                 self.load_checkpoint(path=lastest_ckpt_path)
+                self.epoch += 1
+                self.global_step += 1
 
         # configure data
         dataset = hydra.utils.instantiate(cfg.task.dataset)
@@ -159,7 +161,7 @@ class TrainingWorkspace(BaseWorkspace):
         # training loop
         log_path = os.path.join(self.output_dir, 'logs.json.txt')
         with JsonLogger(log_path) as json_logger:
-            with tqdm.tqdm(range(cfg.training.num_epochs), desc="Training",
+            with tqdm.tqdm(range(self.epoch, cfg.training.num_epochs), desc="Training",
                     leave=False, mininterval=cfg.training.tqdm_interval_sec) as gepoch:
 
                 for local_epoch_idx in gepoch:
@@ -232,7 +234,7 @@ class TrainingWorkspace(BaseWorkspace):
 
                     # run rollout (TASK SATISFACTION)
                     if (self.epoch % cfg.training.rollout_every) == 0 \
-                            and self.epoch > 0 or self.epoch == cfg.training.num_epochs-1:
+                            and self.epoch > 0:
                         runner_log = env_runner.run(policy, dataset.demos, mode="train")
                         runner_log.update(
                             env_runner.run(policy, val_dataset.demos, mode="eval")
@@ -315,7 +317,10 @@ class TrainingWorkspace(BaseWorkspace):
     config_name=pathlib.Path(__file__).stem)
 def main(cfg):
     workspace = TrainingWorkspace(cfg)
-    workspace.run()
+    if cfg.training.init_resumable:
+        print(workspace.output_dir)
+    else:
+        workspace.run()
 
 
 if __name__ == "__main__":

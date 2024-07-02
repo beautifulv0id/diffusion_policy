@@ -94,6 +94,7 @@ training:
   # misc
   tqdm_interval_sec: 1.0
   freeze_encoder: False
+  init_resumable: False
 
 ema:
   _target_: diffusion_policy.model.diffusion.ema_model.EMAModel

@@ -1,38 +1,12 @@
-cd /home/felix/Workspace/diffusion_policy_felix/diffusion_policy/workspace/
+cd /home/felix/Workspace/diffusion_policy_felix/diffusion_policy/workspace
+. ~/miniforge3/etc/profile.d/conda.sh
 conda activate robodiff
 
-python train_flow_matching_SE3_lowdim_workspace.py \
-                                        task=put_item_in_drawer \
-                                        num_episodes=1 \
-                                        training.rollout_every=5000 \
-                                        training.num_epochs=50000 \
-                                        +task.env_runner.n_train_vis=3 \
-                                        +task.env_runner.n_val_vis=3 \
-                                        task.env_runner.max_episodes=5 \
-                                        policy.relative_position=False \
-                                        policy.relative_rotation=False \
-                                        policy.data_augmentation=False 
+args="num_episodes=1\
+    training.rollout_every=1000\
+    training.resume=True"
 
-# python train_flow_matching_SE3_lowdim_workspace.py \
-#                                         task=put_item_in_drawer \
-#                                         num_episodes=1 \
-#                                         training.rollout_every=5000 \
-#                                         training.num_epochs=50000 \
-#                                         +task.env_runner.n_train_vis=3 \
-#                                         +task.env_runner.n_val_vis=3 \
-#                                         task.env_runner.max_episodes=5 \
-#                                         policy.relative_position=True \
-#                                         policy.relative_rotation=False \
-#                                         policy.data_augmentation=True 
+hydra_run_dir=$(python train_diffuser_actor.py $args training.init_resumable=True)
+xvfb-run -a python train_diffuser_actor.py $args hydra.run.dir=$hydra_run_dir training.num_epochs=21 training.checkpoint_every=10
+xvfb-run -a python train_diffuser_actor.py $args hydra.run.dir=$hydra_run_dir training.resume=True training.num_epochs=41 training.checkpoint_every=10
 
-# python train_flow_matching_SE3_lowdim_workspace.py \
-#                                         task=open_drawer \
-#                                         num_episodes=-1 \
-#                                         training.rollout_every=150000 \
-#                                         training.num_epochs=150000 \
-#                                         +task.env_runner.n_train_vis=3 \
-#                                         +task.env_runner.n_val_vis=3 \
-#                                         task.env_runner.max_episodes=5 \
-#                                         policy.relative_position=False \
-#                                         policy.relative_rotation=False \
-#                                         policy.data_augmentation=True 
