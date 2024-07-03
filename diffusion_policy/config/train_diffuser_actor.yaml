@@ -1,7 +1,7 @@
 # Actually the task entry loads the yaml file inside task
 defaults:
   - _self_
-  - task: open_drawer_image_3DDA
+  - task: rlbench_image
 
 name: train_diffuser_actor
 _target_: diffusion_policy.workspace.train_diffuser_actor.TrainingWorkspace
@@ -81,6 +81,7 @@ training:
   max_val_steps: null
   # misc
   init_resumable: False
+  tqdm_interval_sec: 1.0
 
 ema:
   _target_: diffusion_policy.model.diffusion.ema_model.EMAModel

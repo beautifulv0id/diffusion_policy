@@ -318,10 +318,9 @@ class TrainingWorkspace(BaseWorkspace):
 def main(cfg):
     workspace = TrainingWorkspace(cfg)
     if cfg.training.init_resumable:
-        print(workspace.output_dir)
+        print(f"\n{workspace.output_dir}")
     else:
         workspace.run()
-
 
 if __name__ == "__main__":
     main()

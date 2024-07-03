@@ -1,5 +1,8 @@
 # TODOs 📔
-- 
+- [ ] check: training pickup
+- [ ] setup IAS cluster for experiments
+  - [ ] install conda environment
+  - [ ] move dataset to cluster
 - [ ] switch to real part last in dataset
 - [ ] I made a change to AdaLN unsqueeze(1) -> unsqueeze(0) - ok??
 - [ ] re-add workspace normalization
