@@ -1,0 +1,8 @@
+defaults:
+  - rlbench_image
+
+name: put_item_in_drawer_image
+task_name: put_item_in_drawer
+
+env_runner:
+  max_steps: 12

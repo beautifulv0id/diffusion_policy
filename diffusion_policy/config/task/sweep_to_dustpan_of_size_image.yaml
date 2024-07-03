@@ -1,0 +1,8 @@
+defaults:
+  - rlbench_image
+
+name: sweep_to_dustpan_of_size_image
+task_name: sweep_to_dustpan_of_size
+
+env_runner:
+  max_steps: 5

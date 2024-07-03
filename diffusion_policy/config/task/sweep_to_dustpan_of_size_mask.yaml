@@ -1,0 +1,8 @@
+defaults:
+  - rlbench_mask
+
+name: sweep_to_dustpan_of_size_mask
+task_name: sweep_to_dustpan_of_size
+
+env_runner:
+  max_steps: 5

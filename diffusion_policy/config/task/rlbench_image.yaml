@@ -1,12 +1,10 @@
-name: open_drawer
-
 image_size: [128, 128]
 
 gripper_loc_bounds: 
   _target_: diffusion_policy.common.rlbench_util.get_gripper_loc_bounds
   path: "${oc.env:DIFFUSION_POLICY_ROOT}/diffusion_policy/tasks/18_peract_tasks_location_bounds.json"
   buffer: 0.0
-  task: ${name}
+  task: ${task.task_name}
 
 cameras: ['left_shoulder', 'right_shoulder', 'wrist', 'front']
 
@@ -14,19 +12,20 @@ dataset:
   _target_: diffusion_policy.dataset.rlbench_next_best_pose_dataset.RLBenchNextBestPoseDataset
   dataset_path: ${oc.env:DIFFUSION_POLICY_ROOT}/data/image.zarr
   n_episodes: ${num_episodes}
-  task_name: ${task.name}
+  task_name: ${task.task_name}
   cameras: ${task.cameras}
   n_obs_steps: ${n_obs_steps}
   use_keypoint_obs_only: True
   val_ratio: 0.2
   use_low_dim_state: False
   use_mask: False
+  cache_size: 200
 
 env_runner:
   _target_: diffusion_policy.env_runner.rlbench_runner.RLBenchRunner
   data_root: ""
-  task_str: ${task.name}
-  max_episodes: 3
+  task_str: ${task.task_name}
+  max_episodes: 10
   max_steps: 3
   max_rrt_tries: 5
   demo_tries: 1
@@ -46,5 +45,3 @@ env_runner:
   apply_low_dim_pcd: false
   apply_pose: false
   image_size: ${task.image_size}
-  adaptor:
-    _target_: diffusion_policy.common.adaptors.Peract2Robomimic

@@ -1,7 +1,7 @@
 # Actually the task entry loads the yaml file inside task
 defaults:
   - _self_
-  - task: rlbench_image
+  - task: open_drawer_image
 
 name: train_diffuser_actor
 _target_: diffusion_policy.workspace.train_diffuser_actor.TrainingWorkspace
@@ -36,14 +36,14 @@ policy:
   use_mask: ${task.dataset.use_mask}
 
 dataloader:
-  batch_size: 4
+  batch_size: 32
   num_workers: 0
   shuffle: True
   pin_memory: False
   persistent_workers: False
 
 val_dataloader:
-  batch_size: 4
+  batch_size: 32
   num_workers: 0
   shuffle: False
   pin_memory: False
@@ -64,7 +64,7 @@ training:
   # optimization
   lr_scheduler: cosine
   lr_warmup_steps: 500
-  num_epochs: 60000
+  num_epochs: 20000
   gradient_accumulate_every: 1
   # EMA destroys performance when used with BatchNorm
   # replace BatchNorm with GroupNorm.
@@ -72,7 +72,7 @@ training:
   # training loop control
   # in epochs
   model_evaluation_every: 50
-  rollout_every: 100
+  rollout_every: 1000
   checkpoint_every: 10
   val_every: 1
   sample_every: 5

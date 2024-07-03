@@ -1,0 +1,8 @@
+defaults:
+  - rlbench_mask
+
+name: stack_blocks_mask
+task_name: stack_blocks
+
+env_runner:
+  max_steps: 12
