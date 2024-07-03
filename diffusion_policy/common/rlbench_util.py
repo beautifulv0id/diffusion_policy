@@ -443,7 +443,7 @@ def extract_obs(obs: Observation,
         # due to conversion errors some background pixels have id > 55
         print(np.unique(mask))
         mask = (mask > 93) & (mask < 256 * 256) 
-        obs_dict['mask'] = mask.astype(np.bool)
+        obs_dict['mask'] = mask.astype('bool')
 
     if use_low_dim_pcd:
         obs_dict['low_dim_pcd'] = low_dim_pcd

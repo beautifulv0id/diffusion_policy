@@ -12,7 +12,7 @@ cameras: ['left_shoulder', 'right_shoulder', 'wrist', 'front']
 
 dataset:
   _target_: diffusion_policy.dataset.rlbench_next_best_pose_dataset.RLBenchNextBestPoseDataset
-  dataset_path: ${oc.env:DIFFUSION_POLICY_ROOT}/data/peract.zarr
+  dataset_path: ${oc.env:DIFFUSION_POLICY_ROOT}/data/image.zarr
   n_episodes: ${num_episodes}
   task_name: ${task.name}
   cameras: ${task.cameras}

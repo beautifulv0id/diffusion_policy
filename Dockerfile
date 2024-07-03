@@ -52,5 +52,7 @@ RUN apt-get install -y g++-11
 
 ENV DIFFUSION_POLICY_ROOT=/workspace/
 
+RUN pip install moviepy imageio matplotlib==3.6.1
+
 # Specify the command to run on start
 CMD [ "bash" ]
