@@ -5,4 +5,4 @@ name: turn_tap_mask
 task_name: turn_tap
 
 env_runner:
-  max_steps: 2
+  max_steps: 3

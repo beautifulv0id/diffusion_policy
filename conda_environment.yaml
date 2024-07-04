@@ -15,7 +15,6 @@ dependencies:
   - pytorch-cuda=12.1
   - dgl
   - wandb
-  - matplotlib
   - click
   - hydra-core
   - dill
@@ -27,6 +26,9 @@ dependencies:
     - pandas
     - torchdata 
     - numpy==1.26.4
+    - moviepy 
+    - imageio 
+    - matplotlib==3.6.1
     - tabulate
     - einops
     - zarr
