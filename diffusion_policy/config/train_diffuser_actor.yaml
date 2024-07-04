@@ -13,7 +13,7 @@ use_keyframe_actions: True
 horizon: ${eval:'1 if ${use_keyframe_actions} else 16'}
 n_action_steps: ${eval:'1 if ${use_keyframe_actions} else 8'}
 embedding_dim: 192
-num_episodes: 1
+num_episodes: -1
 mode: train
 
 policy:

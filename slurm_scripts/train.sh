@@ -8,35 +8,27 @@
 #SBATCH --array=0-2%1
 #SBATCH --output=/home/stud_herrmann/diffusion_policy_felix/slurm_scripts/logs/train_%j.out
 
+
+training_script="train_diffuser_actor.py"
+
+task_name="put_item_in_drawer"
+task_config="put_item_in_drawer_mask"
+
+args="task=$task_config\
+    num_episodes=-1\
+    training.resume=True"
+
 WANDB_API_KEY=8009cee998358d908f42c2fce77f1ee094836701
 CONTAINER_ID_FILE=/home/stud_herrmann/diffusion_policy_felix/slurm_scripts/logs/train_${SLURM_ARRAY_JOB_ID}_container_id.txt
 HYDRA_RUN_DIR_FILE=/home/stud_herrmann/diffusion_policy_felix/slurm_scripts/logs/train_${SLURM_ARRAY_JOB_ID}_hydra_run_dir.txt
 
-training_script="train_diffuser_actor.py"
-args="task=open_drawer_image_3DDA\
-    num_episodes=1\
-    training.num_epochs=100\
-    training.rollout_every=10\
-    training.resume=True"
-
 if [ $SLURM_ARRAY_TASK_ID -eq 0 ]
 then
-    echo "Initializing training."
-    echo "Training script: $training_script"
-    echo "Arguments: $args"
     echo "Starting docker container."
-    id=$(docker run -dt --shm-size=8g -v ${DIFFUSION_POLICY_ROOT}:/workspace se3diffuser)
-    echo "Docker container started with id: $id"
+    id=$(docker run -dt --shm-size=8g -v ${DIFFUSION_POLICY_ROOT}:/workspace localhost/se3diffuser 2> /dev/null)
+    hydra_run_dir=$(./get_hydra_path.sh $training_script $task_name)
     echo $id > $CONTAINER_ID_FILE
-    hydra_run_dir=$(docker exec $id bash -c "source activate se3diffuser && 
-                                            pip3 install matplotlib==3.6.1 &&
-                                            export DGLBACKEND=pytorch &&
-                                            export WANDB_API_KEY=$WANDB_API_KEY &&
-                                            cd /workspace/diffusion_policy/workspace && 
-                                            xvfb-run -a python3 $training_script $args training.init_resumable=True" | tail -n 1)
-    echo "Hydra run directory: $hydra_run_dir"
     echo $hydra_run_dir > $HYDRA_RUN_DIR_FILE
-    echo "Training initialized."
 fi
 
 echo "Starting training."
@@ -45,9 +37,9 @@ hydra_run_dir=$(cat $HYDRA_RUN_DIR_FILE)
 echo "Docker container id: $id"
 echo "Hydra run directory: $hydra_run_dir"
 echo "Arguments: $args"
-docker exec $id bash -c "source activate se3diffuser && 
+docker exec -i $id /bin/bash -c "source activate se3diffuser && 
                         export DGLBACKEND=pytorch &&
                         export WANDB_API_KEY=$WANDB_API_KEY &&
                         cd /workspace/diffusion_policy/workspace && 
-                        xvfb-run -a python3 $training_script $args hydra.run.dir=$hydra_run_dir"
+                        xvfb-run -a python3 $training_script $args hydra.run.dir=$hydra_run_dir" 2> /dev/nul
 
