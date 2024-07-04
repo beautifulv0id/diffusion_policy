@@ -5,7 +5,7 @@
 #SBATCH --mem-per-cpu=16G
 #SBATCH -p stud3080,stud,dgx
 #SBATCH --gres=gpu:1
-#SBATCH --array=0-2%1
+#SBATCH --array=0-0%1
 #SBATCH --output=/home/stud_herrmann/diffusion_policy_felix/slurm_scripts/logs/train_%j.out
 
 
@@ -25,7 +25,7 @@ HYDRA_RUN_DIR_FILE=/home/stud_herrmann/diffusion_policy_felix/slurm_scripts/logs
 if [ $SLURM_ARRAY_TASK_ID -eq 0 ]
 then
     echo "Starting docker container."
-    id=$(docker run -dt --shm-size=8g -v ${DIFFUSION_POLICY_ROOT}:/workspace localhost/se3diffuser 2> /dev/null)
+    id=$(docker run -dt --shm-size=8g -v ${DIFFUSION_POLICY_ROOT}:/workspace 725f43c2daa2 2> /dev/null)
     hydra_run_dir=$(./get_hydra_path.sh $training_script $task_name)
     echo $id > $CONTAINER_ID_FILE
     echo $hydra_run_dir > $HYDRA_RUN_DIR_FILE
@@ -37,9 +37,9 @@ hydra_run_dir=$(cat $HYDRA_RUN_DIR_FILE)
 echo "Docker container id: $id"
 echo "Hydra run directory: $hydra_run_dir"
 echo "Arguments: $args"
-docker exec -i $id /bin/bash -c "source activate se3diffuser && 
+docker exec $id /bin/bash -c "source activate se3diffuser && 
                         export DGLBACKEND=pytorch &&
                         export WANDB_API_KEY=$WANDB_API_KEY &&
                         cd /workspace/diffusion_policy/workspace && 
-                        xvfb-run -a python3 $training_script $args hydra.run.dir=$hydra_run_dir" 2> /dev/nul
+                        xvfb-run -a python3 $training_script $args hydra.run.dir=$hydra_run_dir"
 

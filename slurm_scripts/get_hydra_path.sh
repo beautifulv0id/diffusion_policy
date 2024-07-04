@@ -17,7 +17,7 @@ minute=${datetime:10:2}
 second=${datetime:12:2}
 
 # Construct the path
-path="${DIFFUSION_POLICY_ROOT}/data/outputs/${year}.${month}.${day}/${hour}.${minute}.${second}_${training_script}_${task_name}"
+path="data/outputs/${year}.${month}.${day}/${hour}.${minute}.${second}_${training_script}_${task_name}"
 
 # Print the path
 echo "$path"
