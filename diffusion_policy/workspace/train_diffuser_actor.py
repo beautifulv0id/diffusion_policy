@@ -177,9 +177,10 @@ class TrainingWorkspace(BaseWorkspace):
                         for batch_idx, batch in enumerate(tepoch):
                             # device transfer
                                             
-                            batch = dict_apply(batch, lambda x: x.to(device, dtype, non_blocking=True))
                             if train_sampling_batch is None:
                                 train_sampling_batch = batch
+                                
+                            batch = dict_apply(batch, lambda x: x.to(device, dtype, non_blocking=True))
 
                             # compute loss
                             raw_loss = self.model.compute_loss(batch)
