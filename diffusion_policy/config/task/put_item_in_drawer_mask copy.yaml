@@ -1,8 +1,0 @@
-defaults:
-  - rlbench_mask
-
-name: put_item_in_drawer_mask
-task_name: put_item_in_drawer
-
-env_runner:
-  max_steps: 12

@@ -313,10 +313,7 @@ class TrainingWorkspace(BaseWorkspace):
     config_name=pathlib.Path(__file__).stem)
 def main(cfg):
     workspace = TrainingWorkspace(cfg)
-    if cfg.training.init_resumable:
-        print(workspace.output_dir)
-    else:
-        workspace.run()
+    workspace.run()
 
 
 

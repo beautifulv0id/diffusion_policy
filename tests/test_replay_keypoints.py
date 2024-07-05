@@ -33,7 +33,7 @@ class ReplayPolicy:
         return iter([torch.empty(0)])
 
 
-data_path = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data', 'peract', 'raw')
+data_path = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data', 'test_data')
 save_path = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data', 'tests', os.path.basename(__file__).replace('.py', ''))
 task_str = 'open_drawer'
 

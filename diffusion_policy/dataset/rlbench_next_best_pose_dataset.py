@@ -218,6 +218,11 @@ class RLBenchNextBestPoseDataset(torch.utils.data.Dataset):
         val_set.indices = self.val_indices
         val_set.demos = self.val_demos
         return val_set
+    
+    def empty_cache(self):
+        for k, v in self._cache.items():
+            del v
+        self._cache = dict()
 
     def get_data_visualization(self, num_samples=16):
         if not self.use_rgb:

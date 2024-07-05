@@ -25,7 +25,7 @@ import numpy as np
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
 from diffusion_policy.common.checkpoint_util import TopKCheckpointManager
 from diffusion_policy.common.json_logger import JsonLogger
-from diffusion_policy.common.pytorch_util import dict_apply, optimizer_to, normalizer_to, print_dict
+from diffusion_policy.common.pytorch_util import dict_apply, optimizer_to
 from diffusion_policy.model.common.lr_scheduler import get_scheduler
 from diffusion_policy.policy.diffuser_actor import DiffuserActor
 
@@ -154,8 +154,8 @@ class TrainingWorkspace(BaseWorkspace):
             cfg.training.checkpoint_every = 1
             cfg.training.val_every = 1
             cfg.training.sample_every = 1
-            image = wandb.Image(dataset.get_data_visualization(), caption="Dataset")
-            wandb.log({"dataset": image})
+            # image = wandb.Image(dataset.get_data_visualization(), caption="Dataset")
+            # wandb_run.log({"dataset": image}, step=self.global_step)
 
 
         # training loop
@@ -235,6 +235,8 @@ class TrainingWorkspace(BaseWorkspace):
                     # run rollout (TASK SATISFACTION)
                     if (self.epoch % cfg.training.rollout_every) == 0 \
                             and self.epoch > 0:
+                        dataset.empty_cache() # empty cache before running
+                        val_dataset.empty_cache()
                         runner_log = env_runner.run(policy, dataset.demos, mode="train")
                         runner_log.update(
                             env_runner.run(policy, val_dataset.demos, mode="eval")
@@ -317,10 +319,7 @@ class TrainingWorkspace(BaseWorkspace):
     config_name=pathlib.Path(__file__).stem)
 def main(cfg):
     workspace = TrainingWorkspace(cfg)
-    if cfg.training.init_resumable:
-        print(f"\n{workspace.output_dir}")
-    else:
-        workspace.run()
+    workspace.run()
 
 if __name__ == "__main__":
     main()

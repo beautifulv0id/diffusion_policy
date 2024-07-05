@@ -33,6 +33,7 @@ class RLBenchRunner(BaseImageRunner):
                 n_obs_steps: int = 2,
                 image_size=(128, 128),
                 render_image_size=(128, 128),
+                n_procs_max=1,
                 apply_rgb=False,
                 apply_depth=False,
                 apply_pc=False,
@@ -76,6 +77,7 @@ class RLBenchRunner(BaseImageRunner):
         self.n_train_vis = n_train_vis
         self.n_val_vis = n_val_vis
         self.max_episodes = max_episodes
+        self.n_procs_max = n_procs_max
 
     def run(self, policy: BaseLowdimPolicy, demos: List[Demo], mode: str = "train") -> Dict:
         actioner = Actioner(policy=policy, action_dim=self.action_dim)
@@ -96,7 +98,9 @@ class RLBenchRunner(BaseImageRunner):
                                 max_rrt_tries=self.max_rrt_tries,
                                 demo_tries=self.demo_tries,
                                 n_visualize=n_vis,
-                                verbose=True)
+                                verbose=True,
+                                n_procs_max=self.n_procs_max,
+                                )
 
 
         name = mode + "_success_rate"
@@ -114,13 +118,13 @@ class RLBenchRunner(BaseImageRunner):
         for i, obs_state in enumerate(obs_state_ls):
             if obs_state is not None:
                 obs_state = wandb.Video(obs_state, fps=1, format="mp4")
-                name = f"video/{mode}_{self.task_str}_obs_state_{i}"
+                name = f"obs_state/{mode}_{self.task_str}_obs_state_{i}"
                 log_data[name] = obs_state
         
         for i, mask in enumerate(mask_ls):
             if mask is not None:
                 sim_plots = wandb.Video(mask, fps=1, format="mp4")
-                name = f"video/{mode}_{self.task_str}_mask_{i}"
+                name = f"mask/{mode}_{self.task_str}_mask_{i}"
                 log_data[name] = sim_plots
 
         

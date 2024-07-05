@@ -26,20 +26,25 @@ def _evaluate_task_on_demos(env_args : dict,
                             verbose: bool = False):
     n_procs = min(n_procs_max, len(demos))
 
-    manager = Manager()
-    proc_log_data = manager.dict()
-    processes = [Process(target=_evaluate_task_on_demos_multiproc, args=(i, n_procs, proc_log_data, env_args, task_str, demos, max_steps, actioner, max_rrt_tries, demo_tries, n_visualize, verbose)) for i in range(n_procs)]
-    [p.start() for p in processes]
-    [p.join() for p in processes]
+    if n_procs == 1:
+        log_data = [{}]
+        _evaluate_task_on_demos_multiproc(0, 1, log_data, env_args, task_str, demos, max_steps, actioner, max_rrt_tries, demo_tries, n_visualize, verbose)
+        log_data = log_data[0]
+    else:
+        manager = Manager()
+        proc_log_data = manager.dict()
+        processes = [Process(target=_evaluate_task_on_demos_multiproc, args=(i, n_procs, proc_log_data, env_args, task_str, demos, max_steps, actioner, max_rrt_tries, demo_tries, n_visualize, verbose)) for i in range(n_procs)]
+        [p.start() for p in processes]
+        [p.join() for p in processes]
 
-    log_data = {k: [] for k in proc_log_data[0].keys()}
-    for i in range(n_procs):
-        proc_data = proc_log_data[i]
-        for k, v in proc_data.items():
-            if type(v) == list:
-                log_data[k].extend(v)
-            else:
-                log_data[k].append(v)
+        log_data = {k: [] for k in proc_log_data[0].keys()}
+        for i in range(n_procs):
+            proc_data = proc_log_data[i]
+            for k, v in proc_data.items():
+                if type(v) == list:
+                    log_data[k].extend(v)
+                else:
+                    log_data[k].append(v)
     
     successful_demos = sum(log_data["successful_demos"])
     success_rate = successful_demos / (len(demos) * demo_tries)
