@@ -1,9 +1,10 @@
 #!/bin/bash
 #SBATCH -t 24:00:00
-#SBATCH -c 16
-#SBATCH --mem=32G
+#SBATCH -c 6
+#SBATCH --mem=24G
 #SBATCH -p gpu
 #SBATCH --gres=gpu:1
+#SBATCH -C 'rtx3090|a5000'
 #SBATCH --array=0-3%1
 #SBATCH --output=/home/stud_herrmann/diffusion_policy_felix/slurm_scripts/logs/%A_turn_tap_image/train_%a.out
 #SBATCH -J turn_tap_image
@@ -16,8 +17,8 @@ task_config=turn_tap_image
 args="task=$task_config\
     num_episodes=-1\
     training.resume=True\
-    dataloader.batch_size=16\
-    val_dataloader.batch_size=16"
+    dataloader.batch_size=48\
+    val_dataloader.batch_size=48"
 
 kwargs=${@:1}
     
