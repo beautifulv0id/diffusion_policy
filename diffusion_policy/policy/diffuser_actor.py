@@ -437,6 +437,7 @@ class DiffuserActor(BaseImagePolicy):
         )
         action = create_robomimic_from_rlbench_action(pred, quaternion_format = self._quaternion_format)
         result = {
+            'rlbench_action' : pred,
             'action': action,
             'obs': obs_dict,
             'extra': {

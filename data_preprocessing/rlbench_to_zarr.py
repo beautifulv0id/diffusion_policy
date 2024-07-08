@@ -15,10 +15,10 @@ flags.DEFINE_string('save_path',
                     '/home/felix/Workspace/diffusion_policy_felix/data/image.zarr',
                     'Where to save the dataset.')
 flags.DEFINE_string('data_path',
-                    '/home/felix/Workspace/diffusion_policy_felix/data/peract',
+                    '/home/felix/Workspace/diffusion_policy_felix/data/image',
                     'Path to the data folder.')
-flags.DEFINE_integer('n_demos', 1, 'Number of demos to use.')
-flags.DEFINE_list('tasks', ['open_drawer'], 'Tasks to use.')
+flags.DEFINE_integer('n_demos', -1, 'Number of demos to use.')
+flags.DEFINE_list('tasks', ['open_drawer', 'put_item_in_drawer', 'stack_blocks', 'sweep_to_dustpan_of_size', 'turn_tap'], 'Tasks to use.')
 flags.DEFINE_list('image_size', [128, 128],
                   'The size of the images tp save.')
 
@@ -65,7 +65,7 @@ def write_rlbench_dataset():
         episode_end = 0
         keypoint_end = 0
         for demo_idx in range(num_demos):
-            demo = get_stored_demos(amount = 1, variation_number=0, task_name='open_drawer', from_episode_number=demo_idx, image_paths=False, dataset_root=FLAGS.data_path, random_selection=False, obs_config=obs_config)[0]
+            demo = get_stored_demos(amount = 1, variation_number=0, task_name=task, from_episode_number=demo_idx, image_paths=False, dataset_root=FLAGS.data_path, random_selection=False, obs_config=obs_config)[0]
             keypoints = _keypoint_discovery(demo)
             keypoints = episode_end + np.array(keypoints, dtype=np.int32)
             meta_group['keypoints'].append(keypoints)
@@ -91,40 +91,12 @@ def read_zarr_dataset():
 
     dataset = zarr.open(FLAGS.save_path, mode='r')
 
-    for task in FLAGS.tasks:
-        print(task)
-        task_group = dataset[task]
-        data_group = task_group['data']
-        meta_group = task_group['meta']
+    print(dataset.tree())
 
-        for camera in CAMERAS:
-            print(f'{camera}_rgb', data_group[f'{camera}_rgb'].shape, data_group[f'{camera}_rgb'].dtype, data_group[f'{camera}_rgb'][:][0].min(), data_group[f'{camera}_rgb'][:][0].max())
-            print(f'{camera}_mask', data_group[f'{camera}_mask'].shape, data_group[f'{camera}_mask'].dtype, data_group[f'{camera}_mask'][:][0].min(), data_group[f'{camera}_rgb'][:][0].max())
-            print(f'{camera}_point_cloud', data_group[f'{camera}_point_cloud'].shape, data_group[f'{camera}_point_cloud'].dtype, data_group[f'{camera}_point_cloud'][:][0].min(), data_group[f'{camera}_rgb'][:][0].max())
-
-        print('gripper_pose', data_group['gripper_pose'].shape, data_group['gripper_pose'].dtype, data_group['gripper_pose'][:][0].min(), data_group['gripper_pose'][:][0].max())
-        print('gripper_open', data_group['gripper_open'].shape, data_group['gripper_open'].dtype, data_group['gripper_open'][:][0].min(), data_group['gripper_open'][:][0].max())
-        print('ignore_collisions', data_group['ignore_collisions'].shape, data_group['ignore_collisions'].dtype, data_group['ignore_collisions'][:][0].min(), data_group['ignore_collisions'][:][0].max())
-        print('episode_ends', meta_group['episode_ends'].shape, meta_group['episode_ends'].dtype, meta_group['episode_ends'][:][0].min(), meta_group['episode_ends'][:][0].max())
-        print('keypoints', meta_group['keypoints'].shape, meta_group['keypoints'].dtype, meta_group['keypoints'][:][0].min(), meta_group['keypoints'][:][0].max())
-        print('keypoint_ends', meta_group['keypoint_ends'].shape, meta_group['keypoint_ends'].dtype, meta_group['keypoint_ends'][:][0].min(), meta_group['keypoint_ends'][:][0].max())
-        print('gripper_joint_positions', data_group['gripper_joint_positions'].shape, data_group['gripper_joint_positions'].dtype, data_group['gripper_joint_positions'][:][0].min(), data_group['gripper_joint_positions'][:][0].max())
-        print('demos', meta_group['demos'][:])
 
 def main(argv):
   write_rlbench_dataset()
   read_zarr_dataset()
-    # import numcodecs
-
-    # dataset = zarr.open('/home/felix/Workspace/diffusion_policy_felix/data/dummy.zarr', mode='w')
-    # dummy = dataset.create_group('dummy')
-    # z = zarr.empty((0,), dtype=object, object_codec=numcodecs.JSON())
-    # z = np.append(z, {'a': 1, 'b': 2})
-    # z = np.append(z, {'a': 3, 'b': 4})
-    # dummy.create_dataset('z', data=z, chunks=(1,), object_codec=numcodecs.JSON())
-
-    # dataset = zarr.open('/home/felix/Workspace/diffusion_policy_felix/data/dummy.zarr', mode='r')
-    # print(dataset['dummy']['z'][:])
   
    
 if __name__ == '__main__':

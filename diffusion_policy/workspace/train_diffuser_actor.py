@@ -154,8 +154,8 @@ class TrainingWorkspace(BaseWorkspace):
             cfg.training.checkpoint_every = 1
             cfg.training.val_every = 1
             cfg.training.sample_every = 1
-            # image = wandb.Image(dataset.get_data_visualization(), caption="Dataset")
-            # wandb_run.log({"dataset": image}, step=self.global_step)
+            image = wandb.Image(dataset.get_data_visualization(), caption="Dataset")
+            wandb_run.log({"dataset": image}, step=self.global_step)
 
 
         # training loop

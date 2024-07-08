@@ -19,15 +19,17 @@ from hydra import compose, initialize
 from pathlib import Path
 import json
 
+OmegaConf.register_new_resolver("eval", eval, replace=True)
 
 class Arguments(tap.Tap):
-    task: str = 'open_drawer',
+    task: str = 'stack_blocks',
     save_root : str = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data', 'eval')
-    hydra_path: str = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data/outputs/2024.06.29/15.39.33_train_diffuser_actor_open_drawer_image_mask_3DDA')
-    data_root = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data/peract/raw')
+    hydra_path: str = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data/outputs/2024.07.04/17.46.17_train_diffuser_actor_stack_blocks')
+    data_root = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data/image')
     config : str = 'train_diffuser_actor.yaml'
     overrides: list = []
     render_image_size: tuple = (256, 256)
+    n_demos: int = -1
 
 def load_model(hydra_path, cfg):
     checkpoint_dir = Path(hydra_path).joinpath('checkpoints')
@@ -52,18 +54,21 @@ def load_config(config_name: str, overrides: list = []):
     OmegaConf.resolve(cfg)
     return cfg
 
-def load_overrides(hydra_path):
-    overrides = OmegaConf.load(os.path.join(hydra_path, ".hydra", "overrides.yaml"))
-    return overrides
+def load_overrides(hydra_path, overrides):
+    this_overrides = OmegaConf.load(os.path.join(hydra_path, ".hydra", "overrides.yaml"))
+    overrides_map = {}
+    for override in this_overrides + overrides:
+        k, v = override.split('=')
+        overrides_map[k] = v
+    this_overrides = [k + '=' + v for k, v in overrides_map.items()]
+    return this_overrides
 
 if __name__ == '__main__':
     args = Arguments().parse_args()
+    overrides = load_overrides(args.hydra_path, args.overrides)
 
-    if len(args.overrides) > 0:
-        overrides = args.overrides
-    else:
-        overrides = load_overrides(args.hydra_path)
-
+    print("Overrides: ", overrides)
+    
     cfg = load_config(args.config, overrides)
 
     task_str = cfg.task.dataset.task_name
@@ -78,8 +83,8 @@ if __name__ == '__main__':
 
     dataset : RLBenchDataset = load_dataset(cfg)
 
-    obs_config = create_obs_config(image_size=env.image_size, apply_cameras=env.apply_cameras, apply_pc=env.apply_pc, apply_mask=env.apply_mask, apply_rgb=env.apply_rgb, apply_depth=env.apply_depth)
-    demos = get_stored_demos(amount=-1, dataset_root=data_root, task_name=task_str, variation_number=0, from_episode_number=0, image_paths=False, random_selection=False, obs_config=obs_config)
+    obs_config = create_obs_config(image_size=env.image_size, apply_cameras=[], apply_pc=False, apply_mask=False, apply_rgb=False, apply_depth=False)
+    demos = get_stored_demos(amount=args.n_demos, dataset_root=data_root, task_name=task_str, variation_number=0, from_episode_number=0, image_paths=False, random_selection=False, obs_config=obs_config)
     
     policy = load_model(hydra_path, cfg)
     policy = policy.to("cuda")

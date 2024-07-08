@@ -189,7 +189,7 @@ class Actioner:
     
         if "rlbench_action" in pred_dict:
             return {
-                "rlbench_action": pred_dict["rlbench_action"],
+                "rlbench_action": pred_dict["rlbench_action"][0].detach().cpu().numpy(),
             }
         rot = pred_dict['action']['act_r']
         pos = pred_dict['action']['act_p']
