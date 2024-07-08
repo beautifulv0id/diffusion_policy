@@ -29,7 +29,7 @@ check_and_make_hydra_run_dir $args
 
 if [ $SLURM_ARRAY_TASK_ID -eq 0 ] && [ ! -f $HYDRA_RUN_DIR_FILE ];
 then
-    hydra_run_dir=$(./get_hydra_path.sh $training_script $task_name)
+    hydra_run_dir=$(./get_hydra_path.sh $training_script $task_config)
     echo $hydra_run_dir > $HYDRA_RUN_DIR_FILE
 fi
 

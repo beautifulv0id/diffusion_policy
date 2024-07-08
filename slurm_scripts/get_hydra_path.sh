@@ -2,8 +2,7 @@
 
 training_script=$1
 training_script="${training_script:0:${#training_script}-3}"
-
-task_name=$2
+task_config=$2
 
 # Get current date and time
 datetime=$(date '+%Y%m%d%H%M%S')
@@ -17,7 +16,7 @@ minute=${datetime:10:2}
 second=${datetime:12:2}
 
 # Construct the path
-path="data/outputs/${year}.${month}.${day}/${hour}.${minute}.${second}_${training_script}_${task_name}"
+path="data/outputs/${year}.${month}.${day}/${hour}.${minute}.${second}_${training_script}_${task_config}"
 
 # Print the path
 echo "$path"
