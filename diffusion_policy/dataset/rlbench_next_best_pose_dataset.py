@@ -217,6 +217,7 @@ class RLBenchNextBestPoseDataset(torch.utils.data.Dataset):
         val_set = copy.copy(self)
         val_set.indices = self.val_indices
         val_set.demos = self.val_demos
+        val_set._training = False
         return val_set
     
     def empty_cache(self):
