@@ -46,7 +46,9 @@ def collate_samples(camera_data, gripper_pose, gripper_open, ignore_collisions, 
     if use_pc:
         sample['obs']['pcd'] = np.stack([camera_data[f'{camera}_point_cloud'][obs_idxs[-1]] for camera in apply_cameras])
     if use_rgb:
-        sample['obs']['rgb'] = np.stack([camera_data[f'{camera}_rgb'][obs_idxs[-1]] for camera in apply_cameras])
+        rgb = np.stack([camera_data[f'{camera}_rgb'][obs_idxs[-1]] for camera in apply_cameras])
+        rgb = rgb.astype(np.float32) / 255.0
+        sample['obs']['rgb'] = rgb
     if use_mask:
         sample['obs']['mask'] = np.stack([camera_data[f'{camera}_mask'][obs_idxs[-1]] for camera in apply_cameras])
 
@@ -58,6 +60,7 @@ def collate_samples(camera_data, gripper_pose, gripper_open, ignore_collisions, 
     return sample
 
 class RLBenchNextBestPoseDataset(torch.utils.data.Dataset):
+    
     def __init__(self,
                  dataset_path: str,
                  cameras = ['left_shoulder', 'right_shoulder', 'wrist', 'front'],
@@ -77,6 +80,8 @@ class RLBenchNextBestPoseDataset(torch.utils.data.Dataset):
         
         self._training = True
 
+        print(f"Loading dataset from {dataset_path} for task {task_name}")
+
         if self._training:
             self._resize = Resize(scales=image_rescale)
         
@@ -90,29 +95,25 @@ class RLBenchNextBestPoseDataset(torch.utils.data.Dataset):
         for camera in cameras:
             if use_rgb:
                 # float32, [0,255] -> [0,1], (N,3,H,W)
-                image_data = data_root[f'{camera}_rgb'][:]
-                image_data = image_data.astype(np.float32) / 255.0
-                camera_data[f'{camera}_rgb'] = image_data
+                camera_data[f'{camera}_rgb'] = data_root[f'{camera}_rgb']
             if use_pcd:
                 # float32, (N,3,H,W)
-                pcd_data = data_root[f'{camera}_point_cloud'][:]
-                camera_data[f'{camera}_point_cloud'] = pcd_data
+                camera_data[f'{camera}_point_cloud'] = data_root[f'{camera}_point_cloud']
             if use_mask:
                 # float32, [0,1], (N,1,H,W)
-                mask_data = data_root[f'{camera}_mask'][:]
-                camera_data[f'{camera}_mask'] = mask_data
+                camera_data[f'{camera}_mask'] = data_root[f'{camera}_mask']
 
         # float32, (N,7)
-        gripper_pose = data_root['gripper_pose'][:]
+        gripper_pose = data_root['gripper_pose']
 
         # bool, (N,1)
-        gripper_open = data_root['gripper_open'][:]
+        gripper_open = data_root['gripper_open']
 
         # float32, (N,2)
-        gripper_joint_positions = data_root['gripper_joint_positions'][:]
+        gripper_joint_positions = data_root['gripper_joint_positions']
 
         # bool, (N,1)
-        ignore_collisions = data_root['ignore_collisions'][:]
+        ignore_collisions = data_root['ignore_collisions']
 
         # int32, (N,1)
         episode_ends = task_root['meta']['episode_ends'][:]
@@ -176,33 +177,32 @@ class RLBenchNextBestPoseDataset(torch.utils.data.Dataset):
         self._cache = dict()
         self._cache_size = cache_size
 
+        print(f"Loaded {len(self)} training samples and {len(self.val_indices)} validation samples with {len(self.demos)} training demos and {len(self.val_demos)} validation demos.")
+
     def __len__(self):
         return len(self.indices)
     
-    def __getitem__(self, idx):
+    def __getitem__(self, idx):      
         if idx in self._cache:
-            return self._cache[idx]
-        
-        indices = self.indices[idx]
-        obs_idxs, next_keypoint_idx = indices
-        sample = collate_samples(
-            camera_data=self.camera_data,
-            gripper_pose=self.gripper_pose,
-            gripper_open=self.gripper_open,
-            ignore_collisions=self.ignore_collisions,
-            gripper_joint_positions=self.gripper_joint_positions,
-            obs_idxs=obs_idxs,
-            next_keypoint_idx=next_keypoint_idx,
-            use_pc=self.use_pcd,
-            use_rgb=self.use_rgb,
-            use_mask=self.use_mask,
-            apply_cameras=self.cameras,
-            use_low_dim_state=self.use_low_dim_state
-        )
-        sample = dict_apply(sample, lambda x: torch.tensor(x))
-
-        if self._training:
-            sample['obs'].update(self._resize(rgb=sample['obs']['rgb'], pcd=sample['obs']['pcd'], mask=sample['obs'].get('mask', None)))
+         sample = self._cache[idx]
+        else:
+            indices = self.indices[idx]
+            obs_idxs, next_keypoint_idx = indices
+            sample = collate_samples(
+                camera_data=self.camera_data,
+                gripper_pose=self.gripper_pose,
+                gripper_open=self.gripper_open,
+                ignore_collisions=self.ignore_collisions,
+                gripper_joint_positions=self.gripper_joint_positions,
+                obs_idxs=obs_idxs,
+                next_keypoint_idx=next_keypoint_idx,
+                use_pc=self.use_pcd,
+                use_rgb=self.use_rgb,
+                use_mask=self.use_mask,
+                apply_cameras=self.cameras,
+                use_low_dim_state=self.use_low_dim_state
+            )
+            sample = dict_apply(sample, lambda x: torch.tensor(x))
 
         if len(self._cache) == self._cache_size and self._cache_size > 0:
             key = list(self._cache.keys())[int(time()) % self._cache_size]
@@ -210,6 +210,9 @@ class RLBenchNextBestPoseDataset(torch.utils.data.Dataset):
 
         if len(self._cache) < self._cache_size:
             self._cache[idx] = sample
+
+        if self._training:
+            sample['obs'].update(self._resize(rgb=sample['obs']['rgb'], pcd=sample['obs']['pcd'], mask=sample['obs'].get('mask', None)))
 
         return sample
 

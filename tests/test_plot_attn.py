@@ -6,12 +6,11 @@ import os
 import torch
 from rlbench.utils import get_stored_demos
 from diffusion_policy.env_runner.rlbench_runner import RLBenchRunner
+from diffusion_policy.policy.diffuser_actor import DiffuserActor
 from diffusion_policy.dataset.rlbench_next_best_pose_dataset import RLBenchNextBestPoseDataset
 from diffusion_policy.env.rlbench.rlbench_env import RLBenchEnv
 from diffusion_policy.common.rlbench_util import CAMERAS, create_obs_config
-from diffusion_policy.env_runner.rlbench_utils import _evaluate_task_on_demos
-from diffusion_policy.env.rlbench.rlbench_utils import Actioner
-from diffusion_policy.common.logger_utils import write_video
+from diffusion_policy.common.pytorch_util import dict_apply, print_dict
 import tap
 import hydra
 from omegaconf import OmegaConf
@@ -67,79 +66,34 @@ def load_overrides(hydra_path, overrides):
 
 if __name__ == '__main__':
     args = Arguments().parse_args()
-
+    print(args.overrides)
     overrides = load_overrides(args.hydra_path, args.overrides)
 
     print("Overrides: ", overrides)
     
     cfg = load_config(args.config, overrides)
 
-    task_str = cfg.task.dataset.task_name
-    data_root = args.data_root
     hydra_path = args.hydra_path
-    save_path = os.path.join(args.save_root, task_str, hydra_path.split('/')[-1])
-
-    os.makedirs(save_path, exist_ok=True)
-
-    runner : RLBenchRunner = hydra.utils.instantiate(cfg.task.env_runner, render_image_size=args.render_image_size, output_dir="")
-    env = RLBenchEnv(**runner.env_args)
+    print("Config loaded")
 
     dataset : RLBenchNextBestPoseDataset = load_dataset(cfg)
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
+    print("Dataset loaded")
 
-    if args.demos_from_path:
-        obs_config = create_obs_config(image_size=env.image_size, apply_cameras=[], apply_pc=False, apply_mask=False, apply_rgb=False, apply_depth=False)
-        demos = get_stored_demos(amount=args.n_demos, dataset_root=data_root, task_name=task_str, variation_number=0, from_episode_number=0, image_paths=False, random_selection=False, obs_config=obs_config)
-    else:
-        demos = dataset.val_demos[:args.n_demos] if args.n_demos > 0 else dataset.val_demos
 
-    policy = load_model(hydra_path, cfg)
+    policy : DiffuserActor= load_model(hydra_path, cfg)
     policy = policy.to("cuda")
     policy.eval()
-    actioner = Actioner(policy)
+    print("Model loaded")
 
-    print(f"Hydra path: {hydra_path}")
-    print(f"Task: {task_str}")
-    print(f"Num demos: {len(demos)}")
+    batch = next(iter(dataloader))
+
+    print_dict(batch)
+
+    batch = dict_apply(batch, lambda x: x.cuda())
+
+    print("Predicting action")
+    output = policy.predict_action(batch['obs'])
 
 
-    log_data = _evaluate_task_on_demos(env_args=runner.env_args,
-                            task_str=runner.task_str,
-                            demos=demos,
-                            max_steps=3,
-                            actioner=actioner,
-                            max_rrt_tries=1,
-                            demo_tries=1,
-                            n_visualize=len(demos),
-                            verbose=True,
-                            n_procs_max=1)
-    
-    success_rate = log_data['success_rate']
-    print(f"Success rate: {success_rate}")
 
-    with open(os.path.join(save_path, "metrics.json"), 'w') as f:
-        json.dump({
-            "success_rate": success_rate
-        }, f)
-
-    if len(log_data['rgbs']) > 0:
-        rgbs = log_data['rgbs'][0].transpose(0, 2, 3, 1)
-        for i, rgbs in enumerate(log_data['rgbs']):
-            rgbs = rgbs.transpose(0, 2, 3, 1)
-            write_video(rgbs, os.path.join(save_path, f"rgbs_{i}.mp4"), fps=30)
-    else:
-        print("No rgbs")
-
-    if len(log_data['obs_state']) > 0:
-        for i, obs_state in enumerate(log_data['obs_state']):
-            obs_state = obs_state.transpose(0, 2, 3, 1)
-            write_video(obs_state, os.path.join(save_path, f"obs_state_{i}.mp4"), fps=30)
-    else:
-        print("No obs")
-
-    if len(log_data['mask']) > 0:
-        for i, masks in enumerate(log_data['mask']):
-            masks = masks.transpose(0, 2, 3, 1)
-            write_video(masks, os.path.join(save_path, f"mask_{i}.mp4"), fps=30)
-    else:
-        print("No mask")
-    
