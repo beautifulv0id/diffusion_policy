@@ -12,19 +12,24 @@ from diffusion_policy.env.rlbench.rlbench_env import RLBenchEnv
 from diffusion_policy.common.rlbench_util import CAMERAS, create_obs_config
 from diffusion_policy.common.pytorch_util import dict_apply, print_dict
 import tap
+import numpy as np
 import hydra
 from omegaconf import OmegaConf
 from hydra import compose, initialize
 from pathlib import Path
 import json
 from typing import List
+import matplotlib.pyplot as plt
+import matplotlib.colors
+from mpl_toolkits.mplot3d import Axes3D
+import torch.nn.functional as F
+import einops
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
 class Arguments(tap.Tap):
-    task: str = 'stack_blocks',
     save_root : str = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data', 'eval')
-    hydra_path: str = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data/outputs/2024.07.04/17.46.17_train_diffuser_actor_stack_blocks')
+    hydra_path: str = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data/outputs/2024.07.03/17.32.42_train_diffuser_actor_turn_tap_mask')
     data_root = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data/image')
     config : str = 'train_diffuser_actor.yaml'
     overrides: List[str] = []
@@ -64,36 +69,74 @@ def load_overrides(hydra_path, overrides):
     this_overrides = [k + '=' + v for k, v in overrides_map.items()]
     return this_overrides
 
+def extract_pcd(obs, scale_factor):
+    pcd = obs['pcd']
+    b,n,c,h_in, w_in= pcd.shape
+    h, w = h_in // scale_factor, w_in // scale_factor
+    pcd = F.interpolate(
+                pcd.flatten(0, 1),
+                (h, w),
+                mode='bilinear'
+            )
+    pcd = einops.rearrange(pcd, '(b npts) c h w -> b (npts h w) c', b = b).cpu().numpy()
+    return pcd
+
 if __name__ == '__main__':
     args = Arguments().parse_args()
-    print(args.overrides)
-    overrides = load_overrides(args.hydra_path, args.overrides)
 
+    overrides = load_overrides(args.hydra_path, args.overrides)
     print("Overrides: ", overrides)
     
     cfg = load_config(args.config, overrides)
-
-    hydra_path = args.hydra_path
     print("Config loaded")
 
+    save_path = os.path.join(args.save_root, cfg.task.task_name, args.hydra_path.split('/')[-1])
+    os.makedirs(save_path, exist_ok=True)
+
     dataset : RLBenchNextBestPoseDataset = load_dataset(cfg)
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=4, shuffle=False, num_workers=0)
     print("Dataset loaded")
 
 
-    policy = hydra.utils.instantiate(cfg.policy)
+    policy : DiffuserActor = load_model(args.hydra_path, cfg)
     policy = policy.to("cuda")
     policy.eval()
     print("Model loaded")
 
-    batch = next(iter(dataloader))
+    cvals  = [0, 0.5,  1]
+    colors = ["dimgray","salmon","red"]
 
-    print_dict(batch)
+    norm=plt.Normalize(min(cvals),max(cvals))
+    tuples = list(zip(map(norm,cvals), colors))
+    cmap = matplotlib.colors.LinearSegmentedColormap.from_list("", tuples)
 
-    batch = dict_apply(batch, lambda x: x.cuda())
+    for i in range(4):
 
-    print("Predicting action")
-    output = policy.predict_action(batch['obs'])
+        batch = dict_apply(dataset[i], lambda x: x.unsqueeze(0).cuda())
 
+        print("Predicting action")
+        with torch.no_grad():
+            output = policy.predict_action(batch['obs'], need_attn_weights=True)
+        print("Action predicted")
 
+        attn_weights = output['attn_weights'].cpu().numpy() 
+        attn_weights = attn_weights / attn_weights.max(axis=-1, keepdims=True)
+        attn_pcd = policy.unnormalize_pos(output['attn_pcd']).squeeze().cpu().numpy()
 
+        scale_factor = policy.encoder.downscaling_factor_pyramid[0]
+        pcd = extract_pcd(batch['obs'], scale_factor)[0]
+
+        c = np.full_like(pcd[:,0], 0.0)
+        if policy.use_mask:
+            idx = output['mask_idx'][1].cpu().numpy()
+            c[idx] = attn_weights.flatten()
+        else:
+            c = attn_weights
+
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+        ax.view_init(elev=30, azim=0, roll=0)
+        cb = ax.scatter(pcd[:, 0], pcd[:, 1], pcd[:, 2], c=c, cmap=cmap)
+        fig.colorbar(cb)
+        fig.savefig(os.path.join(save_path, f'attn_pcd_{i}.png'))
+        plt.clf()

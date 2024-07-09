@@ -353,12 +353,12 @@ class RelativeCrossAttentionLayer(nn.Module):
             self.adaln = AdaLN(embedding_dim)
 
     def forward(self, query, value, diff_ts=None, query_pos=None, 
-                value_pos=None, pad_mask=None, attn_mask=None):
+                value_pos=None, pad_mask=None, attn_mask=None, need_weights=False):
         if diff_ts is not None:
             adaln_query = self.adaln(query, diff_ts)
         else:
             adaln_query = query
-        attn_output, _ = self.multihead_attn(
+        attn_output, attn_output_weights = self.multihead_attn(
             query=adaln_query,
             key=value,
             value=value,
@@ -368,6 +368,10 @@ class RelativeCrossAttentionLayer(nn.Module):
         )
         output = query + self.dropout(attn_output)
         output = self.norm(output)
+
+        if need_weights:
+            return output, attn_output_weights.mean(dim=1)
+        
         return output
 
 
@@ -418,14 +422,20 @@ class FFWRelativeCrossAttentionModule(nn.Module):
             ))
 
     def forward(self, query, value, diff_ts=None,
-                query_pos=None, value_pos=None, attn_mask=None):
+                query_pos=None, value_pos=None, attn_mask=None, need_weights=False):
         output = []
         for i in range(self.num_layers):
             query = self.attn_layers[i](
-                query, value, diff_ts, query_pos, value_pos, attn_mask=attn_mask
+                query, value, diff_ts, query_pos, value_pos, attn_mask=attn_mask, need_weights=need_weights
             )
+            if need_weights:
+                query, attn_output_weights = query
             query = self.ffw_layers[i](query, diff_ts)
             output.append(query)
+        
+        if need_weights:
+            return output, attn_output_weights
+        
         return output
 
 
@@ -447,14 +457,20 @@ class FFWRelativeSelfAttentionModule(nn.Module):
             ))
 
     def forward(self, query, diff_ts=None,
-                query_pos=None, context=None, context_pos=None, attn_mask=None):
+                query_pos=None, context=None, context_pos=None, attn_mask=None, need_weights=False):
         output = []
         for i in range(self.num_layers):
             query = self.attn_layers[i](
-                query, query, diff_ts, query_pos, query_pos, attn_mask=attn_mask
+                query, query, diff_ts, query_pos, query_pos, attn_mask=attn_mask, need_weights=need_weights
             )
+            if need_weights:
+                query, attn_output_weights = query
             query = self.ffw_layers[i](query, diff_ts)
             output.append(query)
+
+        if need_weights:
+            return output, attn_output_weights
+        
         return output
 
 

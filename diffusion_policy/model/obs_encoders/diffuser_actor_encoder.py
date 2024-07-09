@@ -219,8 +219,8 @@ class DiffuserActorEncoder(ModuleAttrMixin):
         rgb_features = rgb_features[idx].reshape(B, n_sample, -1)
 
         pcd = pcd[idx].reshape(B, n_sample, -1)
-
-        return rgb_features, pcd
+        
+        return rgb_features, pcd, idx
 
 
 
@@ -323,14 +323,14 @@ class DiffuserActorEncoder(ModuleAttrMixin):
         )
 
         # Sample positional embeddings
-        _, _, ch, npos = context_pos.shape
+        _, _, ch = context_pos.shape
         expanded_sampled_inds = (
-            sampled_inds.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, ch, npos)
+            sampled_inds.unsqueeze(-1).expand(-1, -1, ch)
         )
-        sampled_context_pos = torch.gather(
+        sampled_context_pcd = torch.gather(
             context_pos, 1, expanded_sampled_inds
         )
-        return sampled_context_features, sampled_context_pos
+        return sampled_context_features, sampled_context_pcd
 
     def vision_language_attention(self, feats, instr_feats):
         feats, _ = self.vl_attention[0](

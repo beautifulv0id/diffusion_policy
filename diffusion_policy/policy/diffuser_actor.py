@@ -95,7 +95,7 @@ class DiffuserActor(BaseImagePolicy):
         pcd = pcd_pyramid[0]
 
         if self.use_mask:
-            context_feats, context = self.encoder.mask_out_features_pcd(mask, rgb_feats, pcd, n_min=128, n_max=1024)
+            context_feats, context, mask_idx = self.encoder.mask_out_features_pcd(mask, rgb_feats, pcd, n_min=0, n_max=1024)
         else:
             # Keep only low-res scale
             context_feats = einops.rearrange(
@@ -122,18 +122,18 @@ class DiffuserActor(BaseImagePolicy):
         )
 
         # FPS on visual features (N, B, F) and (B, N, F, 2)
-        fps_feats, fps_pos = self.encoder.run_fps(
+        fps_feats, fps_pcd = self.encoder.run_fps(
             context_feats.transpose(0, 1),
-            self.encoder.relative_pe_layer(context)
+            context
         )
         return (
             context_feats, context,  # contextualized visual features
             instr_feats,  # language features
             adaln_gripper_feats,  # gripper history features
-            fps_feats, fps_pos  # sampled visual features
-        )
+            fps_feats, fps_pcd  # sampled visual features
+        ), mask_idx if self.use_mask else None
 
-    def policy_forward_pass(self, trajectory, timestep, fixed_inputs):
+    def policy_forward_pass(self, trajectory, timestep, fixed_inputs, need_attn_weights=False):
         # Parse inputs
         (
             context_feats,
@@ -141,7 +141,7 @@ class DiffuserActor(BaseImagePolicy):
             instr_feats,
             adaln_gripper_feats,
             fps_feats,
-            fps_pos
+            fps_pcd
         ) = fixed_inputs
 
         return self.prediction_head(
@@ -152,10 +152,11 @@ class DiffuserActor(BaseImagePolicy):
             instr_feats=instr_feats,
             adaln_gripper_feats=adaln_gripper_feats,
             fps_feats=fps_feats,
-            fps_pos=fps_pos
+            fps_pcd=fps_pcd,
+            need_attn_weights=need_attn_weights
         )
 
-    def conditional_sample(self, condition_data, condition_mask, fixed_inputs):
+    def conditional_sample(self, condition_data, condition_mask, fixed_inputs, need_attn_weights=False):
         self.position_noise_scheduler.set_timesteps(self.n_steps)
         self.rotation_noise_scheduler.set_timesteps(self.n_steps)
 
@@ -183,23 +184,30 @@ class DiffuserActor(BaseImagePolicy):
         # Iterative denoising
         timesteps = self.position_noise_scheduler.timesteps
         for t in timesteps:
-            out = self.policy_forward_pass(
+            polic_output = self.policy_forward_pass(
                 trajectory,
                 t * torch.ones(len(trajectory)).to(trajectory.device).long(),
-                fixed_inputs
+                fixed_inputs,
+                need_attn_weights=need_attn_weights
             )
-            out = out[-1]  # keep only last layer's output
+            model_out = polic_output['pred'][-1]# keep only last layer's output
             pos = self.position_noise_scheduler.step(
-                out[..., :3], t, trajectory[..., :3]
+                model_out[..., :3], t, trajectory[..., :3]
             ).prev_sample
             rot = self.rotation_noise_scheduler.step(
-                out[..., 3:9], t, trajectory[..., 3:9]
+                model_out[..., 3:9], t, trajectory[..., 3:9]
             ).prev_sample
             trajectory = torch.cat((pos, rot), -1)
 
-        trajectory = torch.cat((trajectory, out[..., 9:]), -1)
+        trajectory = torch.cat((trajectory, model_out[..., 9:]), -1)
 
-        return trajectory
+        sample_output = {}
+        sample_output['trajectory'] = trajectory
+        if need_attn_weights:
+            sample_output['attn_weights'] = polic_output['attn_weights']
+            sample_output['attn_pcd'] = polic_output['attn_pcd']
+
+        return sample_output
 
     def compute_trajectory(
         self,
@@ -208,7 +216,8 @@ class DiffuserActor(BaseImagePolicy):
         pcd_obs,
         instruction,
         curr_gripper,
-        mask_obs=None
+        mask_obs=None,
+        need_attn_weights=False
     ):
         # Normalize all pos
         pcd_obs = pcd_obs.clone()
@@ -220,7 +229,7 @@ class DiffuserActor(BaseImagePolicy):
         curr_gripper = self.convert_rot(curr_gripper)
 
         # Prepare inputs
-        fixed_inputs = self.encode_inputs(
+        fixed_inputs, mask_idx = self.encode_inputs(
             rgb_obs, pcd_obs, instruction, curr_gripper, mask_obs
         )
 
@@ -234,11 +243,14 @@ class DiffuserActor(BaseImagePolicy):
         cond_mask = cond_mask.bool()
 
         # Sample
-        trajectory = self.conditional_sample(
+        output = self.conditional_sample(
             cond_data,
             cond_mask,
-            fixed_inputs
+            fixed_inputs,
+            need_attn_weights=need_attn_weights
         )
+
+        trajectory = output['trajectory']            
 
         # Normalize quaternion
         if self._rotation_parametrization != '6D':
@@ -251,7 +263,12 @@ class DiffuserActor(BaseImagePolicy):
         if trajectory.shape[-1] > 7:
             trajectory[..., 7] = trajectory[..., 7].sigmoid()
 
-        return trajectory
+        output['trajectory'] = trajectory
+
+        if need_attn_weights:
+            output['mask_idx'] = mask_idx
+
+        return output
 
     def normalize_pos(self, pos):
         pos_min = self.gripper_loc_bounds[0].float().to(pos.device)
@@ -322,7 +339,8 @@ class DiffuserActor(BaseImagePolicy):
         instruction,
         curr_gripper,
         run_inference=False,
-        mask_obs=None
+        mask_obs=None,
+        need_attn_weights=False
     ):
         """
         Arguments:
@@ -354,7 +372,8 @@ class DiffuserActor(BaseImagePolicy):
                 pcd_obs,
                 instruction,
                 curr_gripper,
-                mask_obs
+                mask_obs,
+                need_attn_weights=need_attn_weights
             )
         # Normalize all pos
         gt_trajectory = gt_trajectory.clone()
@@ -371,7 +390,7 @@ class DiffuserActor(BaseImagePolicy):
         curr_gripper = self.convert_rot(curr_gripper)
 
         # Prepare inputs
-        fixed_inputs = self.encode_inputs(
+        fixed_inputs, mask_idx = self.encode_inputs(
             rgb_obs, pcd_obs, instruction, curr_gripper, mask_obs
         )
 
@@ -406,7 +425,7 @@ class DiffuserActor(BaseImagePolicy):
         # Predict the noise residual
         pred = self.policy_forward_pass(
             noisy_trajectory, timesteps, fixed_inputs
-        )
+        )['pred']
 
         # Compute loss
         total_loss = 0
@@ -423,9 +442,9 @@ class DiffuserActor(BaseImagePolicy):
             total_loss = total_loss + loss
         return total_loss
     
-    def predict_action(self, obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def predict_action(self, obs_dict: Dict[str, torch.Tensor], need_attn_weights=False) -> Dict[str, torch.Tensor]:
         trajectory_mask = torch.zeros(1, self.nhorizon, device=obs_dict['rgb'].device)
-        pred = self.forward(
+        output = self.forward(
             gt_trajectory=None,
             trajectory_mask=trajectory_mask,
             rgb_obs=obs_dict['rgb'],
@@ -433,18 +452,25 @@ class DiffuserActor(BaseImagePolicy):
             instruction=None,
             curr_gripper=obs_dict['curr_gripper'],
             run_inference=True,
-            mask_obs=obs_dict.get('mask', None)
+            mask_obs=obs_dict.get('mask', None),
+            need_attn_weights=need_attn_weights
         )
-        action = create_robomimic_from_rlbench_action(pred, quaternion_format = self._quaternion_format)
+        trajectory = output['trajectory']
+            
+        action = create_robomimic_from_rlbench_action(trajectory, quaternion_format = self._quaternion_format)
         result = {
-            'rlbench_action' : pred,
+            'rlbench_action' : trajectory,
             'action': action,
             'obs': obs_dict,
             'extra': {
-                'act_gr_pred': pred[..., 7],
-                # 'act_ic_pred': pred[..., 8]
+                'act_gr_pred': trajectory[..., 7],
             }
         }
+
+        if need_attn_weights:
+            result['attn_weights'] = output['attn_weights']
+            result['attn_pcd'] = output['attn_pcd']
+            result['mask_idx'] = output['mask_idx']
         return result
     
     def compute_loss(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
@@ -597,7 +623,7 @@ class DiffusionHead(nn.Module):
 
     def forward(self, trajectory, timestep,
                 context_feats, context, instr_feats, adaln_gripper_feats,
-                fps_feats, fps_pos):
+                fps_feats, fps_pcd, need_attn_weights=False):
         """
         Arguments:
             trajectory: (B, trajectory_length, 3+6+X)
@@ -607,7 +633,7 @@ class DiffusionHead(nn.Module):
             instr_feats: (B, max_instruction_length, F)
             adaln_gripper_feats: (B, nhist, F)
             fps_feats: (N, B, F), N < context_feats.size(1)
-            fps_pos: (B, N, F, 2)
+            fps_pcd: (B, N, 3)
         """
         # Trajectory features
         traj_feats = self.traj_encoder(trajectory)  # (B, L, F)
@@ -631,21 +657,25 @@ class DiffusionHead(nn.Module):
         adaln_gripper_feats = einops.rearrange(
             adaln_gripper_feats, 'b l c -> l b c'
         )
-        pos_pred, rot_pred, openess_pred = self.prediction_head(
+        output = self.prediction_head(
             trajectory[..., :3], traj_feats,
             context[..., :3], context_feats,
             timestep, adaln_gripper_feats,
-            fps_feats, fps_pos,
-            instr_feats
+            fps_feats, fps_pcd,
+            instr_feats,
+            need_attn_weights=need_attn_weights
         )
-        return [torch.cat((pos_pred, rot_pred, openess_pred), -1)]
 
+        pos_pred, rot_pred, openess_pred = output['pred']
+        output['pred'] = [torch.cat((pos_pred, rot_pred, openess_pred), -1)]
+        return output
+    
     def prediction_head(self,
                         gripper_pcd, gripper_features,
                         context_pcd, context_features,
                         timesteps, curr_gripper_features,
-                        sampled_context_features, sampled_rel_context_pos,
-                        instr_feats):
+                        sampled_context_features, sampled_context_pcd,
+                        instr_feats, need_attn_weights=False):
         """
         Compute the predicted action (position, rotation, opening).
 
@@ -668,6 +698,7 @@ class DiffusionHead(nn.Module):
         # Positional embeddings
         rel_gripper_pos = self.relative_pe_layer(gripper_pcd)
         rel_context_pos = self.relative_pe_layer(context_pcd)
+        sampled_rel_context_pos = self.relative_pe_layer(sampled_context_pcd)
 
         # Cross attention from gripper to full context
         gripper_features = self.cross_attn(
@@ -675,8 +706,14 @@ class DiffusionHead(nn.Module):
             value=context_features,
             query_pos=rel_gripper_pos,
             value_pos=rel_context_pos,
-            diff_ts=time_embs
-        )[-1]
+            diff_ts=time_embs,
+            need_weights=need_attn_weights
+        )
+
+        if need_attn_weights:
+            gripper_features, attn_weights = gripper_features
+
+        gripper_features = gripper_features[-1]
 
         # Self attention among gripper and sampled context
         features = torch.cat([gripper_features, sampled_context_features], 0)
@@ -704,7 +741,15 @@ class DiffusionHead(nn.Module):
         # Openess head from position head
         openess = self.openess_predictor(position_features)
 
-        return position, rotation, openess
+        output = {
+            'pred': [position, rotation, openess],
+        }
+
+        if need_attn_weights:
+            output['attn_weights'] = attn_weights
+            output['attn_pcd'] = context_pcd
+
+        return output
 
     def encode_denoising_timestep(self, timestep, curr_gripper_features):
         """
