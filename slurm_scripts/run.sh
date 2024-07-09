@@ -34,8 +34,5 @@ then
 fi
 
 hydra_run_dir=$(cat $HYDRA_RUN_DIR_FILE)
-id=$(docker run -dt  -v ${DIFFUSION_POLICY_ROOT}:/workspace 725f43c2daa2)
-echo "Container ID: $id"
-docker exec -t -e DGLBACKEND=pytorch -e WANDB_API_KEY=$WANDB_API_KEY $id /bin/bash -c "source activate se3diffuser && 
-                        cd /workspace/diffusion_policy/workspace &&
-                        xvfb-run -a python3 $training_script $args hydra.run.dir=$hydra_run_dir"
+idocker run -dt --rm -v ${DIFFUSION_POLICY_ROOT}:/workspace 725f43c2daa2 /bin/bash -c "cd /workspace/diffusion_policy/workspace &&
+                                    xvfb-run -a python3 $training_script $args hydra.run.dir=$hydra_run_dir"

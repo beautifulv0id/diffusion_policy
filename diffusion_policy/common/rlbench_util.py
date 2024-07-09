@@ -283,7 +283,7 @@ def create_obs_state_plot(obs, action=None, downsample=1, use_mask=False, quater
             pcd = interpolate(pcd.reshape((-1,) + pcd.shape[-3:]), size=(h, w), mode='bilinear').reshape(b, v, 3, h, w)
             rgb = interpolate(rgb.reshape((-1,) + rgb.shape[-3:]), size=(h, w), mode='bilinear').reshape(b, v, 3, h, w)
             if mask is not None:
-                mask = interpolate(rgb.reshape((-1,) + rgb.shape[-3:]).float(), size=(h, w), mode='nearest').bool().reshape(b, v, 1, h, w)
+                mask = interpolate(mask.reshape((-1,) + mask.shape[-3:]).float(), size=(h, w), mode='nearest').bool().reshape(b, v, 1, h, w)
 
         if mask is not None:
             rgb, pcd = mask_out_features_pcd(mask, rgb, pcd, n_min=1, n_max=1000000)

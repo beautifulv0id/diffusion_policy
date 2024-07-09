@@ -7,7 +7,7 @@ import torch
 from rlbench.utils import get_stored_demos
 from diffusion_policy.env_runner.rlbench_runner import RLBenchRunner
 from diffusion_policy.policy.diffuser_actor import DiffuserActor
-from diffusion_policy.dataset.rlbench_next_best_pose_dataset import RLBenchNextBestPoseDataset
+from diffusion_policy.dataset.rlbench_zarr_dataset import RLBenchNextBestPoseDataset
 from diffusion_policy.env.rlbench.rlbench_env import RLBenchEnv
 from diffusion_policy.common.rlbench_util import CAMERAS, create_obs_config
 from diffusion_policy.common.pytorch_util import dict_apply, print_dict
