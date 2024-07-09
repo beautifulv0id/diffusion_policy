@@ -9,6 +9,7 @@ _wandb
 my_tests
 **/.DS_Store
 installs
+.out
 
 fuse.cfg
 

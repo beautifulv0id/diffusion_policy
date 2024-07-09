@@ -1,9 +1,10 @@
 #!/bin/bash
 #SBATCH -t 00:30:00
 #SBATCH -c 1
-#SBATCH --mem=32G
+#SBATCH --mem=24G
 #SBATCH -p gpu
 #SBATCH --gres=gpu:1
+#SBATCH -C 'rtx3090|a5000'
 #SBATCH --output=/home/stud_herrmann/diffusion_policy_felix/slurm_scripts/logs/%j/train.out
 #SBATCH -J test_replay_policy
 
