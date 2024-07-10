@@ -219,14 +219,14 @@ class RLBenchDataset(torch.utils.data.Dataset):
                 apply_cameras=self.cameras,
                 use_low_dim_state=self.use_low_dim_state
             )
-            sample = dict_apply(sample, lambda x: torch.tensor(x))
+            sample = dict_apply(sample, lambda x: torch.from_numpy(x))
 
-        if len(self._cache) == self._cache_size and self._cache_size > 0:
-            key = list(self._cache.keys())[int(time()) % self._cache_size]
-            del self._cache[key]
+            if len(self._cache) == self._cache_size and self._cache_size > 0:
+                key = list(self._cache.keys())[int(time()) % self._cache_size]
+                del self._cache[key]
 
-        if len(self._cache) < self._cache_size:
-            self._cache[idx] = sample
+            if len(self._cache) < self._cache_size:
+                self._cache[idx] = sample
 
         if self._training:
             sample['obs'].update(self._resize(rgb=sample['obs']['rgb'], pcd=sample['obs']['pcd'], mask=sample['obs'].get('mask', None)))
@@ -387,14 +387,14 @@ class RLBenchNextBestPoseDataset(torch.utils.data.Dataset):
                 apply_cameras=self.cameras,
                 use_low_dim_state=self.use_low_dim_state
             )
-            sample = dict_apply(sample, lambda x: torch.tensor(x))
+            sample = dict_apply(sample, lambda x: torch.from_numpy(x))
 
-        if len(self._cache) == self._cache_size and self._cache_size > 0:
-            key = list(self._cache.keys())[int(time()) % self._cache_size]
-            del self._cache[key]
+            if len(self._cache) == self._cache_size and self._cache_size > 0:
+                key = list(self._cache.keys())[int(time()) % self._cache_size]
+                del self._cache[key]
 
-        if len(self._cache) < self._cache_size:
-            self._cache[idx] = sample
+            if len(self._cache) < self._cache_size:
+                self._cache[idx] = sample
 
         if self._training:
             sample['obs'].update(self._resize(rgb=sample['obs']['rgb'], pcd=sample['obs']['pcd'], mask=sample['obs'].get('mask', None)))
@@ -428,7 +428,6 @@ class RLBenchNextBestPoseDataset(torch.utils.data.Dataset):
                     imgs.append(torch.from_numpy(img[:3,:,:])) 
         imgs = torch.stack(imgs) / 255.0
         return imgs
-
 
 
 def speed_test():
