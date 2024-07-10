@@ -201,7 +201,7 @@ class RLBenchDataset(torch.utils.data.Dataset):
     
     def __getitem__(self, idx):      
         if idx in self._cache:
-         sample = self._cache[idx]
+            sample = self._cache[idx]
         else:
             indices = self.indices[idx]
             obs_idxs, next_keypoint_idx = indices
@@ -369,7 +369,7 @@ class RLBenchNextBestPoseDataset(torch.utils.data.Dataset):
     
     def __getitem__(self, idx):      
         if idx in self._cache:
-         sample = self._cache[idx]
+            sample = self._cache[idx]
         else:
             indices = self.indices[idx]
             obs_idxs, next_keypoint_idx = indices
