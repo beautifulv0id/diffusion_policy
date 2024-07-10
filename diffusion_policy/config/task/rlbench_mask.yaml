@@ -19,7 +19,7 @@ dataset:
   val_ratio: 0.2
   use_low_dim_state: False
   use_mask: True
-  cache_size: 200
+  cache_size: 1000
 
 env_runner:
   _target_: diffusion_policy.env_runner.rlbench_runner.RLBenchRunner
