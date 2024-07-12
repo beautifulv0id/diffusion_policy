@@ -10,8 +10,8 @@
 #SBATCH -J turn_tap_mask
 
 training_script=train_diffuser_actor.py
-task_name=stack_blocks
-task_config=stack_blocks_mask
+task_name=turn_tap
+task_config=turn_tap_mask
 
 args="task=$task_config\
     num_episodes=-1\
