@@ -23,9 +23,8 @@ from typing import List
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
 class Arguments(tap.Tap):
-    task: str = 'stack_blocks',
     save_root : str = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data', 'eval')
-    hydra_path: str = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data/outputs/2024.07.04/17.46.17_train_diffuser_actor_stack_blocks')
+    hydra_path: str = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'])
     data_root = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data/image')
     config : str = 'train_diffuser_actor.yaml'
     overrides: List[str] = []
@@ -90,7 +89,7 @@ if __name__ == '__main__':
         obs_config = create_obs_config(image_size=env.image_size, apply_cameras=[], apply_pc=False, apply_mask=False, apply_rgb=False, apply_depth=False)
         demos = get_stored_demos(amount=args.n_demos, dataset_root=data_root, task_name=task_str, variation_number=0, from_episode_number=0, image_paths=False, random_selection=False, obs_config=obs_config)
     else:
-        demos = dataset.val_demos[:args.n_demos] if args.n_demos > 0 else dataset.val_demos
+        demos = dataset.demos[:args.n_demos] if args.n_demos > 0 else dataset.val_demos
 
     policy = load_model(hydra_path, cfg)
     policy = policy.to("cuda")
@@ -105,7 +104,7 @@ if __name__ == '__main__':
     log_data = _evaluate_task_on_demos(env_args=runner.env_args,
                             task_str=runner.task_str,
                             demos=demos,
-                            max_steps=3,
+                            max_steps=7,
                             actioner=actioner,
                             max_rrt_tries=1,
                             demo_tries=1,

@@ -41,4 +41,12 @@ dependencies:
     - packaging
     - ninja 
     - git+https://github.com/openai/CLIP.git
+    # rlbench
+    - pyquaternion
+    - html-testRunner
+    - setuptools
+    - natsort
+    # pyrep
+    - cffi==1.14.2
+
 

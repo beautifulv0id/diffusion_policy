@@ -1,7 +1,7 @@
 # Actually the task entry loads the yaml file inside task
 defaults:
   - _self_
-  - task: stack_blocks
+  - task: stack_blocks_lowdim
   - model: pose_git
   - encoder: RobomimicObservationEncoder
 

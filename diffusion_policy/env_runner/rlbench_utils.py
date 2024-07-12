@@ -37,7 +37,7 @@ def _evaluate_task_on_demos(env_args : dict,
         [p.join() for p in processes]
 
     log_data = {k: [] for k in proc_log_data[0].keys()}
-    for i in range(n_procs):
+    for i in range(len(proc_log_data)):
         proc_data = proc_log_data[i]
         for k, v in proc_data.items():
             if type(v) == list:
@@ -114,7 +114,7 @@ def _evaluate_task_on_demos_multiproc(proc_num : int,
             for step_id in range(max_steps):
                 # Fetch the current observation, and predict one action
                 for obs in env.get_obs_history():
-                    obs_dict = extract_obs(obs, cameras=env.apply_cameras, use_rgb=env.apply_rgb, use_pcd=env.apply_pc, use_mask=env.apply_mask, use_pose=env.apply_poses, use_low_dim_state=True)
+                    obs_dict = extract_obs(obs, cameras=env.apply_cameras, use_rgb=env.apply_rgb, use_pcd=env.apply_pc, use_mask=env.apply_mask, use_pose=env.apply_poses, use_low_dim_state=True, use_low_dim_pcd=env.apply_low_dim_pcd)
                     obs_dict = dict_apply(obs_dict, lambda x: torch.from_numpy(x).unsqueeze(0))
 
                     if env.apply_rgb:
@@ -173,7 +173,7 @@ def _evaluate_task_on_demos_multiproc(proc_num : int,
                     masks = masks[-n_obs_steps:]
 
                 if env._recording:
-                    obs_state.append(create_obs_state_plot(obs_dict))
+                    obs_state.append(create_obs_state_plot(obs_dict, lowdim=env.apply_low_dim_pcd))
                     if env.apply_mask:
                         obs_state.append(create_obs_state_plot(obs_dict, use_mask=True))
                     if env.apply_mask:

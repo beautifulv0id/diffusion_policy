@@ -62,6 +62,10 @@ def get_task_num_objects(path: str, task: str):
     num_objects = json.load(open(path, "r"))
     return num_objects[task]
 
+def get_task_num_low_dim_pcd(path: str, task: str):
+    num_objects = json.load(open(path, "r"))
+    return num_objects[task]
+
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -214,9 +218,14 @@ def mask_out_features_pcd(mask, rgbs, pcd, n_min = 0, n_max=1000000):
 
     return rgbs, pcd
 
-def create_obs_state_plot(obs, action=None, downsample=1, use_mask=False, quaternion_format: str = 'wxyz'):
-    pcd = obs['pcd']
-    rgb = obs['rgb']
+def create_obs_state_plot(obs, action=None, downsample=1, use_mask=False, lowdim = False, quaternion_format: str = 'wxyz'):
+    if lowdim:
+        pcd = obs['low_dim_pcd']
+        rgb = torch.zeros_like(pcd)
+        rgb[..., 0] = 1.0
+    else:
+        pcd = obs['pcd']
+        rgb = obs['rgb']
     mask = obs['mask'] if use_mask else None
     curr_gripper = obs['curr_gripper']
     out = create_robomimic_from_rlbench_action(curr_gripper, quaternion_format=quaternion_format)
@@ -276,23 +285,25 @@ def create_obs_state_plot(obs, action=None, downsample=1, use_mask=False, quater
                     line[0].set_label(f"Action t={i+1}")
 
     def plot_pcd(ax, pcd, rgb, mask=None):
-        if downsample > 1:
-            b, v, _, h, w = rgb.shape
-            h, w = rgb.shape[-2] // downsample, rgb.shape[-1] // downsample
+        if not lowdim:
+            if downsample > 1:
+                b, v, _, h, w = rgb.shape
+                h, w = rgb.shape[-2] // downsample, rgb.shape[-1] // downsample
 
-            pcd = interpolate(pcd.reshape((-1,) + pcd.shape[-3:]), size=(h, w), mode='bilinear').reshape(b, v, 3, h, w)
-            rgb = interpolate(rgb.reshape((-1,) + rgb.shape[-3:]), size=(h, w), mode='bilinear').reshape(b, v, 3, h, w)
+                pcd = interpolate(pcd.reshape((-1,) + pcd.shape[-3:]), size=(h, w), mode='bilinear').reshape(b, v, 3, h, w)
+                rgb = interpolate(rgb.reshape((-1,) + rgb.shape[-3:]), size=(h, w), mode='bilinear').reshape(b, v, 3, h, w)
+                if mask is not None:
+                    mask = interpolate(mask.reshape((-1,) + mask.shape[-3:]).float(), size=(h, w), mode='nearest').bool().reshape(b, v, 1, h, w)
+
             if mask is not None:
-                mask = interpolate(mask.reshape((-1,) + mask.shape[-3:]).float(), size=(h, w), mode='nearest').bool().reshape(b, v, 1, h, w)
-
-        if mask is not None:
-            rgb, pcd = mask_out_features_pcd(mask, rgb, pcd, n_min=1, n_max=1000000)
-            rgb = rgb.flatten(0,1)
-            pcd = pcd.flatten(0,1)
-        else:
-            pcd = pcd.permute(0, 1, 3, 4, 2).reshape(-1, 3)
-            rgb = rgb.permute(0, 1, 3, 4, 2).reshape(-1, 3)
-
+                rgb, pcd = mask_out_features_pcd(mask, rgb, pcd, n_min=1, n_max=1000000)
+                rgb = rgb
+                pcd = pcd
+            else:
+                pcd = pcd.permute(0, 1, 3, 4, 2)
+                rgb = rgb.permute(0, 1, 3, 4, 2)
+        pcd = pcd.reshape(-1, 3)
+        rgb = rgb.reshape(-1, 3)
         ax.scatter(pcd[:,0], pcd[:,1], pcd[:,2], c=rgb, s=1)
     
     fig = plt.figure()
@@ -368,7 +379,8 @@ def extract_obs(obs: Observation,
                 use_low_dim_pcd = False,
                 use_pose = False,
                 use_low_dim_state = False,
-                channels_last: bool = False):
+                channels_last: bool = False,
+                simulation = True):
     grip_mat = obs.gripper_matrix
     low_dim_pcd = obs.misc.get('low_dim_pcd', None)
     keypoint_poses = obs.misc.get('low_dim_poses', None)
@@ -441,7 +453,11 @@ def extract_obs(obs: Observation,
         mask = np.stack([obs_dict.pop('%s_mask' % camera) for camera in cameras])
         # objects of interest have id > 97
         # due to conversion errors some background pixels have id > 55
-        mask = (mask > 93) & (mask < 256 * 256) 
+        if simulation:
+            mask = (mask > 55) & (mask < 256 * 256)
+        else:
+            mask = (mask > 97)& (mask < 256 * 256)
+
         obs_dict['mask'] = mask.astype('bool')
 
     if use_low_dim_pcd:
@@ -547,7 +563,7 @@ def create_actions_from_obs(observations):
     return actions
 
 def create_obs_config(
-    image_size, apply_rgb, apply_depth, apply_pc, apply_mask, apply_cameras, **kwargs
+    image_size, apply_rgb, apply_depth, apply_pc, apply_mask, apply_cameras, render_mode=RenderMode.OPENGL3, **kwargs
 ):
     """
     Set up observation config for RLBench environment.
@@ -566,7 +582,7 @@ def create_obs_config(
         depth=apply_depth,
         mask=apply_mask,
         image_size=image_size,
-        render_mode=RenderMode.OPENGL,
+        render_mode=render_mode,
         **kwargs,
     )
 

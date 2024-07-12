@@ -157,24 +157,3 @@ class GITLowdimEncoder(ModuleAttrMixin):
         output_shape = example_output.shape[1:]
         return output_shape
 
-import hydra
-from omegaconf import OmegaConf
-import pathlib
-
-OmegaConf.register_new_resolver("eval", eval, replace=True)
-
-@hydra.main(
-    version_base=None,
-    config_path=str(pathlib.Path(__file__).parent.parent.parent.joinpath(
-        'config')),
-    config_name='train_flow_matching_SE3_lowdim_pose_workspace.yaml',
-)
-def test(cfg: OmegaConf):
-    OmegaConf.resolve(cfg)
-    obs_encoder : GITLowdimEncoder = hydra.utils.instantiate(cfg.policy.observation_encoder)
-    out = obs_encoder.output_shape()
-    print(out)
-
-
-if __name__ == "__main__":
-    test()

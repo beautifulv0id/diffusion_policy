@@ -455,15 +455,18 @@ class DiffuserActor(BaseImagePolicy):
             mask_obs=obs_dict.get('mask', None),
             need_attn_weights=need_attn_weights
         )
-        trajectory = output['trajectory']
+        rlbench_action = output['trajectory'].clone()
+
+        if rlbench_action.shape[-1] > 7:
+            rlbench_action[..., 7] = rlbench_action[..., 7] > 0.5
             
-        action = create_robomimic_from_rlbench_action(trajectory, quaternion_format = self._quaternion_format)
+        action = create_robomimic_from_rlbench_action(rlbench_action, quaternion_format = self._quaternion_format)
         result = {
-            'rlbench_action' : trajectory,
+            'rlbench_action' : rlbench_action,
             'action': action,
             'obs': obs_dict,
             'extra': {
-                'act_gr_pred': trajectory[..., 7],
+                'act_gr_pred': output['trajectory'][..., 7],
             }
         }
 
@@ -512,7 +515,7 @@ class DiffuserActor(BaseImagePolicy):
         angle_error = log_map(relative_R)
         rot_error = torch.nn.functional.mse_loss(angle_error, torch.zeros_like(angle_error))
 
-        gr_error = torch.nn.functional.mse_loss(pred_act_gr, gt_act_gr)
+        gr_error = torch.nn.functional.l1_loss(pred_act_gr, gt_act_gr)
         log_dict['train_gripper_mse_error'] = gr_error.item()
 
         log_dict['train_position_mse_error'] = pos_error.item()

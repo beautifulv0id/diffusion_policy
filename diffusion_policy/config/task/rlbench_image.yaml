@@ -31,7 +31,7 @@ env_runner:
   demo_tries: 1
   n_train_vis: 1
   n_val_vis: 1
-  n_procs_max: 3
+  n_procs_max: 5
   n_obs_steps: ${n_obs_steps}
   n_action_steps: ${n_action_steps}
   obs_history_from_planner: False

@@ -16,6 +16,25 @@ from contextlib import contextmanager
 
 __USE_DEFAULT_INIT__ = False
 
+class AdaLN(nn.Module):
+    def __init__(self, embedding_dim):
+        super().__init__()
+        self.modulation = nn.Sequential(
+             nn.SiLU(), nn.Linear(embedding_dim, 2 * embedding_dim, bias=True)
+        )
+        nn.init.constant_(self.modulation[-1].weight, 0)
+        nn.init.constant_(self.modulation[-1].bias, 0)
+
+    def forward(self, x, t):
+        """
+        Args:
+            x: A tensor of shape (B, N, C)
+            t: A tensor of shape (B, C)
+        """
+        scale, shift = self.modulation(t).chunk(2, dim=-1)  # (B, C), (B, C)
+        x = x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
+        return x  # (B, N, C)
+
 
 def invert_se3(rotations, translations):
     """
@@ -238,7 +257,7 @@ def disable_tf32():
 
 class InvariantPointAttention(nn.Module):
     def __init__(self, dim, heads=8, dim_head=64, dropout=0., kv_dim=None,
-                 point_dim=4, eps=1e-8, **kwargs):
+                 point_dim=4, eps=1e-8, use_adaln=False, **kwargs):
 
         super().__init__()
         if kv_dim is None:
@@ -282,7 +301,14 @@ class InvariantPointAttention(nn.Module):
         # combine out - scalar dim + point dim * (3 for coordinates in R3 and then 1 for norm)
         self.to_out = nn.Linear(heads * (dim_head + pairwise_repr_dim + point_dim * (3 + 1)), dim)
 
-    def forward(self, x, poses_x, z=None, poses_z=None,  mask=None):
+        if use_adaln:
+            self.adaln = AdaLN(dim)
+
+    def forward(self, x, poses_x, z=None, poses_z=None,  mask=None, diff_ts=None):
+        if diff_ts is not None:
+            x = self.adaln(x, diff_ts)
+        else:
+            x = x
 
         x, b, h, eps = x, x.shape[0], self.heads, self.eps
         if z is None:

@@ -10,7 +10,7 @@ from diffusion_policy.model.common.layers import (
     FFWRelativeCrossAttentionModule,
     FFWRelativeSelfCrossAttentionModule
 )
-from diffusion_policy.model.obs_encoders.diffuser_actor_mask_encoder import DiffuserActorEncoder
+from diffusion_policy.model.obs_encoders.diffuser_actor_encoder import DiffuserActorEncoder
 from diffusion_policy.model.common.layers import ParallelAttention
 from diffusion_policy.model.common.position_encodings import (
     RotaryPositionEncoding3D,

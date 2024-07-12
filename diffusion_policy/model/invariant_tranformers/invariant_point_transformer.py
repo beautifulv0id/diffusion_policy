@@ -44,6 +44,7 @@ class IPABlock(nn.Module):
         post_ff_dropout = 0.,
         attention_module = InvariantPointAttention,
         point_dim = 4,
+        use_adaln = False,
         **kwargs
     ):
         super().__init__()
@@ -51,7 +52,7 @@ class IPABlock(nn.Module):
 
         self.attn_norm = nn.LayerNorm(dim)
         self.attn = attention_module(dim, heads=heads, dim_head=dim_head,
-                dropout=dropout, kv_dim=kv_dim, point_dim=point_dim)
+                dropout=dropout, kv_dim=kv_dim, point_dim=point_dim, use_adaln=use_adaln)
         self.post_attn_dropout = nn.Dropout(post_attn_dropout)
 
         self.ff_norm = nn.LayerNorm(dim)
@@ -87,6 +88,7 @@ class InvariantPointTransformer(nn.Module):
         dropout=0.,
         attention_module=InvariantPointAttention,
         point_dim=4,
+        use_adaln=False,
         **kwargs
     ):
         super().__init__()
@@ -99,16 +101,16 @@ class InvariantPointTransformer(nn.Module):
                 IPABlock(dim=dim, heads = heads,dim_head = dim_head,
                          dropout = dropout, kv_dim=kv_dim,
                          attention_module=attention_module,
-                         point_dim=point_dim))
+                         point_dim=point_dim, use_adaln=use_adaln))
 
         # whether to detach rotations or not, for stability during training
         self.to_points = nn.Linear(dim, dim)
 
-    def forward(self, x, poses_x, z=None, poses_z=None, mask=None):
+    def forward(self, x, poses_x, z=None, poses_z=None, mask=None, diff_ts=None):
 
         # go through the layers and apply invariant point attention and feedforward
         for block in self.layers:
-            x = block(x, z=z, poses_x=poses_x, poses_z=poses_z, mask=mask)
+            x = block(x, z=z, poses_x=poses_x, poses_z=poses_z, mask=mask, diff_ts=diff_ts)
 
         return self.to_points(x)
 

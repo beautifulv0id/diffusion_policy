@@ -6,6 +6,7 @@ import os
 import torch
 from rlbench.utils import get_stored_demos
 from diffusion_policy.env_runner.rlbench_runner import RLBenchRunner
+from diffusion_policy.dataset.rlbench_zarr_dataset import RLBenchNextBestPoseDataset
 from diffusion_policy.common.rlbench_util import CAMERAS, create_obs_config
 from diffusion_policy.env_runner.rlbench_utils import _evaluate_task_on_demos
 from diffusion_policy.env.rlbench.rlbench_utils import Actioner
@@ -17,19 +18,21 @@ from hydra import compose, initialize
 from pathlib import Path
 import json
 
+OmegaConf.register_new_resolver("eval", eval, replace=True)
 
 class Arguments(tap.Tap):
-    task: str = 'open_drawer',
+    task: str = 'sweep_to_dustpan_of_size',
     save_path : str = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data', 'tests', os.path.basename(__file__).replace('.py', ''))
-    hydra_path: str = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data', 'outputs', '2024.06.29/15.39.38_train_diffuser_actor_open_drawer_image_3DDA/')
+    hydra_path: str = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data', 'outputs', '2024.07.10/17.22.29_train_diffuser_actor_sweep_to_dustpan_of_size_mask')
     data_root = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data/peract/raw')
     config : str = 'train_diffuser_actor.yaml'
-    overrides: list = ['task=open_drawer_image_3DDA' , 'num_episodes=1']
+    overrides: list = ['task=sweep_to_dustpan_of_size_mask']
     render_image_size: tuple = (256, 256)
 
 def load_model(hydra_path, cfg):
     checkpoint_dir = Path(hydra_path).joinpath('checkpoints')
     checkpoint_map = os.path.join(checkpoint_dir, 'checkpoint_map.json')
+    print(checkpoint_map)
     if os.path.exists(checkpoint_map):
         with open(checkpoint_map, 'r') as f:
             checkpoint_map = json.load(f)
@@ -57,17 +60,16 @@ if __name__ == '__main__':
     cfg = load_config(args.config)
 
     task_str = cfg.task.dataset.task_name
-    save_path = args.save_path
-    data_root = args.data_root
+    save_path = os.path.join(args.save_path, args.hydra_path.split('/')[-1])
     hydra_path = args.hydra_path
 
+    print(save_path)
     os.makedirs(save_path, exist_ok=True)
 
     runner : RLBenchRunner = hydra.utils.instantiate(cfg.task.env_runner, render_image_size=args.render_image_size, output_dir="")
-    
-    obs_config = create_obs_config(image_size=cfg.task.image_size, apply_cameras=CAMERAS, apply_pc=True, apply_mask=True, apply_rgb=True, apply_depth=False)
-    demos = get_stored_demos(amount=1, dataset_root=data_root, task_name=task_str, variation_number=0, from_episode_number=0, image_paths=False, random_selection=False, obs_config=obs_config)
-    dataset = load_dataset(cfg)
+
+    dataset : RLBenchNextBestPoseDataset = load_dataset(cfg)
+    demos = dataset.demos
     policy = load_model(hydra_path, cfg)
     policy = policy.to("cuda")
     policy.eval()
