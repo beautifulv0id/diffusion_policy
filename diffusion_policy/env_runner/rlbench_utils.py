@@ -210,9 +210,9 @@ def _evaluate_task_on_demos_multiproc(proc_num : int,
                     gt_action = gt_actions[step_id][None]
 
                 if env._recording:
-                    obs_state.append(create_obs_state_plot(obs_dict, lowdim=env.apply_low_dim_pcd, pred_action=torch.from_numpy(trajectory)[None], gt_action=gt_action)[0])
+                    obs_state.append(create_obs_state_plot(obs_dict, lowdim=env.apply_low_dim_pcd, pred_action=torch.from_numpy(trajectory)[None], gt_action=gt_action, quaternion_format='xyzw')[0])
                     if env.apply_mask:
-                        obs_state.append(create_obs_state_plot(obs_dict, use_mask=True, pred_action=torch.from_numpy(trajectory)[None], gt_action=gt_action)[0])
+                        obs_state.append(create_obs_state_plot(obs_dict, use_mask=True, pred_action=torch.from_numpy(trajectory)[None], gt_action=gt_action, quaternion_format='xyzw')[0])
                     if env.apply_mask:
                         logging_masks.append((masks[-1,-1].int() * 255).expand(3, -1, -1).cpu().numpy().astype(np.uint8))
                 

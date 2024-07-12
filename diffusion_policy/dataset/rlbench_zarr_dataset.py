@@ -50,16 +50,21 @@ def collate_samples(camera_data, gripper_pose, gripper_open, ignore_collisions, 
     return sample
     
 def add_noise_to_gripper_pose(gripper_pose, rot_noise_scale, pos_noise_scale):
+    if rot_noise_scale == 0 and pos_noise_scale == 0:
+        return gripper_pose
+    
     t, _ = gripper_pose.shape
     gripper_pose, ret = gripper_to_se3(gripper_pose)
 
     # add noise to rotation
-    drot = normal_so3(t, scale=rot_noise_scale).to(gripper_pose.device)
-    gripper_pose[:,:3,:3] = torch.bmm(drot, gripper_pose[:,:3,:3])
+    if rot_noise_scale > 0:
+        drot = normal_so3(t, scale=rot_noise_scale).to(gripper_pose.device)
+        gripper_pose[:,:3,:3] = torch.bmm(drot, gripper_pose[:,:3,:3])
 
     # add noise to translation
-    dpos = torch.normal(0, pos_noise_scale, (t, 3)).to(gripper_pose.device)
-    gripper_pose[:, :3, 3] += dpos
+    if pos_noise_scale > 0:
+        dpos = torch.normal(0, pos_noise_scale, (t, 3)).to(gripper_pose.device)
+        gripper_pose[:, :3, 3] += dpos
 
     gripper_pose = se3_to_gripper(gripper_pose, ret)
     return gripper_pose

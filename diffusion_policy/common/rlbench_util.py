@@ -591,7 +591,7 @@ def pose_gr_ic_from_obs(obs, obs_m1=None):
     gripper_pose = obs.gripper_pose
     pos = gripper_pose[:3]
     quat = gripper_pose[3:]
-    quat = normalize_quaternion(quaternion_to_real_part_first(quat))
+    quat = normalize_quaternion(quat)
     return np.concatenate([pos, quat, gripper_open, ignore_collisions])
 
 
