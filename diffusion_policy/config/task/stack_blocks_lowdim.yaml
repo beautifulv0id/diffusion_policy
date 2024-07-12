@@ -1,0 +1,8 @@
+defaults:
+  - rlbench_lowdim
+
+name: stack_blocks_lowdim
+task_name: stack_blocks
+
+env_runner:
+  max_steps: 12

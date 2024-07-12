@@ -1,0 +1,46 @@
+gripper_loc_bounds: 
+  _target_: diffusion_policy.common.rlbench_util.get_gripper_loc_bounds
+  path: "${oc.env:DIFFUSION_POLICY_ROOT}/diffusion_policy/tasks/18_peract_tasks_location_bounds.json"
+  buffer: 0.0
+  task: ${task.task_name}
+
+nkeypoints: 
+  _target_: diffusion_policy.common.rlbench_util.get_task_num_low_dim_pcd
+  path: "${oc.env:DIFFUSION_POLICY_ROOT}/diffusion_policy/tasks/peract_tasks_num_lowdim_pcd.json"
+  task: ${task.task_name}
+
+dataset:
+  _target_: diffusion_policy.dataset.rlbench_zarr_dataset.RLBenchLowDimNextBestPoseDataset
+  dataset_path: ${oc.env:DIFFUSION_POLICY_ROOT}/data/lowdim_test_keypoints.zarr
+  n_episodes: ${num_episodes}
+  task_name: ${task.task_name}
+  n_obs_steps: ${n_obs_steps}
+  val_ratio: 0.2
+  use_low_dim_state: True
+  cache_size: 200
+
+env_runner:
+  _target_: diffusion_policy.env_runner.rlbench_runner.RLBenchRunner
+  data_root: ""
+  task_str: ${task.task_name}
+  max_episodes: 10
+  max_steps: 3
+  max_rrt_tries: 1
+  demo_tries: 1
+  n_train_vis: 1
+  n_val_vis: 1
+  n_procs_max: 5
+  n_obs_steps: ${n_obs_steps}
+  n_action_steps: ${n_action_steps}
+  obs_history_from_planner: False
+  obs_history_augmentation_every_n: None
+  collision_checking: True
+  action_dim: 8
+  headless: True
+  apply_rgb: False
+  apply_cameras: []
+  apply_pc: False
+  apply_mask: False
+  apply_low_dim_pcd: True
+  apply_pose: false
+  image_size: []
