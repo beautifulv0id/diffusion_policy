@@ -86,6 +86,7 @@ class RLBenchNextBestPoseDataset(torch.utils.data.Dataset):
         self._training = True
 
         print(f"Loading dataset from {dataset_path} for task {task_name}")
+        print("Cache size: ", cache_size)
 
         if self._training:
             self._resize = Resize(scales=image_rescale)
@@ -208,9 +209,8 @@ class RLBenchNextBestPoseDataset(torch.utils.data.Dataset):
         return sample
 
     def get_validation_dataset(self):
-        val_set = copy.copy(self)
-        val_set.indices = self.val_indices
-        val_set.demos = self.val_demos
+        val_set = copy.deepcopy(self)
+        val_set.indices, val_set.demos = val_set.val_indices, val_set.val_demos
         val_set._training = False
         return val_set
     

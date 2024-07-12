@@ -258,8 +258,8 @@ class TrainingWorkspace(BaseWorkspace):
                                 for batch_idx, batch in enumerate(tepoch):
                                     # batch = format_batch(batch)
                                     batch = dict_apply(batch, lambda x: x.to(device, dtype, non_blocking=True))
-                                    # if val_sampling_batch is None:
-                                    #     val_sampling_batch = batch
+                                    if val_sampling_batch is None:
+                                        val_sampling_batch = batch
 
                                     loss = self.model.compute_loss(batch)
                                     val_losses.append(loss)
@@ -273,10 +273,10 @@ class TrainingWorkspace(BaseWorkspace):
 
 
                     ## Run Experiment related Validation ## #TODO: as far as I see, this currently has no effect!
-                    # if (self.epoch % cfg.training.model_evaluation_every) == 0:
-                    #     evaluation_log = self.model.evaluate(train_sampling_batch)
-                    #     # log all
-                    #     step_log.update(evaluation_log)
+                    if (self.epoch % cfg.training.model_evaluation_every) == 0:
+                        evaluation_log = self.model.evaluate(val_sampling_batch, validation=True)
+                        # log all
+                        step_log.update(evaluation_log)
 
                     # sample on a training batch
                     if (self.epoch % cfg.training.sample_every) == 0:
@@ -290,6 +290,7 @@ class TrainingWorkspace(BaseWorkspace):
 
                     if (self.epoch % cfg.training.visualize_every) == 0:
                         with torch.no_grad():
+                            train_sampling_batch = dict_apply(train_sampling_batch, lambda x: x[:cfg.training.visualize_batch_size])
                             batch = dict_apply(train_sampling_batch, lambda x: x.to(device, non_blocking=True))
                             pred = policy.predict_action(batch['obs'])
                             obs = train_sampling_batch['obs']

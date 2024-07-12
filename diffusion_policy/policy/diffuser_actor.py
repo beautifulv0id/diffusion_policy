@@ -489,7 +489,8 @@ class DiffuserActor(BaseImagePolicy):
         )
 
 
-    def evaluate(self, batch):
+    @torch.no_grad()
+    def evaluate(self, batch, validation=False):
         log_dict = {}
 
         gt_action = batch['action']
@@ -515,10 +516,11 @@ class DiffuserActor(BaseImagePolicy):
         angle_error = log_map(relative_R)
         rot_error = torch.nn.functional.mse_loss(angle_error, torch.zeros_like(angle_error))
         gr_error = torch.nn.functional.l1_loss(pred_act_gr, gt_act_gr)
-        log_dict['train_gripper_l1_loss'] = gr_error.item()
 
-        log_dict['train_position_mse_error'] = pos_error.item()
-        log_dict['train_rotation_mse_error'] = rot_error.item()
+        prefix = 'val_' if validation else 'train_'
+        log_dict[prefix + 'gripper_l1_loss'] = gr_error.item()
+        log_dict[prefix + 'position_mse_error'] = pos_error.item()
+        log_dict[prefix + 'rotation_mse_error'] = rot_error.item()
 
         return log_dict
 class DiffusionHead(nn.Module):
