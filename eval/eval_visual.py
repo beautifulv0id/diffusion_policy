@@ -14,7 +14,7 @@ from diffusion_policy.common.rlbench_util import CAMERAS, create_obs_config, cre
 from diffusion_policy.env_runner.rlbench_utils import _evaluate_task_on_demos
 from diffusion_policy.env.rlbench.rlbench_utils import Actioner
 from diffusion_policy.common.logger_utils import write_video
-from diffusion_policy.common.pytorch_util import dict_apply
+from diffusion_policy.common.pytorch_util import dict_apply, compare_dicts
 import tap
 import hydra
 from omegaconf import OmegaConf
@@ -104,21 +104,12 @@ if __name__ == '__main__':
     print(f"Hydra path: {hydra_path}")
     print(f"Task: {task_str}")
 
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
-
-    it = iter(dataloader)
+    dataloader1 = torch.utils.data.DataLoader(dataset, batch_size=6, shuffle=False, num_workers=0)
+   
     with torch.no_grad():
-        for i in range(1):
-            batch = next(it)
-
-            batch = dict_apply(batch, lambda x: x.to(device))
-
-            pred = policy.predict_action(batch['obs'])['rlbench_action'].cpu().detach()
-
-            batch = dict_apply(batch, lambda x: x.cpu().detach())
-
-            print("Pred: ", pred[...,7])
-            print("GT: ", batch['action']['gt_trajectory'][...,7])
-
-            img = create_obs_state_plot(batch['obs'], gt_action=batch['action']['gt_trajectory'], pred_action=pred, downsample=1, use_mask=False, lowdim = False, quaternion_format='xyzw')
-            save_image(torch.tensor(img).float() / 255, os.path.join(save_path, f'pred_{i}.png'))
+        batch = next(iter(dataloader1))
+        pred = policy.predict_action(dict_apply(batch, lambda x: x.to(device))['obs'])['rlbench_action'].cpu().detach()
+        print("Pred: ", pred[...,7])
+        print("GT: ", batch['action']['gt_trajectory'][...,7])
+        imgs = create_obs_state_plot(batch['obs'], gt_action=batch['action']['gt_trajectory'], pred_action=pred, downsample=1, use_mask=False, lowdim = False, quaternion_format='xyzw')
+        save_image(torch.from_numpy(imgs).float() / 255, os.path.join(save_path, f'pred_vs_gt.png'))

@@ -28,6 +28,8 @@ from diffusion_policy.common.json_logger import JsonLogger
 from diffusion_policy.common.pytorch_util import dict_apply, optimizer_to
 from diffusion_policy.model.common.lr_scheduler import get_scheduler
 from diffusion_policy.policy.diffuser_actor import DiffuserActor
+from diffusion_policy.common.rlbench_util import create_obs_state_plot
+from torchvision.utils import make_grid
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
@@ -154,6 +156,7 @@ class TrainingWorkspace(BaseWorkspace):
             cfg.training.checkpoint_every = 1
             cfg.training.val_every = 1
             cfg.training.sample_every = 1
+            cfg.training.visualize_every = 1
             image = wandb.Image(dataset.get_data_visualization(), caption="Dataset")
             wandb_run.log({"dataset": image}, step=self.global_step)
 
@@ -244,6 +247,7 @@ class TrainingWorkspace(BaseWorkspace):
                         )
                         # log all
                         step_log.update(runner_log)
+                                        
 
                     # run validation
                     if (self.epoch % cfg.training.val_every) == 0:
@@ -254,8 +258,8 @@ class TrainingWorkspace(BaseWorkspace):
                                 for batch_idx, batch in enumerate(tepoch):
                                     # batch = format_batch(batch)
                                     batch = dict_apply(batch, lambda x: x.to(device, dtype, non_blocking=True))
-                                    if val_sampling_batch is None:
-                                        val_sampling_batch = batch
+                                    # if val_sampling_batch is None:
+                                    #     val_sampling_batch = batch
 
                                     loss = self.model.compute_loss(batch)
                                     val_losses.append(loss)
@@ -283,6 +287,19 @@ class TrainingWorkspace(BaseWorkspace):
                             eval_log = policy.evaluate(batch)
                             # log all
                             step_log.update(eval_log)
+
+                    if (self.epoch % cfg.training.visualize_every) == 0:
+                        with torch.no_grad():
+                            batch = dict_apply(train_sampling_batch, lambda x: x.to(device, non_blocking=True))
+                            pred = policy.predict_action(batch['obs'])
+                            obs = train_sampling_batch['obs']
+                            gt_action = train_sampling_batch['action']['gt_trajectory']
+                            pred_action = pred['rlbench_action'].cpu().detach()
+                            imgs = create_obs_state_plot(obs=obs, gt_action=gt_action, pred_action=pred_action, quaternion_format=policy._quaternion_format)
+                            img = make_grid(torch.from_numpy(imgs).float() / 255)
+                            image = wandb.Image(img, caption="Prediction vs Ground Truth")
+                            wandb_run.log({"prediction_vs_gt": image}, step=self.global_step)
+
 
                     # checkpoint
                     if (self.epoch % cfg.training.checkpoint_every) == 0:

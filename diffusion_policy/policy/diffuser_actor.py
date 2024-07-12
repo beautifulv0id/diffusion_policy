@@ -506,7 +506,7 @@ class DiffuserActor(BaseImagePolicy):
         action = out['action']
         pred_act_p = action['act_p']
         pred_act_r = action['act_r']
-        pred_act_gr = out['extra']['act_gr_pred']
+        pred_act_gr = action['act_gr']
 
         pos_error = torch.nn.functional.mse_loss(pred_act_p, gt_act_p)
 
@@ -514,7 +514,6 @@ class DiffuserActor(BaseImagePolicy):
         relative_R = torch.matmul(R_inv_gt, pred_act_r)
         angle_error = log_map(relative_R)
         rot_error = torch.nn.functional.mse_loss(angle_error, torch.zeros_like(angle_error))
-
         gr_error = torch.nn.functional.l1_loss(pred_act_gr, gt_act_gr)
         log_dict['train_gripper_l1_loss'] = gr_error.item()
 

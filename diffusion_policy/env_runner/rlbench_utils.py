@@ -1,5 +1,5 @@
 from diffusion_policy.env.rlbench.rlbench_env import RLBenchEnv
-from diffusion_policy.env.rlbench.rlbench_utils import task_file_to_task_class, Actioner, Mover
+from diffusion_policy.env.rlbench.rlbench_utils import task_file_to_task_class, Actioner, Mover, get_actions_from_demo
 from diffusion_policy.common.rlbench_util import extract_obs
 import torch
 import numpy as np
@@ -23,16 +23,17 @@ def _evaluate_task_on_demos(env_args : dict,
                             max_rrt_tries: int = 1,
                             demo_tries: int = 1,
                             n_visualize: int = 0,
-                            verbose: bool = False):
+                            verbose: bool = False,
+                            plot_gt_action: bool = False):
     n_procs = min(n_procs_max, len(demos))
 
     if n_procs == 1:
         proc_log_data = [{}]
-        _evaluate_task_on_demos_multiproc(0, 1, proc_log_data, env_args, task_str, demos, max_steps, actioner, max_rrt_tries, demo_tries, n_visualize, verbose)
+        _evaluate_task_on_demos_multiproc(0, 1, proc_log_data, env_args, task_str, demos, max_steps, actioner, max_rrt_tries, demo_tries, n_visualize, verbose, plot_gt_action=plot_gt_action)
     else:
         manager = Manager()
         proc_log_data = manager.dict()
-        processes = [Process(target=_evaluate_task_on_demos_multiproc, args=(i, n_procs, proc_log_data, env_args, task_str, demos, max_steps, actioner, max_rrt_tries, demo_tries, n_visualize, verbose)) for i in range(n_procs)]
+        processes = [Process(target=_evaluate_task_on_demos_multiproc, args=(i, n_procs, proc_log_data, env_args, task_str, demos, max_steps, actioner, max_rrt_tries, demo_tries, n_visualize, verbose, plot_gt_action)) for i in range(n_procs)]
         [p.start() for p in processes]
         [p.join() for p in processes]
 
@@ -63,7 +64,8 @@ def _evaluate_task_on_demos_multiproc(proc_num : int,
                             max_rrt_tries: int = 1,
                             demo_tries: int = 1,
                             n_visualize: int = 0,
-                            verbose: bool = False):
+                            verbose: bool = False,
+                            plot_gt_action: bool = False):
     env = RLBenchEnv(**env_args)
     env.launch()
     device = actioner.device
@@ -79,10 +81,15 @@ def _evaluate_task_on_demos_multiproc(proc_num : int,
     task : TaskEnvironment = env.env.get_task(task_type)
     task.set_variation(0)
 
+
     n_obs_steps = env.n_obs_steps
     
     for demo_id in range(proc_num, len(demos), num_procs):
         demo = demos[demo_id]
+        if plot_gt_action:
+            gt_actions = get_actions_from_demo(demo)
+        gt_action = None
+
         if verbose:
                 print()
                 print(f"Starting demo {demo_id}")
@@ -175,11 +182,14 @@ def _evaluate_task_on_demos_multiproc(proc_num : int,
 
                 out = actioner.predict(dict_apply(obs_dict, lambda x: x.type(dtype).to(device)))
                 trajectory = out['rlbench_action']
-                
+
+                if plot_gt_action:
+                    gt_action = gt_actions[step_id][None]
+
                 if env._recording:
-                    obs_state.append(create_obs_state_plot(obs_dict, lowdim=env.apply_low_dim_pcd, pred_action=torch.from_numpy(trajectory)[None])[0])
+                    obs_state.append(create_obs_state_plot(obs_dict, lowdim=env.apply_low_dim_pcd, pred_action=torch.from_numpy(trajectory)[None], gt_action=gt_action)[0])
                     if env.apply_mask:
-                        obs_state.append(create_obs_state_plot(obs_dict, use_mask=True, pred_action=torch.from_numpy(trajectory)[None])[0])
+                        obs_state.append(create_obs_state_plot(obs_dict, use_mask=True, pred_action=torch.from_numpy(trajectory)[None], gt_action=gt_action)[0])
                     if env.apply_mask:
                         logging_masks.append((masks[-1,-1].int() * 255).expand(3, -1, -1).cpu().numpy().astype(np.uint8))
                 
