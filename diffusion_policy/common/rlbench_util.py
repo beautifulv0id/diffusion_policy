@@ -442,8 +442,8 @@ def extract_obs(obs: Observation,
                 use_low_dim_pcd = False,
                 use_pose = False,
                 use_low_dim_state = False,
-                channels_last: bool = False,
-                simulation = True):
+                channels_last: bool = False
+                ):
     grip_mat = obs.gripper_matrix
     low_dim_pcd = obs.misc.get('low_dim_pcd', None)
     keypoint_poses = obs.misc.get('low_dim_poses', None)
@@ -516,10 +516,7 @@ def extract_obs(obs: Observation,
         mask = np.stack([obs_dict.pop('%s_mask' % camera) for camera in cameras])
         # objects of interest have id > 97
         # due to conversion errors some background pixels have id > 55
-        if simulation:
-            mask = (mask > 55) & (mask < 256 * 256)
-        else:
-            mask = (mask > 97)& (mask < 256 * 256)
+        mask = (mask > 55)& (mask < 256 * 256)
 
         obs_dict['mask'] = mask.astype('bool')
 

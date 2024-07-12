@@ -8,7 +8,7 @@ from rlbench.utils import get_stored_demos
 from diffusion_policy.env_runner.rlbench_runner import RLBenchRunner
 from diffusion_policy.dataset.rlbench_zarr_dataset import RLBenchNextBestPoseDataset
 from diffusion_policy.env.rlbench.rlbench_env import RLBenchEnv
-from diffusion_policy.common.rlbench_util import CAMERAS, create_obs_config
+from diffusion_policy.common.rlbench_util import CAMERAS
 from diffusion_policy.env_runner.rlbench_utils import _evaluate_task_on_demos
 from diffusion_policy.env.rlbench.rlbench_utils import Actioner
 from diffusion_policy.common.logger_utils import write_video
@@ -19,8 +19,8 @@ from hydra import compose, initialize
 from pathlib import Path
 import json
 from typing import List
-from diffusion_policy.env.rlbench.rlbench_utils import task_file_to_task_class, Actioner, Mover
-from diffusion_policy.common.rlbench_util import extract_obs
+from diffusion_policy.env.rlbench.rlbench_utils import task_file_to_task_class, Actioner, Mover, get_actions_from_demo
+from diffusion_policy.common.rlbench_util import extract_obs, create_obs_config
 from rlbench.task_environment import TaskEnvironment
 from rlbench.demo import Demo
 import torch.nn.functional as F
@@ -31,25 +31,33 @@ OmegaConf.register_new_resolver("eval", eval, replace=True)
 
 class Arguments(tap.Tap):
     save_root : str = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data', 'tests', os.path.basename(__file__).replace('.py', ''))
-    hydra_path: str = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data/outputs/2024.07.10/17.22.29_train_diffuser_actor_sweep_to_dustpan_of_size_mask')
+    data_root = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data/image')
     config : str = 'train_diffuser_actor.yaml'
     overrides: List[str] = []
     render_image_size: tuple = (256, 256)
     n_demos: int = 1
 
-def load_model(hydra_path, cfg):
-    checkpoint_dir = Path(hydra_path).joinpath('checkpoints')
-    checkpoint_map = os.path.join(checkpoint_dir, 'checkpoint_map.json')
-    if os.path.exists(checkpoint_map):
-        with open(checkpoint_map, 'r') as f:
-            checkpoint_map = json.load(f)
-    checkpoint = Path(sorted(checkpoint_map.items(), key=lambda x: x[1])[0][0]).name
-    checkpoint_path = checkpoint_dir.joinpath(checkpoint)
-    policy = hydra.utils.instantiate(cfg.policy)
-    checkpoint = torch.load(checkpoint_path)
-    policy.load_state_dict(checkpoint["state_dicts"]['model'])
-    return policy
 
+class ReplayPolicy:
+    def __init__(self, demo):
+        self._actions = get_actions_from_demo(demo)
+        self.idx = 0
+        self.n_obs_steps = 1
+
+    def predict_action(self, obs):
+        action = self._actions[self.idx % len(self._actions)]
+        self.idx += 1
+        return {
+            'rlbench_action' : 
+                action.unsqueeze(0)
+        }
+    
+    def eval(self):
+        pass
+
+    def parameters(self):
+        return iter([torch.empty(0)])
+    
 def load_dataset(cfg):
     dataset = hydra.utils.instantiate(cfg.task.dataset)
     return dataset
@@ -60,28 +68,17 @@ def load_config(config_name: str, overrides: list = []):
     OmegaConf.resolve(cfg)
     return cfg
 
-def load_overrides(hydra_path, overrides):
-    this_overrides = OmegaConf.load(os.path.join(hydra_path, ".hydra", "overrides.yaml"))
-    overrides_map = {}
-    for override in this_overrides + overrides:
-        k, v = override.split('=')
-        overrides_map[k] = v
-    this_overrides = [k + '=' + v for k, v in overrides_map.items()]
-    return this_overrides
 
 if __name__ == '__main__':
     args = Arguments().parse_args()
-    overrides = load_overrides(args.hydra_path, args.overrides)
+    overrides =  args.overrides
 
     print("Overrides: ", overrides)
     
-    cfg = load_config(args.config, overrides)
+    cfg = load_config(args.config, overrides=overrides)
 
     task_str = cfg.task.dataset.task_name
-    hydra_path = args.hydra_path
-    save_path = os.path.join(args.save_root, task_str, hydra_path.split('/')[-1])
-    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    dtype = torch.float32
+    save_path = os.path.join(args.save_root, cfg.task.name)
 
     os.makedirs(save_path, exist_ok=True)
 
@@ -90,104 +87,31 @@ if __name__ == '__main__':
 
     dataset : RLBenchNextBestPoseDataset = load_dataset(cfg)
 
-    demos = dataset.demos[:args.n_demos]
-
-    policy = load_model(hydra_path, cfg)
-    policy = policy.to(device)
-    policy.eval()
-    actioner = Actioner(policy)
-
-    print(f"Hydra path: {hydra_path}")
-    print(f"Task: {task_str}")
-    print(f"Num demos: {len(demos)}")
-
-    n_obs_steps = cfg.n_obs_steps
-
-    task_type = task_file_to_task_class(task_str)
-    task : TaskEnvironment = env.env.get_task(task_type)
-    task.set_variation(0)
+    obs_config = create_obs_config(image_size=env.image_size, apply_cameras=[], apply_pc=False, apply_mask=False, apply_rgb=False, apply_depth=False)
+    demo = get_stored_demos(amount=1, dataset_root=args.data_root, task_name=task_str, variation_number=0, from_episode_number=0, image_paths=False, random_selection=False, obs_config=obs_config)[0]
 
 
-    first_obs = []
-    for i, demo in enumerate(demos):
-        print(f"Demo: {i}")
-        rgbs = torch.Tensor([])
-        pcds = torch.Tensor([])
-        masks = torch.Tensor([])
-        low_dim_pcds = torch.Tensor([])
-        keypoint_poses = torch.Tensor([])
-        grippers = torch.Tensor([])
-        low_dim_states = torch.Tensor([])
+    actioner = Actioner(
+        policy=ReplayPolicy(demo),
+        action_dim=8,
+    )
 
-        descriptions, observation = task.reset_to_demo(demo)
-        obs_dict = extract_obs(observation, cameras=env.apply_cameras, use_rgb=env.apply_rgb, use_pcd=env.apply_pc, use_mask=env.apply_mask, use_pose=env.apply_poses, use_low_dim_state=True, use_low_dim_pcd=env.apply_low_dim_pcd)
-
-        obs_dict = dict_apply(obs_dict, lambda x: torch.from_numpy(x).unsqueeze(0))
-
-        if env.apply_rgb:
-            rgb = obs_dict['rgb']
-            rgbs = torch.cat([rgbs, rgb], dim=0)
-        if env.apply_pc:
-            pcd = obs_dict['pcd']
-            pcds = torch.cat([pcds, pcd], dim=0)
-        if env.apply_low_dim_pcd:
-            low_dim_pcd = obs_dict['low_dim_pcd']
-            low_dim_pcds = torch.cat([low_dim_pcds, low_dim_pcd], dim=0)
-        if env.apply_poses:
-            keypoint_pose = obs_dict['keypoint_poses']
-            keypoint_poses = torch.cat([keypoint_poses, keypoint_pose], dim=0)
-        if env.apply_mask:
-            mask = obs_dict['mask']
-            masks = torch.cat([masks, mask], dim=0)
-
-        gripper = obs_dict['curr_gripper']
-        grippers = torch.cat([grippers, gripper], dim=0)
-        low_dim_state = obs_dict['low_dim_state']
-        low_dim_states = torch.cat([low_dim_states, low_dim_state], dim=0)
+    log_data = _evaluate_task_on_demos(env_args=runner.env_args,
+                            task_str=runner.task_str,
+                            demos=[demo],
+                            max_steps=3,
+                            actioner=actioner,
+                            max_rrt_tries=1,
+                            demo_tries=1,
+                            n_visualize=1,
+                            verbose=True,
+                            return_model_obs=True,)
     
-        def pad_input(input : torch.Tensor, npad):
-            sh_in = input.shape
-            input = input[-n_obs_steps:].unsqueeze(0)
-            input = input.reshape(input.shape[:2] + (-1,))
-            input = F.pad(
-                input, (0, 0, npad, 0), mode='replicate'
-            )
-            input = input.view((1, n_obs_steps, ) + sh_in[1:])
-            return input
+    keypoint_obs = log_data['model_obs'][0]
 
-        # Prepare proprioception history
-        npad = n_obs_steps - grippers[-n_obs_steps:].shape[0]
-        obs_dict = dict()
-        obs_dict["curr_gripper"] = pad_input(grippers, npad)
-        grippers = grippers[-n_obs_steps:]
-        obs_dict["low_dim_state"] = pad_input(low_dim_states, npad)
-        low_dim_states = low_dim_states[-n_obs_steps:]
-
-        if env.apply_rgb:
-            obs_dict["rgb"] = rgbs[-1:]
-            rgbs = rgbs[-n_obs_steps:]
-        if env.apply_pc:
-            obs_dict["pcd"]  = pcds[-1:]
-            pcds = pcds[-n_obs_steps:]
-        if env.apply_low_dim_pcd:
-            obs_dict["low_dim_pcd"] = low_dim_pcds[-1:]
-            low_dim_pcds = low_dim_pcds[-n_obs_steps:]
-        if env.apply_poses:
-            obs_dict["keypoint_poses"] = keypoint_poses[-1:]
-            keypoint_poses = keypoint_poses[-n_obs_steps:]
-        if env.apply_mask:
-            obs_dict["mask"] = masks[-1:].bool()
-            masks = masks[-n_obs_steps:]
-
-        obs_dict = dict_apply(obs_dict, lambda x: x.type(dtype).to(device))
-        # out = actioner.predict(obs_dict)
-        # trajectory = out['rlbench_action']
-
-        obs_dict = dict_apply(obs_dict, lambda x: x.type(dtype).to(device).squeeze(0))
-        first_obs.append(obs_dict)
-
-    for i, demo_obs in enumerate(first_obs):
-        dataset_obs = dataset[0]['obs']
+    for i, demo_obs in enumerate(keypoint_obs):
+        demo_obs = dict_apply(demo_obs, lambda x: x[0])
+        dataset_obs = dataset[i]['obs']
         for key, data in dataset_obs.items():
             demo_data = demo_obs[key]
             print(key)
@@ -195,24 +119,24 @@ if __name__ == '__main__':
             print(data.dtype, demo_data.dtype)
             print(data.max(), demo_data.max())
             if key.endswith('mask'):
-                for j, img in enumerate(data):
+                for j, (img, camera) in enumerate(zip(data, env.apply_cameras)):
                     img = img.permute(1, 2, 0) * 255
                     img = Image.fromarray(img.squeeze().cpu().numpy().astype('uint8'))
-                    img.save(os.path.join(save_path, f'{j}_{key}_dataset.png'))
+                    img.save(os.path.join(save_path, f'{i}_{key}_{camera}_dataset.png'))
             elif key.endswith('rgb'):
-                for j, img in enumerate(data):
+                for j, (img, camera) in enumerate(zip(data, env.apply_cameras)):
                     img = (img.permute(1, 2, 0) * 255).type(torch.uint8)
                     img = Image.fromarray(img.cpu().numpy())
-                    img.save(os.path.join(save_path, f'{j}_{key}_dataset.png'))
+                    img.save(os.path.join(save_path, f'{i}_{key}_{camera}_dataset.png'))
         for key, data in demo_obs.items():
             if key.endswith('mask'):
-                for j, img in enumerate(data):
+                for j, (img, camera) in enumerate(zip(data, env.apply_cameras)):
                     img = img.permute(1, 2, 0) * 255
                     img = Image.fromarray(img.squeeze().cpu().numpy().astype('uint8'))
-                    img.save(os.path.join(save_path, f'{j}_{key}_demo.png'))
+                    img.save(os.path.join(save_path, f'{i}_{key}_{camera}_demo.png'))
             elif key.endswith('rgb'):
-                for j, img in enumerate(data):
+                for j, (img, camera) in enumerate(zip(data, env.apply_cameras)):
                     img = (img.permute(1, 2, 0) * 255).type(torch.uint8)
                     img = Image.fromarray(img.cpu().numpy())
-                    img.save(os.path.join(save_path, f'{j}_{key}_demo.png'))
+                    img.save(os.path.join(save_path, f'{i}_{key}_{camera}_demo.png'))
 

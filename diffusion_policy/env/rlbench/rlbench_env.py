@@ -163,6 +163,7 @@ class RLBenchEnv:
         n_action_steps=1,
         render_image_size=[128, 128],
         adaptor=None,
+        visualize_ghost_objects=False,
         **kwargs
     ):
 
@@ -204,7 +205,7 @@ class RLBenchEnv:
         self._gripper_dummmies = None
         self._observation_dummies = None
         self._keypoints = None
-
+        self.visualize_ghost_objects = visualize_ghost_objects
         
     
     def create_gripper_dummies(self, num_grippers) -> Dummy:
@@ -246,10 +247,11 @@ class RLBenchEnv:
             cam.set_parent(Dummy('cam_cinematic_placeholder'))
             self._cam_motion = CircleCameraMotion(cam, Dummy('cam_cinematic_base'), 0.005, init_rotation=np.deg2rad(0))
             self._cam = cam
-        if self._gripper_dummmies is None:
-            self._gripper_dummmies = self.create_gripper_dummies(self.n_action_steps)
-        if self._observation_dummies is None:
-            self._observation_dummies = self.create_gripper_dummies(self.n_obs_steps) 
+        if self.visualize_ghost_objects:
+            if self._gripper_dummmies is None:
+                self._gripper_dummmies = self.create_gripper_dummies(self.n_action_steps)
+            if self._observation_dummies is None:
+                self._observation_dummies = self.create_gripper_dummies(self.n_obs_steps) 
 
     def shutdown(self):
         self.env.shutdown()
@@ -290,8 +292,9 @@ class RLBenchEnv:
             self.record_frame(obs)
 
     def record_frame(self, obs):
-        if "low_dim_pcd" in obs.misc:
-            self.update_keypoints(obs.misc["low_dim_pcd"])
+        if self.visualize_ghost_objects:
+            if "low_dim_pcd" in obs.misc:
+                self.update_keypoints(obs.misc["low_dim_pcd"])
         rgb = (self._cam.capture_rgb() * 255.).astype(np.uint8)
         self._rgbs.append(rgb)
         self._cam_motion.step()
@@ -822,9 +825,11 @@ class RLBenchEnv:
                             logging_masks.append((masks[-1,-1].int() * 255).expand(3, -1, -1).cpu().numpy().astype(np.uint8))
 
                     
-                    if step_id > 0:
+                    if step_id > 0 and self.visualize_ghost_objects:
                         self.draw_observation_history(n_frames=30)
-                    self.set_gripper_dummies(trajectory[:,:7])
+
+                    if self.visualize_ghost_objects:
+                        self.set_gripper_dummies(trajectory[:,:7])
 
                     if verbose:
                         print(f"Step {step_id}")
@@ -836,10 +841,11 @@ class RLBenchEnv:
                         if verbose:
                             print("Plan with RRT")
 
-                        for action, gripper_dummy in zip(trajectory[:self.n_action_steps], self._gripper_dummmies):
+                        for i, action in enumerate(trajectory[:self.n_action_steps]):
                             collision_checking = self._collision_checking(task_str, step_id)
                             observation, reward, terminate, _ = move(action, collision_checking=collision_checking)
-                            self.set_gripper_renderable(gripper_dummy, False)
+                            if self.visualize_ghost_objects:
+                                self.set_gripper_renderable(self._gripper_dummmies[i], False)
 
                         self.store_obs(observation)
 
