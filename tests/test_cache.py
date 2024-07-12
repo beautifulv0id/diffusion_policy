@@ -1,4 +1,4 @@
-from diffusion_policy.dataset.rlbench_zarr_dataset import RLBenchNextBestPoseDataset, RLBenchDataset
+from diffusion_policy.dataset.rlbench_dataset import RLBenchNextBestPoseDataset, RLBenchDataset
 import os
 from diffusion_policy.common.pytorch_util import print_dict, compare_dicts
 from torchvision.utils import save_image, make_grid

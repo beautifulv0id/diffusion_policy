@@ -8,7 +8,7 @@ from rlbench.utils import get_stored_demos
 import torch.utils
 import torch.utils.data
 from diffusion_policy.env_runner.rlbench_runner import RLBenchRunner
-from diffusion_policy.dataset.rlbench_zarr_dataset import RLBenchNextBestPoseDataset
+from diffusion_policy.dataset.rlbench_dataset import RLBenchNextBestPoseDataset
 from diffusion_policy.env.rlbench.rlbench_env import RLBenchEnv
 from diffusion_policy.common.rlbench_util import CAMERAS, create_obs_config, create_robomimic_from_rlbench_action,mask_out_features_pcd
 from diffusion_policy.env_runner.rlbench_utils import _evaluate_task_on_demos

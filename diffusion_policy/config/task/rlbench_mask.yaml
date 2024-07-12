@@ -9,7 +9,7 @@ gripper_loc_bounds:
 cameras: ['left_shoulder', 'right_shoulder', 'wrist', 'front']
 
 dataset:
-  _target_: diffusion_policy.dataset.rlbench_zarr_dataset.RLBenchNextBestPoseDataset
+  _target_: diffusion_policy.dataset.rlbench_dataset.RLBenchNextBestPoseDataset
   dataset_path: ${oc.env:DIFFUSION_POLICY_ROOT}/data/image_keypoints.zarr
   n_episodes: ${num_episodes}
   task_name: ${task.task_name}

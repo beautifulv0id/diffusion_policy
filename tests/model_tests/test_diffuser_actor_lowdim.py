@@ -1,5 +1,5 @@
 from diffusion_policy.policy.diffuser_actor_lowdim import DiffuserActor
-from diffusion_policy.dataset.rlbench_zarr_dataset import RLBenchLowDimNextBestPoseDataset
+from diffusion_policy.dataset.rlbench_dataset import RLBenchLowDimNextBestPoseDataset
 from diffusion_policy.common.pytorch_util import print_dict
 import os
 from diffusion_policy.common.rlbench_util import get_task_num_low_dim_pcd, get_gripper_loc_bounds

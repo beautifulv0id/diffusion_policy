@@ -1,4 +1,4 @@
-from diffusion_policy.dataset.rlbench_zarr_dataset import RLBenchNextBestPoseDataset
+from diffusion_policy.dataset.rlbench_dataset import RLBenchNextBestPoseDataset
 import os
 from diffusion_policy.common.pytorch_util import print_dict
 from torchvision.utils import save_image, make_grid
@@ -9,8 +9,8 @@ tasks = ['open_drawer']
 save_path = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data', 'tests', 'test_dataset', 'image_keypoints.zarr')
 os.makedirs(save_path, exist_ok=True)
 
-rot_noise_scale = 0.05
-pos_noise_scale = 0.01
+rot_noise_scale = 0.00
+pos_noise_scale = 0.00
 
 for task in tasks:
     dataset = RLBenchNextBestPoseDataset(

@@ -10,7 +10,7 @@ nkeypoints:
   task: ${task.task_name}
 
 dataset:
-  _target_: diffusion_policy.dataset.rlbench_zarr_dataset.RLBenchLowDimNextBestPoseDataset
+  _target_: diffusion_policy.dataset.rlbench_dataset.RLBenchLowDimNextBestPoseDataset
   dataset_path: ${oc.env:DIFFUSION_POLICY_ROOT}/data/lowdim_test_keypoints.zarr
   n_episodes: ${num_episodes}
   task_name: ${task.task_name}
