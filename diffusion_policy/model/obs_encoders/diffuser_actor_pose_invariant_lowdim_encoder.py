@@ -55,24 +55,6 @@ class DiffuserActorEncoder(ModuleAttrMixin):
         self.keypoint_embeddings = nn.Embedding(nkeypoints, embedding_dim)
 
         self._quaternion_format = quaternion_format
-
-
-    def gripper_to_se3(self, signal):
-        b, n = signal.shape[:2]
-        if self._quaternion_format == 'xyzw':
-            signal = signal[..., [0, 1, 2, 6, 3, 4, 5]]
-        pose = torch.eye(4, device=signal.device).unsqueeze(0).unsqueeze(0).repeat(b, n, 1, 1)
-        pose[..., :3, :3] = quaternion_to_matrix(signal[..., 3:])
-        pose[..., :3, 3] = signal[..., :3]
-        return pose
-    
-    def se3_to_gripper(self, pose):
-        b, n = pose.shape[:2]
-        quat = matrix_to_quaternion(pose[..., :3, :3])
-        if self._quaternion_format == 'xyzw':
-            quat = quat[..., [1, 2, 3, 0]]
-        signal = torch.cat([pose[..., :3, 3], quat], dim=-1)
-        return signal
         
     def forward(self):
         return None

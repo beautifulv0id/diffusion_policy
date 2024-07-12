@@ -31,6 +31,27 @@ CAMERAS = ['left_shoulder', 'right_shoulder', 'wrist', 'overhead', 'front']
 
 Instructions = Dict[str, Dict[int, torch.Tensor]]
 
+def gripper_to_se3(signal, quaternion_format='xyzw'):
+    shape = signal.shape
+    signal = signal.reshape(-1, signal.shape[-1])
+    ret = signal[..., 7:]
+    if quaternion_format == 'xyzw':
+        signal = signal[..., [0, 1, 2, 6, 3, 4, 5]]
+    pose = torch.eye(4, device=signal.device).unsqueeze(0).expand(signal.shape[0], -1, -1).clone()
+    pose[..., :3, :3] = quaternion_to_matrix(signal[..., 3:])
+    pose[..., :3, 3] = signal[..., :3]
+    pose = pose.reshape(shape[:-1] + (4, 4))
+    return pose, ret
+
+def se3_to_gripper(pose, res=None, quaternion_format='xyzw'):
+    quat = matrix_to_quaternion(pose[..., :3, :3])
+    if quaternion_format == 'xyzw':
+        quat = quat[..., [1, 2, 3, 0]]
+    signal = torch.cat([pose[..., :3, 3], quat], dim=-1)
+    if res is not None:
+        signal = torch.cat([signal, res], -1)
+    return signal
+
 
 def round_floats(o):
     if isinstance(o, float): return round(o, 2)

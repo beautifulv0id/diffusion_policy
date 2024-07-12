@@ -260,28 +260,6 @@ class DiffuserActor(BaseImagePolicy):
         inv_pose = se3_from_rot_pos(curr_gripper[:, -1, :3, :3], curr_gripper[:, -1, :3, 3])
         trajectory = einsum('bmn,blnk->blmk', inv_pose, trajectory)
         return 
-
-    def gripper_to_se3(self, signal):
-        shape = signal.shape
-        signal = signal.reshape(-1, signal.shape[-1])
-        ret = signal[..., 7:]
-        if self._quaternion_format == 'xyzw':
-            signal = signal[..., [0, 1, 2, 6, 3, 4, 5]]
-        pose = torch.eye(4, device=signal.device).unsqueeze(0).expand(signal.shape[0], -1, -1).clone()
-        pose[..., :3, :3] = quaternion_to_matrix(signal[..., 3:])
-        pose[..., :3, 3] = signal[..., :3]
-        pose = pose.reshape(shape[:-1] + (4, 4))
-        return pose, ret
-    
-    def se3_to_gripper(self, pose, res=None):
-        quat = matrix_to_quaternion(pose[..., :3, :3])
-        if self._quaternion_format == 'xyzw':
-            quat = quat[..., [1, 2, 3, 0]]
-        signal = torch.cat([pose[..., :3, 3], quat], dim=-1)
-        if res is not None:
-            signal = torch.cat([signal, res], -1)
-        return signal
-
     
     def forward(
         self,
@@ -646,6 +624,7 @@ with torch.no_grad():
     def test():
         from diffusion_policy.common.pytorch_util import dict_apply
         from diffusion_policy.model.common.se3_util import random_se3
+        from diffusion_policy.common.rlbench_util import se3_to_gripper
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         horizon = 1
@@ -709,11 +688,11 @@ with torch.no_grad():
         pcd_, curr_gripper_, trajectory_ = convert2rel(pcd, curr_gripper, trajectory, H)
         batch_ = {
             'action': {
-                'gt_trajectory': model.se3_to_gripper(trajectory_, res=trajectory0[..., 7:]),
+                'gt_trajectory': se3_to_gripper(trajectory_, res=trajectory0[..., 7:]),
             },
             'obs': {
                 'low_dim_pcd': pcd_,
-                'curr_gripper': model.se3_to_gripper(curr_gripper_, res=curr_gripper0[..., 7:])
+                'curr_gripper': se3_to_gripper(curr_gripper_, res=curr_gripper0[..., 7:])
             }
         }
         trajectory_, curr_gripper_, pcd_ = convert2abs(trajectory_, curr_gripper_, pcd_, H)

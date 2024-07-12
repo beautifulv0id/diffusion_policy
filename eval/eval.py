@@ -31,6 +31,7 @@ class Arguments(tap.Tap):
     render_image_size: tuple = (256, 256)
     n_demos: int = -1
     demos_from_path: bool = False
+    train_demos: bool = False
 
 def load_model(hydra_path, cfg):
     checkpoint_dir = Path(hydra_path).joinpath('checkpoints')
@@ -87,9 +88,15 @@ if __name__ == '__main__':
 
     if args.demos_from_path:
         obs_config = create_obs_config(image_size=env.image_size, apply_cameras=[], apply_pc=False, apply_mask=False, apply_rgb=False, apply_depth=False)
-        demos = get_stored_demos(amount=args.n_demos, dataset_root=data_root, task_name=task_str, variation_number=0, from_episode_number=0, image_paths=False, random_selection=False, obs_config=obs_config)
+        if args.train_demos:
+            demos = get_stored_demos(amount=args.n_demos, dataset_root=data_root, task_name=task_str, variation_number=0, from_episode_number=0, image_paths=False, random_selection=False, obs_config=obs_config)
+        else:
+            demos = get_stored_demos(amount=args.n_demos, dataset_root=data_root, task_name=task_str, variation_number=0, from_episode_number=len(dataset.demos), image_paths=False, random_selection=False, obs_config=obs_config)
     else:
-        demos = dataset.demos[:args.n_demos] if args.n_demos > 0 else dataset.val_demos
+        if args.train_demos:
+            demos = dataset.demos[:args.n_demos] if args.n_demos > 0 else dataset.demos
+        else:
+            demos = dataset.val_demos[:args.n_demos] if args.n_demos > 0 else dataset.val_demos
 
     policy = load_model(hydra_path, cfg)
     policy = policy.to("cuda")
@@ -110,7 +117,8 @@ if __name__ == '__main__':
                             demo_tries=1,
                             n_visualize=len(demos),
                             verbose=True,
-                            n_procs_max=1)
+                            n_procs_max=1,
+                            plot_gt_action=True)
     
     success_rate = log_data['success_rate']
     print(f"Success rate: {success_rate}")
@@ -131,14 +139,14 @@ if __name__ == '__main__':
     if len(log_data['obs_state']) > 0:
         for i, obs_state in enumerate(log_data['obs_state']):
             obs_state = obs_state.transpose(0, 2, 3, 1)
-            write_video(obs_state, os.path.join(save_path, f"obs_state_{i}.mp4"), fps=30)
+            write_video(obs_state, os.path.join(save_path, f"obs_state_{i}.mp4"), fps=1)
     else:
         print("No obs")
 
     if len(log_data['mask']) > 0:
         for i, masks in enumerate(log_data['mask']):
             masks = masks.transpose(0, 2, 3, 1)
-            write_video(masks, os.path.join(save_path, f"mask_{i}.mp4"), fps=30)
+            write_video(masks, os.path.join(save_path, f"mask_{i}.mp4"), fps=1)
     else:
         print("No mask")
     
