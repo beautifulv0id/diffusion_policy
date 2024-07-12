@@ -178,6 +178,7 @@ class DiffuserActorEncoder(ModuleAttrMixin):
         """
         this_mask = mask.clone()
         b, v, _, h, w = rgb_features.shape
+        rgb_features = einops.rearrange(rgb_features, 'b v c h w -> b (v h w) c')
         this_mask = F.interpolate(this_mask.flatten(0, 1).float(), (h, w), mode='nearest').bool().reshape(b, v, h, w)
 
         B = this_mask.size(0)
@@ -197,7 +198,7 @@ class DiffuserActorEncoder(ModuleAttrMixin):
                 idx1 = torch.cat((idx1, neg_inds[neg_i:neg_i + offset]))
         fill_inds = (idx0, idx1)
         this_mask.view(B, -1)[fill_inds] = True
-        idx = this_mask.view(B, -1).nonzero(as_tuple=True)
+        rgb_features[fill_inds] = 0
 
         pos_inds = this_mask.view(B, -1).nonzero(as_tuple=True)[1]
         pos_indsn = this_mask.view(B, -1).count_nonzero(dim=-1)
@@ -215,7 +216,6 @@ class DiffuserActorEncoder(ModuleAttrMixin):
         this_mask.view(B, -1)[fill_inds] = False
         idx = this_mask.view(B, -1).nonzero(as_tuple=True)
 
-        rgb_features = einops.rearrange(rgb_features, 'b v c h w -> b (v h w) c')
         rgb_features = rgb_features[idx].reshape(B, n_sample, -1)
 
         pcd = pcd[idx].reshape(B, n_sample, -1)

@@ -219,151 +219,156 @@ def mask_out_features_pcd(mask, rgbs, pcd, n_min = 0, n_max=1000000):
     return rgbs, pcd
 
 def create_obs_state_plot(obs, gt_action=None, pred_action=None, downsample=1, use_mask=False, lowdim = False, quaternion_format: str = 'wxyz'):
-    if lowdim:
-        pcd = obs['low_dim_pcd']
-        rgb = torch.zeros_like(pcd)
-        rgb[..., 0] = 1.0
-    else:
-        pcd = obs['pcd']
-        rgb = obs['rgb']
+    n_batch = obs['rgb'].shape[0]
 
-    pcd = pcd.cpu()
-    rgb = rgb.cpu()
-    mask = obs['mask'] if use_mask else None
-    curr_gripper = obs['curr_gripper'].cpu()
-    out = create_robomimic_from_rlbench_action(curr_gripper, quaternion_format=quaternion_format)
-    curr_gripper_rot = out['act_r'][0].float()
-    curr_gripper_pos = out['act_p'][0].float()
-    curr_gripper_gr = out['act_gr'][0].float()
-    n_obs = curr_gripper_rot.shape[0]
-
-    if gt_action is not None:
-        gt_action = gt_action.cpu()
-        out = create_robomimic_from_rlbench_action(gt_action, quaternion_format=quaternion_format)
-        gt_rot = out['act_r'][0].float()
-        gt_pos = out['act_p'][0].float()
-        gt_gr = out['act_gr'][0].float()
-        n_actions = gt_rot.shape[0]
-
-    if pred_action is not None:
-        pred_action = pred_action.cpu()
-        out = create_robomimic_from_rlbench_action(pred_action, quaternion_format=quaternion_format)
-        pred_rot = out['act_r'][0].float()
-        pred_pos = out['act_p'][0].float()
-        pred_gr = out['act_gr'][0].float()
-        n_actions = pred_rot.shape[0]
-
-
-    obs_colors = cm.get_cmap('Blues',  n_obs+ 1)
-    action_colors = cm.get_cmap('Reds',  n_actions)
-    gt_action_colors = cm.get_cmap('Greens',  n_actions)
-
-    def create_gripper_pts(gripper_opens, scale = 0.2):
-        gripper_pts = []
-        for gripper_open in gripper_opens:
-            if not gripper_open:
-                gripper_pts.append(torch.tensor([
-                    [0, 0, -1],
-                    [0, 0, 0],
-                    [0, -0.1, 0],
-                    [0, 0.1, 0],
-                    [0, -0.1, 0],
-                    [0, -0.1, 0.5],
-                    [0, 0.1, 0],
-                    [0, 0.1, 0.5],
-                    [0, 0.01, 0.99],
-                    [0, -0.01, 1.01],
-                    [0, 0.01, 1.01],
-                    [0, -0.01, 0.99],
-                ]))
-            else:
-                gripper_pts.append(torch.tensor([
-                    [0, 0, -1],
-                    [0, 0, 0],
-                    [0, -0.5, 0],
-                    [0, 0.5, 0],
-                    [0, -0.5, 0],
-                    [0, -0.5, 0.5],
-                    [0, 0.5, 0],
-                    [0, 0.5, 0.5],
-                    [0, 0.01, 0.99],
-                    [0, -0.01, 1.01],
-                    [0, 0.01, 1.01],
-                    [0, -0.01, 0.99],
-                ]) )
-
-        gripper_pts = torch.stack(gripper_pts)
-        gripper_pts = gripper_pts + torch.tensor([0, 0, -1]).unsqueeze(0)
-        gripper_pts = gripper_pts * scale
-
-        return gripper_pts
+    images = []
+    for bidx in range(n_batch):
     
-    def plot_gripper(ax, gripper_pos, gripper_rot, gripper_open, scale = 0.2, colors=obs_colors):
-        gripper_pts = create_gripper_pts(gripper_open, scale)
-        gripper_pts = einsum('nij,nkj->nki', gripper_rot, gripper_pts)
-        gripper_pts = gripper_pts + gripper_pos.unsqueeze(1)
-        gripper_pts = gripper_pts.reshape(gripper_pos.shape[0], -1, 3).numpy()
-        for i, gripper_pts_i in enumerate(gripper_pts):
-            for j in range(0, len(gripper_pts_i), 2):
-                line = ax.plot(gripper_pts_i[j:j+2,0], gripper_pts_i[j:j+2,1], gripper_pts_i[j:j+2,2], linewidth=1, zorder=10, color=colors(i+1))
-                if j == 0:
-                    line[0].set_label(f"Gripper t={i-n_obs+1}")
-    
-    def plot_action(ax, action_pos, action_rot, gripper_open, scale = 0.1, linewidth=4, colors=action_colors, label_prefix="GT Action t="):
-        gripper_pts = create_gripper_pts(gripper_open, scale)
-        gripper_pts = einsum('nij,nkj->nki', action_rot, gripper_pts)
-        gripper_pts = gripper_pts + action_pos.unsqueeze(1)
-        gripper_pts = gripper_pts.reshape(action_pos.shape[0], -1, 3).numpy()
-        for i, gripper_pts_i in enumerate(gripper_pts):
-            for j in range(0, len(gripper_pts_i), 2):
-                line = ax.plot(gripper_pts_i[j:j+2,0], gripper_pts_i[j:j+2,1], gripper_pts_i[j:j+2,2], linewidth=linewidth, zorder=10, color=colors(i+1))
-                if j == 0:
-                    line[0].set_label(label_prefix + f" t={i+1}")
+        if lowdim:
+            pcd = obs['low_dim_pcd'][bidx:bidx+1]
+            rgb = torch.zeros_like(pcd)
+            rgb[..., 0] = 1.0
+        else:
+            pcd = obs['pcd'][bidx:bidx+1]
+            rgb = obs['rgb'][bidx:bidx+1]
 
-    def plot_pcd(ax, pcd, rgb, mask=None):
-        if not lowdim:
-            if downsample > 1:
-                b, v, _, h, w = rgb.shape
-                h, w = rgb.shape[-2] // downsample, rgb.shape[-1] // downsample
+        mask = obs['mask'] if use_mask else None
+        curr_gripper = obs['curr_gripper']
+        out = create_robomimic_from_rlbench_action(curr_gripper, quaternion_format=quaternion_format)
+        curr_gripper_rot = out['act_r'][bidx].float()
+        curr_gripper_pos = out['act_p'][bidx].float()
+        curr_gripper_gr = out['act_gr'][bidx].float()
+        n_obs = curr_gripper_rot.shape[0]
 
-                pcd = interpolate(pcd.reshape((-1,) + pcd.shape[-3:]), size=(h, w), mode='bilinear').reshape(b, v, 3, h, w)
-                rgb = interpolate(rgb.reshape((-1,) + rgb.shape[-3:]), size=(h, w), mode='bilinear').reshape(b, v, 3, h, w)
+        if gt_action is not None:
+            gt_action = gt_action
+            out = create_robomimic_from_rlbench_action(gt_action, quaternion_format=quaternion_format)
+            gt_rot = out['act_r'][bidx].float()
+            gt_pos = out['act_p'][bidx].float()
+            gt_gr = out['act_gr'][bidx].float()
+            n_actions = gt_rot.shape[0]
+
+        if pred_action is not None:
+            pred_action = pred_action
+            out = create_robomimic_from_rlbench_action(pred_action, quaternion_format=quaternion_format)
+            pred_rot = out['act_r'][bidx].float()
+            pred_pos = out['act_p'][bidx].float()
+            pred_gr = out['act_gr'][bidx].float()
+            n_actions = pred_rot.shape[0]
+
+
+        obs_colors = cm.get_cmap('Blues',  n_obs+ 1)
+        action_colors = cm.get_cmap('Reds',  n_actions)
+        gt_action_colors = cm.get_cmap('Greens',  n_actions)
+
+        def create_gripper_pts(gripper_opens, scale = 0.2):
+            gripper_pts = []
+            for gripper_open in gripper_opens:
+                if not gripper_open:
+                    gripper_pts.append(torch.tensor([
+                        [0, 0, -1],
+                        [0, 0, 0],
+                        [0, -0.1, 0],
+                        [0, 0.1, 0],
+                        [0, -0.1, 0],
+                        [0, -0.1, 0.5],
+                        [0, 0.1, 0],
+                        [0, 0.1, 0.5],
+                        [0, 0.01, 0.99],
+                        [0, -0.01, 1.01],
+                        [0, 0.01, 1.01],
+                        [0, -0.01, 0.99],
+                    ]))
+                else:
+                    gripper_pts.append(torch.tensor([
+                        [0, 0, -1],
+                        [0, 0, 0],
+                        [0, -0.5, 0],
+                        [0, 0.5, 0],
+                        [0, -0.5, 0],
+                        [0, -0.5, 0.5],
+                        [0, 0.5, 0],
+                        [0, 0.5, 0.5],
+                        [0, 0.01, 0.99],
+                        [0, -0.01, 1.01],
+                        [0, 0.01, 1.01],
+                        [0, -0.01, 0.99],
+                    ]) )
+
+            gripper_pts = torch.stack(gripper_pts)
+            gripper_pts = gripper_pts + torch.tensor([0, 0, -1]).unsqueeze(0)
+            gripper_pts = gripper_pts * scale
+
+            return gripper_pts
+        
+        def plot_gripper(ax, gripper_pos, gripper_rot, gripper_open, scale = 0.2, colors=obs_colors):
+            gripper_pts = create_gripper_pts(gripper_open, scale)
+            gripper_pts = einsum('nij,nkj->nki', gripper_rot, gripper_pts)
+            gripper_pts = gripper_pts + gripper_pos.unsqueeze(1)
+            gripper_pts = gripper_pts.reshape(gripper_pos.shape[0], -1, 3).numpy()
+            for i, gripper_pts_i in enumerate(gripper_pts):
+                for j in range(0, len(gripper_pts_i), 2):
+                    line = ax.plot(gripper_pts_i[j:j+2,0], gripper_pts_i[j:j+2,1], gripper_pts_i[j:j+2,2], linewidth=1, zorder=10, color=colors(i+1))
+                    if j == 0:
+                        line[0].set_label(f"Gripper t={i-n_obs+1}")
+        
+        def plot_action(ax, action_pos, action_rot, gripper_open, scale = 0.1, linewidth=4, colors=action_colors, label_prefix="GT Action t="):
+            gripper_pts = create_gripper_pts(gripper_open, scale)
+            gripper_pts = einsum('nij,nkj->nki', action_rot, gripper_pts)
+            gripper_pts = gripper_pts + action_pos.unsqueeze(1)
+            gripper_pts = gripper_pts.reshape(action_pos.shape[0], -1, 3).numpy()
+            for i, gripper_pts_i in enumerate(gripper_pts):
+                for j in range(0, len(gripper_pts_i), 2):
+                    line = ax.plot(gripper_pts_i[j:j+2,0], gripper_pts_i[j:j+2,1], gripper_pts_i[j:j+2,2], linewidth=linewidth, zorder=10, color=colors(i+1))
+                    if j == 0:
+                        line[0].set_label(label_prefix + f" t={i+1}")
+
+        def plot_pcd(ax, pcd, rgb, mask=None):
+            if not lowdim:
+                if downsample > 1:
+                    b, v, _, h, w = rgb.shape
+                    h, w = rgb.shape[-2] // downsample, rgb.shape[-1] // downsample
+
+                    pcd = interpolate(pcd.reshape((-1,) + pcd.shape[-3:]), size=(h, w), mode='bilinear').reshape(b, v, 3, h, w)
+                    rgb = interpolate(rgb.reshape((-1,) + rgb.shape[-3:]), size=(h, w), mode='bilinear').reshape(b, v, 3, h, w)
+                    if mask is not None:
+                        mask = interpolate(mask.reshape((-1,) + mask.shape[-3:]).float(), size=(h, w), mode='nearest').bool().reshape(b, v, 1, h, w)
+
                 if mask is not None:
-                    mask = interpolate(mask.reshape((-1,) + mask.shape[-3:]).float(), size=(h, w), mode='nearest').bool().reshape(b, v, 1, h, w)
+                    rgb, pcd = mask_out_features_pcd(mask, rgb, pcd, n_min=1, n_max=1000000)
+                    rgb = rgb
+                    pcd = pcd
+                else:
+                    pcd = pcd.permute(0, 1, 3, 4, 2)
+                    rgb = rgb.permute(0, 1, 3, 4, 2)
+            pcd = pcd.reshape(-1, 3)
+            rgb = rgb.reshape(-1, 3)
+            ax.scatter(pcd[:,0], pcd[:,1], pcd[:,2], c=rgb, s=1)
+        
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+        ax.view_init(elev=30, azim=45, roll=0)
+        RADIUS = .7  # Control this value.
+        ax.set_xlim3d(-RADIUS / 2, RADIUS / 2)
+        ax.set_zlim3d(-RADIUS / 2 + 1, RADIUS / 2 + 1)
+        ax.set_ylim3d(-RADIUS / 2, RADIUS / 2)
+        plot_pcd(ax, pcd, rgb, mask)
+        plot_gripper(ax, curr_gripper_pos, curr_gripper_rot, curr_gripper_gr, scale=0.1)
+        if gt_action is not None:
+            plot_action(ax, gt_pos, gt_rot, gt_gr, label_prefix="GT Action=", colors=gt_action_colors)
+        if pred_action is not None:
+            plot_action(ax, pred_pos, pred_rot, pred_gr, label_prefix="Pred Action=")
+        ax.legend()
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png')
+        buf.seek(0)
+        image = np.array(Image.open(buf)).transpose(2, 0, 1)
+        buf.close()
+        plt.close()
 
-            if mask is not None:
-                rgb, pcd = mask_out_features_pcd(mask, rgb, pcd, n_min=1, n_max=1000000)
-                rgb = rgb
-                pcd = pcd
-            else:
-                pcd = pcd.permute(0, 1, 3, 4, 2)
-                rgb = rgb.permute(0, 1, 3, 4, 2)
-        pcd = pcd.reshape(-1, 3)
-        rgb = rgb.reshape(-1, 3)
-        ax.scatter(pcd[:,0], pcd[:,1], pcd[:,2], c=rgb, s=1)
-    
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-    ax.view_init(elev=30, azim=45, roll=0)
-    RADIUS = .7  # Control this value.
-    ax.set_xlim3d(-RADIUS / 2, RADIUS / 2)
-    ax.set_zlim3d(-RADIUS / 2 + 1, RADIUS / 2 + 1)
-    ax.set_ylim3d(-RADIUS / 2, RADIUS / 2)
-    plot_pcd(ax, pcd, rgb, mask)
-    plot_gripper(ax, curr_gripper_pos, curr_gripper_rot, curr_gripper_gr, scale=0.1)
-    if gt_action is not None:
-        plot_action(ax, gt_pos, gt_rot, gt_gr, label_prefix="GT Action=", colors=gt_action_colors)
-    if pred_action is not None:
-        plot_action(ax, pred_pos, pred_rot, pred_gr, label_prefix="Pred Action=")
-    ax.legend()
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png')
-    buf.seek(0)
-    image = np.array(Image.open(buf)).transpose(2, 0, 1)
-    buf.close()
-    plt.close()
+        images.append(image)
 
-    return image
+    return np.array(images)
 
 def _is_stopped(demo : Demo, i, obs, stopped_buffer, delta=0.1):
     next_is_not_final = i == (len(demo) - 2)

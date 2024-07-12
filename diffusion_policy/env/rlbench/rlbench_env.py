@@ -815,9 +815,9 @@ class RLBenchEnv:
                     trajectory = out['rlbench_action']
 
                     if self._recording:
-                        obs_state.append(create_obs_state_plot(obs_dict, pred_action=trajectory))
+                        obs_state.append(create_obs_state_plot(obs_dict, lowdim=self.apply_low_dim_pcd, pred_action=torch.from_numpy(trajectory)[None])[0])
                         if self.apply_mask:
-                            obs_state.append(create_obs_state_plot(obs_dict, use_mask=True, pred_action=trajectory))
+                            obs_state.append(create_obs_state_plot(obs_dict, use_mask=True, pred_action=torch.from_numpy(trajectory)[None])[0])
                         if self.apply_mask:
                             logging_masks.append((masks[-1,-1].int() * 255).expand(3, -1, -1).cpu().numpy().astype(np.uint8))
 

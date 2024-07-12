@@ -173,14 +173,13 @@ def _evaluate_task_on_demos_multiproc(proc_num : int,
                     masks = masks[-n_obs_steps:]
 
 
-                obs_dict = dict_apply(obs_dict, lambda x: x.type(dtype).to(device))
-                out = actioner.predict(obs_dict)
+                out = actioner.predict(dict_apply(obs_dict, lambda x: x.type(dtype).to(device)))
                 trajectory = out['rlbench_action']
                 
                 if env._recording:
-                    obs_state.append(create_obs_state_plot(obs_dict, lowdim=env.apply_low_dim_pcd, pred_action=trajectory))
+                    obs_state.append(create_obs_state_plot(obs_dict, lowdim=env.apply_low_dim_pcd, pred_action=torch.from_numpy(trajectory)[None])[0])
                     if env.apply_mask:
-                        obs_state.append(create_obs_state_plot(obs_dict, use_mask=True, pred_action=trajectory))
+                        obs_state.append(create_obs_state_plot(obs_dict, use_mask=True, pred_action=torch.from_numpy(trajectory)[None])[0])
                     if env.apply_mask:
                         logging_masks.append((masks[-1,-1].int() * 255).expand(3, -1, -1).cpu().numpy().astype(np.uint8))
                 

@@ -105,3 +105,4 @@ def compare_dicts(a, b, rtol=1e-4, atol=1e-3):
             compare_dicts(a[k], b[k])
         else:
             assert torch.allclose(a[k], b[k], rtol=rtol, atol=atol), f"{a[k]} != {b[k]}, {k} not equal"
+    return True

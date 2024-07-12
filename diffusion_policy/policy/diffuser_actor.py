@@ -516,7 +516,7 @@ class DiffuserActor(BaseImagePolicy):
         rot_error = torch.nn.functional.mse_loss(angle_error, torch.zeros_like(angle_error))
 
         gr_error = torch.nn.functional.l1_loss(pred_act_gr, gt_act_gr)
-        log_dict['train_gripper_mse_error'] = gr_error.item()
+        log_dict['train_gripper_l1_loss'] = gr_error.item()
 
         log_dict['train_position_mse_error'] = pos_error.item()
         log_dict['train_rotation_mse_error'] = rot_error.item()
