@@ -172,17 +172,17 @@ def _evaluate_task_on_demos_multiproc(proc_num : int,
                     obs_dict["mask"] = masks[-1:].bool()
                     masks = masks[-n_obs_steps:]
 
-                if env._recording:
-                    obs_state.append(create_obs_state_plot(obs_dict, lowdim=env.apply_low_dim_pcd))
-                    if env.apply_mask:
-                        obs_state.append(create_obs_state_plot(obs_dict, use_mask=True))
-                    if env.apply_mask:
-                        logging_masks.append((masks[-1,-1].int() * 255).expand(3, -1, -1).cpu().numpy().astype(np.uint8))
 
                 obs_dict = dict_apply(obs_dict, lambda x: x.type(dtype).to(device))
-
                 out = actioner.predict(obs_dict)
                 trajectory = out['rlbench_action']
+                
+                if env._recording:
+                    obs_state.append(create_obs_state_plot(obs_dict, lowdim=env.apply_low_dim_pcd, pred_action=trajectory))
+                    if env.apply_mask:
+                        obs_state.append(create_obs_state_plot(obs_dict, use_mask=True, pred_action=trajectory))
+                    if env.apply_mask:
+                        logging_masks.append((masks[-1,-1].int() * 255).expand(3, -1, -1).cpu().numpy().astype(np.uint8))
                 
                 if step_id > 0:
                     env.draw_observation_history(n_frames=30)

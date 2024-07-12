@@ -808,17 +808,19 @@ class RLBenchEnv:
                         obs_dict["mask"] = masks[-1:].bool()
                         masks = masks[-n_obs_steps:]
 
-                    if self._recording:
-                        obs_state.append(create_obs_state_plot(obs_dict))
-                        if self.apply_mask:
-                            obs_state.append(create_obs_state_plot(obs_dict, use_mask=True))
-                        if self.apply_mask:
-                            logging_masks.append((masks[-1,-1].int() * 255).expand(3, -1, -1).cpu().numpy().astype(np.uint8))
 
                     obs_dict = dict_apply(obs_dict, lambda x: x.type(dtype).to(device))
 
                     out = actioner.predict(obs_dict)
                     trajectory = out['rlbench_action']
+
+                    if self._recording:
+                        obs_state.append(create_obs_state_plot(obs_dict, pred_action=trajectory))
+                        if self.apply_mask:
+                            obs_state.append(create_obs_state_plot(obs_dict, use_mask=True, pred_action=trajectory))
+                        if self.apply_mask:
+                            logging_masks.append((masks[-1,-1].int() * 255).expand(3, -1, -1).cpu().numpy().astype(np.uint8))
+
                     
                     if step_id > 0:
                         self.draw_observation_history(n_frames=30)

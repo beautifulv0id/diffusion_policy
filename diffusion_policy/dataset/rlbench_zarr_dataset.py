@@ -255,10 +255,10 @@ class RLBenchDataset(torch.utils.data.Dataset):
         for idx in idxs:
                 data = self[idx]
                 data = dict_apply(data, lambda x: x.unsqueeze(0))
-                img = create_obs_state_plot(data['obs'], data['action']['gt_trajectory'], use_mask=False, quaternion_format = 'xyzw')
+                img = create_obs_state_plot(data['obs'], gt_action=data['action']['gt_trajectory'], use_mask=False, quaternion_format = 'xyzw')
                 imgs.append(torch.from_numpy(img[:3,:,:]))
                 if self.use_mask:
-                    img = create_obs_state_plot(data['obs'], data['action']['gt_trajectory'], use_mask=True, quaternion_format = 'xyzw')
+                    img = create_obs_state_plot(data['obs'], gt_action=data['action']['gt_trajectory'], use_mask=True, quaternion_format = 'xyzw')
                     imgs.append(torch.from_numpy(img[:3,:,:])) 
         imgs = torch.stack(imgs) / 255.0
         return imgs
@@ -423,10 +423,10 @@ class RLBenchNextBestPoseDataset(torch.utils.data.Dataset):
         for idx in idxs:
                 data = self[idx]
                 data = dict_apply(data, lambda x: x.unsqueeze(0))
-                img = create_obs_state_plot(data['obs'], data['action']['gt_trajectory'], use_mask=False, quaternion_format = 'xyzw')
+                img = create_obs_state_plot(data['obs'], gt_action=data['action']['gt_trajectory'], use_mask=False, quaternion_format = 'xyzw')
                 imgs.append(torch.from_numpy(img[:3,:,:]))
                 if self.use_mask:
-                    img = create_obs_state_plot(data['obs'], data['action']['gt_trajectory'], use_mask=True, quaternion_format = 'xyzw')
+                    img = create_obs_state_plot(data['obs'], gt_action=data['action']['gt_trajectory'], use_mask=True, quaternion_format = 'xyzw')
                     imgs.append(torch.from_numpy(img[:3,:,:])) 
         imgs = torch.stack(imgs) / 255.0
         return imgs
@@ -561,7 +561,7 @@ class RLBenchLowDimNextBestPoseDataset(torch.utils.data.Dataset):
         for idx in idxs:
                 data = self[idx]
                 data = dict_apply(data, lambda x: x.unsqueeze(0))
-                img = create_obs_state_plot(data['obs'], data['action']['gt_trajectory'], use_mask=False, lowdim = True, quaternion_format = 'xyzw')
+                img = create_obs_state_plot(data['obs'], gt_action=data['action']['gt_trajectory'], use_mask=False, lowdim = True, quaternion_format = 'xyzw')
                 imgs.append(torch.from_numpy(img[:3,:,:]))
         imgs = torch.stack(imgs) / 255.0
         return imgs
