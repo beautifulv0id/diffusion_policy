@@ -11,7 +11,7 @@ from diffusion_policy.model.flow_matching.flow_matching_models import SE3LinearA
 from diffusion_policy.model.invariant_tranformers.invariant_point_transformer import InvariantPointTransformer
 from diffusion_policy.model.invariant_tranformers.geometry_invariant_attention import InvariantPointAttention
 
-from diffusion_policy.model.obs_encoders.diffuser_actor_pose_invariant_lowdim_encoder import DiffuserActorEncoder
+from diffusion_policy.model.obs_encoders.diffuser_actor_pose_invariant_encoder_v2 import DiffuserActorEncoder
 
 from diffusion_policy.model.common.layers import ParallelAttention
 from diffusion_policy.model.common.position_encodings import (
@@ -32,39 +32,43 @@ from diffusion_policy.model.common.geometry_invariant_transformer import Geometr
 class DiffuserActor(BaseImagePolicy):
 
     def __init__(self,
+                 backbone="clip",
+                 image_size=(256, 256),
                  embedding_dim=60,
                  fps_subsampling_factor=5,
                  scaling_factor=3.0,
-                 gripper_loc_bounds=None,
                  rotation_parametrization='so3',
                  quaternion_format='xyzw',
                  diffusion_timesteps=100,
                  nhist=3,
-                 nkeypoints=10,
                  nhorizon=16,
                  t_switch=0.75,
+                 use_mask=False,
                  relative=False,
+                 causal_attn=True,
+                 gripper_loc_bounds=None
                  ):
         super().__init__()
         assert rotation_parametrization == 'so3', "Only SO3 is supported"        
         self._rotation_parametrization = rotation_parametrization
         self._quaternion_format = quaternion_format
         self.encoder = DiffuserActorEncoder(
+            backbone=backbone,
+            image_size=image_size,
             embedding_dim=embedding_dim,
+            num_sampling_level=1,
             nhist=nhist,
-            nkeypoints=nkeypoints,
             fps_subsampling_factor=fps_subsampling_factor
         )
         self.prediction_head = DiffusionHead(
             embedding_dim=embedding_dim,
             rotation_parametrization=rotation_parametrization,
             nhist=nhist,
+            causal_attn=causal_attn
         )
         self.n_steps = diffusion_timesteps
         self.nhorizon = nhorizon
         self.scaling_factor = torch.tensor(scaling_factor)
-        
-        self.gripper_loc_bounds = torch.tensor(gripper_loc_bounds)
         ## Flow Model ##
         self.t_switch = t_switch
         self.flow = SE3LinearAttractorFlow(t_switch=self.t_switch)
@@ -73,24 +77,46 @@ class DiffuserActor(BaseImagePolicy):
         self.vector_field_at_t = self.flow.vector_field_at_t
         self.step = self.flow.step
         self._relative = relative
+        self.use_mask = use_mask
+        self.gripper_loc_bounds = torch.tensor(gripper_loc_bounds) if gripper_loc_bounds is not None else None
 
-    def encode_inputs(self, keypoint_pcd,
-                      curr_gripper):
-        # Compute visual features/positional embeddings at different scales
-        keypoint_feats = self.encoder.get_keypoint_embeddings()
-        keypoint_feats = einops.repeat(keypoint_feats, 'npts c -> b npts c', b=keypoint_pcd.size(0))
-        context_feats = keypoint_feats
-        context = keypoint_pcd
+    def encode_inputs(self, visible_rgb, visible_pcd,
+                      curr_gripper, mask=None):
+        
+        rgb_feats_pyramid, pcd_pyramid = self.encoder.encode_images(
+            visible_rgb, visible_pcd
+        )
+
+        rgb_feats = rgb_feats_pyramid[0]
+        pcd = pcd_pyramid[0]
+
+        if self.use_mask:
+            context_feats, context, mask_idx = self.encoder.mask_out_features_pcd(mask, rgb_feats, pcd, n_min=0, n_max=1024)
+        else:
+            # Keep only low-res scale
+            context_feats = einops.rearrange(
+                rgb_feats_pyramid[0],
+                "b ncam c h w -> b (ncam h w) c"
+            )
+            context = pcd_pyramid[0]
 
         # Encode gripper history (B, nhist, F)
         adaln_gripper_feats = self.encoder.encode_curr_gripper(
             curr_gripper, context_feats, context
         )
+    
+        # FPS on visual features (N, B, F) and (B, N, F, 2)
+        fps_feats, fps_pcd = self.encoder.run_fps(
+            context_feats,
+            context
+        )
 
         return (
             context_feats, context,  # contextualized visual features
-            adaln_gripper_feats, curr_gripper # gripper history features
+            adaln_gripper_feats, curr_gripper, # gripper history features
+            fps_feats, fps_pcd  # sampled visual features
         )
+
 
     def policy_forward_pass(self, trajectory, timestep, fixed_inputs):
         # Parse inputs
@@ -98,7 +124,9 @@ class DiffuserActor(BaseImagePolicy):
             context_feats,
             context,
             adaln_gripper_feats,
-            curr_gripper_pose
+            curr_gripper_pose,
+            fps_feats,
+            fps_pcd
         ) = fixed_inputs
 
         return self.prediction_head(
@@ -107,7 +135,9 @@ class DiffuserActor(BaseImagePolicy):
             context_feats=context_feats,
             context=context,
             adaln_gripper_feats=adaln_gripper_feats,
-            curr_gripper_pose=curr_gripper_pose
+            curr_gripper_pose=curr_gripper_pose,
+            fps_feats=fps_feats,
+            fps_pcd=fps_pcd
         )
 
     def conditional_sample(self, condition_data, condition_mask, fixed_inputs):
@@ -144,8 +174,10 @@ class DiffuserActor(BaseImagePolicy):
     def compute_trajectory(
         self,
         trajectory_mask,
+        rgb_obs,
         pcd_obs,
         curr_gripper,
+        mask_obs=None
     ):
         
         # Convert rotation parametrization
@@ -158,7 +190,7 @@ class DiffuserActor(BaseImagePolicy):
 
         # Prepare inputs
         fixed_inputs = self.encode_inputs(
-            pcd_obs, curr_gripper
+            rgb_obs, pcd_obs, curr_gripper, mask_obs
         )
 
         # Condition on start-end pose
@@ -212,6 +244,7 @@ class DiffuserActor(BaseImagePolicy):
         pos_max = self.gripper_loc_bounds[1].float().to(pos.device)
         return (pos + 1.0) / 2.0 * (pos_max - pos_min) + pos_min
 
+
     def convert_rot(self, signal):
         signal = signal.clone()
         signal[..., 3:7] = normalise_quat(signal[..., 3:7])
@@ -243,7 +276,7 @@ class DiffuserActor(BaseImagePolicy):
 
         bs = trans.shape[0]       
         pcd = pcd.clone() 
-        pcd = einsum('bmn,bkn->bkm', rot, pcd) + trans.view(bs, 1, 3)
+        pcd = einsum('bmn,bvnhw->bvmhw', rot, pcd) + trans.view(bs, 1, 3, 1, 1)
         curr_gripper = curr_gripper.clone()
         curr_gripper = einsum('bmn,bhnk->bhmk', inv_pose, curr_gripper)
         if trajectory is not None:
@@ -277,9 +310,11 @@ class DiffuserActor(BaseImagePolicy):
         self,
         gt_trajectory,
         trajectory_mask,
+        rgb_obs,
         pcd_obs,
         curr_gripper,
-        run_inference=False
+        run_inference=False,
+        mask_obs=None,
     ):
         """
         Arguments:
@@ -302,7 +337,9 @@ class DiffuserActor(BaseImagePolicy):
             gt_trajectory[:, :, :3] = self.normalize_pos(gt_trajectory[:, :, :3])
         pcd_obs = pcd_obs.clone()
         curr_gripper = curr_gripper.clone()
-        pcd_obs = self.normalize_pos(pcd_obs)
+        pcd_obs = torch.permute(self.normalize_pos(
+            torch.permute(pcd_obs, [0, 1, 3, 4, 2])
+        ), [0, 1, 4, 2, 3])
         curr_gripper[..., :3] = self.normalize_pos(curr_gripper[..., :3])
 
         if gt_trajectory is not None:
@@ -314,8 +351,10 @@ class DiffuserActor(BaseImagePolicy):
         if run_inference:
             return self.compute_trajectory(
                 trajectory_mask,
+                rgb_obs,
                 pcd_obs,
-                curr_gripper
+                curr_gripper,
+                mask_obs
             )
         # Convert rotation parametrization
         gt_trajectory, _ = self.convert_rot(gt_trajectory)
@@ -326,7 +365,7 @@ class DiffuserActor(BaseImagePolicy):
 
         # Prepare inputs
         fixed_inputs = self.encode_inputs(
-            pcd_obs, curr_gripper
+            rgb_obs, pcd_obs, curr_gripper, mask_obs
         )
 
         p1 = gt_trajectory[:, :, :3, 3]
@@ -363,18 +402,20 @@ class DiffuserActor(BaseImagePolicy):
         return total_loss
     
     def predict_action(self, obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        trajectory_mask = torch.zeros(1, self.nhorizon, device=obs_dict['low_dim_pcd'].device)
+        trajectory_mask = torch.zeros(1, self.nhorizon, device=obs_dict['rgb'].device)
         output = self.forward(
             gt_trajectory=None,
             trajectory_mask=trajectory_mask,
-            pcd_obs=obs_dict['low_dim_pcd'],
+            rgb_obs=obs_dict['rgb'],
+            pcd_obs=obs_dict['pcd'],
             curr_gripper=obs_dict['curr_gripper'],
-            run_inference=True
+            run_inference=True,
+            mask_obs=obs_dict.get('mask', None)
         )
-        trajectory = output['trajectory']
+        rlbench_action = output['trajectory'].clone()
 
-        rlbench_action = trajectory.clone()
-        rlbench_action[..., 7] = rlbench_action[..., 7] > 0.5
+        if rlbench_action.shape[-1] > 7:
+            rlbench_action[..., 7] = rlbench_action[..., 7] > 0.5
             
         action = create_robomimic_from_rlbench_action(rlbench_action, quaternion_format = self._quaternion_format)
         result = {
@@ -388,9 +429,11 @@ class DiffuserActor(BaseImagePolicy):
         return self.forward(
             gt_trajectory=batch['action']['gt_trajectory'],
             trajectory_mask=None,
-            pcd_obs=batch['obs']['low_dim_pcd'],
+            rgb_obs=batch['obs']['rgb'],
+            pcd_obs=batch['obs']['pcd'],
             curr_gripper=batch['obs']['curr_gripper'],
             run_inference=False,
+            mask_obs=batch['obs'].get('mask', None)
         )
 
 
@@ -435,7 +478,8 @@ class DiffusionHead(nn.Module):
                  num_attn_heads=8,
                  rotation_parametrization='so3',
                  nhist=3,
-                 nhorizon=1,):
+                 nhorizon=1,
+                 causal_attn=True):
         super().__init__()
         if 'so3' in rotation_parametrization:
             rotation_out_dim = 3
@@ -462,16 +506,11 @@ class DiffusionHead(nn.Module):
         assert head_dim * num_attn_heads == embedding_dim, "embed_dim must be divisible by num_heads"
 
         # Estimate attends to context (no subsampling)
-        self.cross_attn = GeometryInvariantTransformer(
-            dim=embedding_dim,
-            dim_head=head_dim,
-            mlp_dim=embedding_dim,
-            heads=num_attn_heads,
-            depth=1, 
-            normal_attn_depth=3,
-            kv_dim=embedding_dim,
-            use_adaln=True
+        self.cross_attn = InvariantPointTransformer(
+            embedding_dim, 2, num_attn_heads, head_dim, kv_dim=embedding_dim, use_adaln=True,
+            dropout=0.0, attention_module=InvariantPointAttention, point_dim=3
         )
+
 
         self.self_attn = InvariantPointTransformer(
             embedding_dim, 4, num_attn_heads, head_dim, kv_dim=None, use_adaln=True,
@@ -481,16 +520,9 @@ class DiffusionHead(nn.Module):
         # Specific (non-shared) Output layers:
         # 1. Rotation
         self.rotation_proj = nn.Linear(embedding_dim, embedding_dim)
-        self.rotation_cross_attn = GeometryInvariantTransformer(
-            dim=embedding_dim,
-            dim_head=head_dim,
-            mlp_dim=embedding_dim,
-            heads=num_attn_heads,
-            depth=1,
-            normal_attn_depth=3,
-            kv_dim=embedding_dim,
-            use_adaln=True
-        )
+        self.rotation_self_attn = InvariantPointTransformer(
+            embedding_dim, 2, num_attn_heads, head_dim, kv_dim=None, use_adaln=True,
+            dropout=0.0, attention_module=InvariantPointAttention, point_dim=3)
 
         self.rotation_predictor = nn.Sequential(
             nn.Linear(embedding_dim, embedding_dim),
@@ -500,16 +532,10 @@ class DiffusionHead(nn.Module):
 
         # 2. Position
         self.position_proj = nn.Linear(embedding_dim, embedding_dim)
-        self.position_cross_attn = GeometryInvariantTransformer(
-            dim=embedding_dim,
-            dim_head=head_dim,
-            mlp_dim=embedding_dim,
-            heads=num_attn_heads,
-            depth=1,
-            normal_attn_depth=3,
-            kv_dim=embedding_dim,
-            use_adaln=True
-        )
+        self.position_self_attn = InvariantPointTransformer(
+            embedding_dim, 2, num_attn_heads, head_dim, kv_dim=None, use_adaln=True,
+            dropout=0.0, attention_module=InvariantPointAttention, point_dim=3)
+        
 
         self.position_predictor = nn.Sequential(
             nn.Linear(embedding_dim, embedding_dim),
@@ -524,9 +550,11 @@ class DiffusionHead(nn.Module):
             nn.Linear(embedding_dim, 1)
         )
 
+        self.causal_attn = causal_attn
+
     def forward(self, trajectory, timestep,
                 context_feats, context, adaln_gripper_feats,
-                curr_gripper_pose):
+                curr_gripper_pose, fps_feats, fps_pcd):
         """
         Arguments:
             trajectory: (B, trajectory_length, 4, 4)
@@ -550,7 +578,8 @@ class DiffusionHead(nn.Module):
             trajectory, traj_feats,
             context, context_feats,
             timestep, adaln_gripper_feats,
-            curr_gripper_pose=curr_gripper_pose
+            curr_gripper_pose=curr_gripper_pose,
+            fps_feats=fps_feats, fps_pcd=fps_pcd
         )
 
         pos_pred, rot_pred, openess_pred = output['pred']
@@ -559,9 +588,9 @@ class DiffusionHead(nn.Module):
     
     def prediction_head(self,
                         trajectory_pose, trajectory_features,
-                        context_pcd, context_features,
+                        pcd, pcd_features,
                         timesteps, curr_gripper_features,
-                        curr_gripper_pose):
+                        curr_gripper_pose, fps_feats, fps_pcd):
         """
         Compute the predicted action (position, rotation, opening).
 
@@ -579,42 +608,49 @@ class DiffusionHead(nn.Module):
             timesteps, curr_gripper_features
         )
 
-        # Self attention among trajectory and curr_gripper
-        features = torch.cat([trajectory_features, curr_gripper_features], 1)
-        poses = {}
-        poses['rotations'] = torch.cat([trajectory_pose[..., :3, :3], curr_gripper_pose[..., :3, :3]], 1)
-        poses['translations'] = torch.cat([trajectory_pose[..., :3, 3], curr_gripper_pose[..., :3, 3]], 1)
+        pcd_rotations = torch.eye(3).reshape(1,1,3,3).repeat(pcd.size(0), pcd.size(1), 1, 1).to(pcd.device)
+        pcd_translations = pcd
 
-        ## Set Mask ##
-        act_tokens = trajectory_features.shape[1]
-        obs_tokens = curr_gripper_features.shape[1]
-        mask = torch.ones(act_tokens + obs_tokens, act_tokens + obs_tokens)
-        mask[:act_tokens, :act_tokens] = torch.tril(mask[:act_tokens, :act_tokens])
-        mask[act_tokens:, :act_tokens] = torch.zeros_like(mask[act_tokens:, :act_tokens])
-        mask = mask.to(features.device).bool()
+        time_feats = self.time_emb(timesteps)
+        trajectory_features = trajectory_features + time_feats[:, None, :]
+        curr_gripper_features = curr_gripper_features + time_feats[:, None, :]
+        pcd_features = pcd_features + time_feats[:, None, :]
 
-        features = self.self_attn(features, poses, diff_ts=time_embs, mask=mask)
+        poses_x = {'rotations': trajectory_pose[..., :3, :3], 
+                   'translations': trajectory_pose[..., :3, 3], 'types': 'se3'}
+        poses_z = {'rotations': torch.cat([curr_gripper_pose[..., :3, :3], pcd_rotations], 1),
+                   'translations': torch.cat([curr_gripper_pose[..., :3, 3], pcd_translations], 1), 'types': 'se3'}
+        point_mask_z = torch.cat([torch.zeros_like(curr_gripper_pose[..., 0, 0]).bool(), torch.ones_like(pcd[..., 0]).bool()], 1)
+        context = torch.cat([curr_gripper_features, pcd_features], 1)
+        features = self.cross_attn(x=trajectory_features, poses_x=poses_x, z=context, poses_z=poses_z, point_mask_z=point_mask_z, diff_ts=time_embs)
 
-        trajectory_features = features[:, :act_tokens]
-        curr_gripper_features = features[:, act_tokens:]
+        # Self-attention
+        fps_rotations = torch.eye(3).reshape(1,1,3,3).repeat(fps_pcd.size(0), fps_pcd.size(1), 1, 1).to(fps_pcd.device)
 
+        poses_x = {'rotations': torch.cat([poses_x['rotations'], curr_gripper_pose[..., :3, :3], fps_rotations], 1),
+                     'translations': torch.cat([poses_x['translations'], curr_gripper_pose[..., :3, 3], fps_pcd], 1), 'types': 'se3'}
+        point_mask_x = torch.cat([torch.zeros_like(trajectory_pose[..., 0, 0]).bool(), torch.zeros_like(curr_gripper_pose[..., 0, 0]).bool(), torch.ones_like(fps_pcd[..., 0]).bool()], 1)
+        features = torch.cat([features, curr_gripper_features, fps_feats], 1)
+        num_trajectory = trajectory_features.shape[1]
+        num_observations = fps_feats.shape[1] + curr_gripper_features.shape[1]
+        if self.causal_attn:
+            mask = torch.ones(num_trajectory + num_observations, num_trajectory + num_observations)
+            mask[:num_trajectory, :num_trajectory] = torch.tril(mask[:num_trajectory, :num_trajectory])
+            mask[num_trajectory:, :num_trajectory] = torch.zeros_like(mask[num_trajectory:, :num_trajectory])
+            mask = mask.to(features.device).bool()
+        else:
+            mask = None
 
-        context = torch.cat([curr_gripper_pose[..., :3, 3], context_pcd], 1)
-        features = torch.cat([curr_gripper_features, context_features], 1)
-        extras = {'x_poses': trajectory_pose, 'z_poses': context,
-              'x_types':'se3', 'z_types':'3D'}
-
-        # Cross attention from trajectory to pcd + curr_gripper
-        trajectory_features = self.cross_attn(x=trajectory_features, z=features, extras=extras, diff_ts=time_embs)
+        features = self.self_attn(x=features, poses_x=poses_x, point_mask_x=point_mask_x, diff_ts=time_embs, mask=mask)
 
         # Rotation head
         rotation = self.predict_rot(
-            trajectory_features, trajectory_pose, features, context, time_embs
+            features, poses_x, point_mask_x, num_trajectory, time_embs, mask
         )
 
         # Position head
         position, position_features = self.predict_pos(
-            trajectory_features, trajectory_pose, features, context, time_embs
+            features, poses_x, point_mask_x, num_trajectory, time_embs, mask
         )
 
         # Openess head from position head
@@ -642,19 +678,17 @@ class DiffusionHead(nn.Module):
         curr_gripper_feats = self.curr_gripper_emb(curr_gripper_features)
         return time_feats + curr_gripper_feats
 
-    def predict_pos(self, trajectory_features, trajectory_pose, features, context, time_embs):
-        extras = {'x_poses': trajectory_pose, 'z_poses': context,
-                'x_types':'se3', 'z_types':'3D'}
-        position_features = self.position_cross_attn(x=trajectory_features, z=features, extras=extras, diff_ts=time_embs)
+    def predict_pos(self, features, poses, point_mask, num_trajectory, time_embs, mask=None):
+        position_features = self.position_self_attn(x=features, poses_x=poses, point_mask_x=point_mask, diff_ts=time_embs, mask=mask)        
         position_features = self.position_proj(position_features)  # (B, N, C)
+        position_features = position_features[:, :num_trajectory]
         position = self.position_predictor(position_features)
         return position, position_features
 
-    def predict_rot(self, trajectory_features, trajectory_pose, features, context, time_embs):
-        extras = {'x_poses': trajectory_pose, 'z_poses': context,
-                'x_types':'se3', 'z_types':'3D'}
-        rotation_features = self.rotation_cross_attn(x=trajectory_features, z=features, extras=extras, diff_ts=time_embs)
+    def predict_rot(self, features, poses, point_mask, num_trajectory, time_embs, mask=None):
+        rotation_features = self.rotation_self_attn(x=features, poses_x=poses, point_mask_x=point_mask, diff_ts=time_embs, mask=mask)        
         rotation_features = self.rotation_proj(rotation_features)  # (B, N, C)
+        rotation_features = rotation_features[:, :num_trajectory]
         rotation = self.rotation_predictor(rotation_features)
         return rotation
 

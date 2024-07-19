@@ -3,10 +3,14 @@ defaults:
   - _self_
   - task: stack_blocks_lowdim
 
-name: train_diffuser_actor
+task:
+  env_runner:
+    n_procs_max: 1
+
+name: train_diffuser_actor_pose_invariant_lowdim_v3
 _target_: diffusion_policy.workspace.train_diffuser_actor.TrainingWorkspace
 
-exp_name: "train_diffuser_actor"
+exp_name: "train_diffuser_actor_pose_invariant_lowdim_v3"
 n_obs_steps: &n_obs_steps 3
 use_keyframe_actions: True
 horizon: ${eval:'1 if ${use_keyframe_actions} else 16'}
@@ -16,18 +20,19 @@ num_episodes: -1
 mode: train
 
 policy:
-  _target_: diffusion_policy.policy.diffuser_actor_lowdim.DiffuserActor
+  _target_: diffusion_policy.policy.diffuser_actor_pose_invariant_lowdim_v3.DiffuserActor
   embedding_dim: ${embedding_dim}
   fps_subsampling_factor: 5
-  gripper_loc_bounds: ${task.gripper_loc_bounds}
+  scaling_factor: 3.0
   nkeypoints: ${task.nkeypoints}
-  rotation_parametrization: '6D'
-  quaternion_format: 'xyzw' # 3DDA
-  # quaternion_format: 'wxyz' # 'xyzw'
+  rotation_parametrization: 'so3'
+  quaternion_format: 'xyzw' 
   diffusion_timesteps: 100
   nhist: ${n_obs_steps}
   nhorizon: ${horizon}
-  relative: 0
+  t_switch: 0.75
+  relative: True
+  causal_attn: True
 
 dataloader:
   batch_size: 32
@@ -58,7 +63,7 @@ training:
   # optimization
   lr_scheduler: cosine
   lr_warmup_steps: 500
-  num_epochs: 20000
+  num_epochs: 60001
   gradient_accumulate_every: 1
   # EMA destroys performance when used with BatchNorm
   # replace BatchNorm with GroupNorm.
@@ -67,11 +72,11 @@ training:
   # in epochs
   model_evaluation_every: 50
   rollout_every: 1000
-  visualize_every: 50
-  visualize_batch_size: 4
   checkpoint_every: 10
-  val_every: 1
-  sample_every: 5
+  visualize_every: 1000
+  visualize_batch_size: 8
+  val_every: 50
+  sample_every: 50
   # steps per epoch
   max_train_steps: null
   max_val_steps: null

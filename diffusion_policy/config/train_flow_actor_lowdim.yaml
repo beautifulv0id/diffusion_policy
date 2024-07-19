@@ -3,10 +3,10 @@ defaults:
   - _self_
   - task: stack_blocks_lowdim
 
-name: train_diffuser_actor
-_target_: diffusion_policy.workspace.train_diffuser_actor.TrainingWorkspace
+name: train_flow_actor_lowdim
+_target_: diffusion_policy.workspace.train_flow_actor_lowdim.TrainingWorkspace
 
-exp_name: "train_diffuser_actor"
+exp_name: "train_flow_actor_lowdim"
 n_obs_steps: &n_obs_steps 3
 use_keyframe_actions: True
 horizon: ${eval:'1 if ${use_keyframe_actions} else 16'}
@@ -16,7 +16,7 @@ num_episodes: -1
 mode: train
 
 policy:
-  _target_: diffusion_policy.policy.diffuser_actor_lowdim.DiffuserActor
+  _target_: diffusion_policy.policy.flow_actor_lowdim.FlowActor
   embedding_dim: ${embedding_dim}
   fps_subsampling_factor: 5
   gripper_loc_bounds: ${task.gripper_loc_bounds}

@@ -25,8 +25,7 @@ policy:
   fps_subsampling_factor: 5
   gripper_loc_bounds: ${task.gripper_loc_bounds}
   rotation_parametrization: '6D'
-  quaternion_format: 'xyzw' # 3DDA
-  # quaternion_format: 'wxyz' # 'xyzw'
+  quaternion_format: 'xyzw' 
   diffusion_timesteps: 100
   nhist: ${n_obs_steps}
   nhorizon: ${horizon}
@@ -74,6 +73,7 @@ training:
   visualize_batch_size: 4
   rollout_every: 1000
   visualize_every: 50
+  visualize_batch_size: 4
   checkpoint_every: 10
   val_every: 1
   sample_every: 5

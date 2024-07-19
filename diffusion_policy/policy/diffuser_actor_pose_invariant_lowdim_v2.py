@@ -11,7 +11,7 @@ from diffusion_policy.model.flow_matching.flow_matching_models import SE3LinearA
 from diffusion_policy.model.invariant_tranformers.invariant_point_transformer import InvariantPointTransformer
 from diffusion_policy.model.invariant_tranformers.geometry_invariant_attention import InvariantPointAttention
 
-from diffusion_policy.model.obs_encoders.diffuser_actor_pose_invariant_lowdim_encoder import DiffuserActorEncoder
+from diffusion_policy.model.obs_encoders.diffuser_actor_pose_invariant_lowdim_encoder_v2 import DiffuserActorEncoder
 
 from diffusion_policy.model.common.layers import ParallelAttention
 from diffusion_policy.model.common.position_encodings import (
@@ -35,7 +35,6 @@ class DiffuserActor(BaseImagePolicy):
                  embedding_dim=60,
                  fps_subsampling_factor=5,
                  scaling_factor=3.0,
-                 gripper_loc_bounds=None,
                  rotation_parametrization='so3',
                  quaternion_format='xyzw',
                  diffusion_timesteps=100,
@@ -44,6 +43,8 @@ class DiffuserActor(BaseImagePolicy):
                  nhorizon=16,
                  t_switch=0.75,
                  relative=False,
+                 causal_attn=True,
+                 gripper_loc_bounds=None
                  ):
         super().__init__()
         assert rotation_parametrization == 'so3', "Only SO3 is supported"        
@@ -59,12 +60,11 @@ class DiffuserActor(BaseImagePolicy):
             embedding_dim=embedding_dim,
             rotation_parametrization=rotation_parametrization,
             nhist=nhist,
+            causal_attn=causal_attn
         )
         self.n_steps = diffusion_timesteps
         self.nhorizon = nhorizon
         self.scaling_factor = torch.tensor(scaling_factor)
-        
-        self.gripper_loc_bounds = torch.tensor(gripper_loc_bounds)
         ## Flow Model ##
         self.t_switch = t_switch
         self.flow = SE3LinearAttractorFlow(t_switch=self.t_switch)
@@ -73,6 +73,7 @@ class DiffuserActor(BaseImagePolicy):
         self.vector_field_at_t = self.flow.vector_field_at_t
         self.step = self.flow.step
         self._relative = relative
+        self.gripper_loc_bounds = torch.tensor(gripper_loc_bounds) if gripper_loc_bounds is not None else None
 
     def encode_inputs(self, keypoint_pcd,
                       curr_gripper):
@@ -211,6 +212,7 @@ class DiffuserActor(BaseImagePolicy):
         pos_min = self.gripper_loc_bounds[0].float().to(pos.device)
         pos_max = self.gripper_loc_bounds[1].float().to(pos.device)
         return (pos + 1.0) / 2.0 * (pos_max - pos_min) + pos_min
+
 
     def convert_rot(self, signal):
         signal = signal.clone()
@@ -435,7 +437,8 @@ class DiffusionHead(nn.Module):
                  num_attn_heads=8,
                  rotation_parametrization='so3',
                  nhist=3,
-                 nhorizon=1,):
+                 nhorizon=1,
+                 causal_attn=True):
         super().__init__()
         if 'so3' in rotation_parametrization:
             rotation_out_dim = 3
@@ -462,16 +465,11 @@ class DiffusionHead(nn.Module):
         assert head_dim * num_attn_heads == embedding_dim, "embed_dim must be divisible by num_heads"
 
         # Estimate attends to context (no subsampling)
-        self.cross_attn = GeometryInvariantTransformer(
-            dim=embedding_dim,
-            dim_head=head_dim,
-            mlp_dim=embedding_dim,
-            heads=num_attn_heads,
-            depth=1, 
-            normal_attn_depth=3,
-            kv_dim=embedding_dim,
-            use_adaln=True
+        self.cross_attn = InvariantPointTransformer(
+            embedding_dim, 4, num_attn_heads, head_dim, kv_dim=embedding_dim, use_adaln=True,
+            dropout=0.0, attention_module=InvariantPointAttention, point_dim=3
         )
+
 
         self.self_attn = InvariantPointTransformer(
             embedding_dim, 4, num_attn_heads, head_dim, kv_dim=None, use_adaln=True,
@@ -481,16 +479,9 @@ class DiffusionHead(nn.Module):
         # Specific (non-shared) Output layers:
         # 1. Rotation
         self.rotation_proj = nn.Linear(embedding_dim, embedding_dim)
-        self.rotation_cross_attn = GeometryInvariantTransformer(
-            dim=embedding_dim,
-            dim_head=head_dim,
-            mlp_dim=embedding_dim,
-            heads=num_attn_heads,
-            depth=1,
-            normal_attn_depth=3,
-            kv_dim=embedding_dim,
-            use_adaln=True
-        )
+        self.rotation_self_attn = InvariantPointTransformer(
+            embedding_dim, 2, num_attn_heads, head_dim, kv_dim=None, use_adaln=True,
+            dropout=0.0, attention_module=InvariantPointAttention, point_dim=3)
 
         self.rotation_predictor = nn.Sequential(
             nn.Linear(embedding_dim, embedding_dim),
@@ -500,16 +491,10 @@ class DiffusionHead(nn.Module):
 
         # 2. Position
         self.position_proj = nn.Linear(embedding_dim, embedding_dim)
-        self.position_cross_attn = GeometryInvariantTransformer(
-            dim=embedding_dim,
-            dim_head=head_dim,
-            mlp_dim=embedding_dim,
-            heads=num_attn_heads,
-            depth=1,
-            normal_attn_depth=3,
-            kv_dim=embedding_dim,
-            use_adaln=True
-        )
+        self.position_self_attn = InvariantPointTransformer(
+            embedding_dim, 2, num_attn_heads, head_dim, kv_dim=None, use_adaln=True,
+            dropout=0.0, attention_module=InvariantPointAttention, point_dim=3)
+        
 
         self.position_predictor = nn.Sequential(
             nn.Linear(embedding_dim, embedding_dim),
@@ -523,6 +508,8 @@ class DiffusionHead(nn.Module):
             nn.ReLU(),
             nn.Linear(embedding_dim, 1)
         )
+
+        self.causal_attn = causal_attn
 
     def forward(self, trajectory, timestep,
                 context_feats, context, adaln_gripper_feats,
@@ -559,7 +546,7 @@ class DiffusionHead(nn.Module):
     
     def prediction_head(self,
                         trajectory_pose, trajectory_features,
-                        context_pcd, context_features,
+                        pcd, pcd_features,
                         timesteps, curr_gripper_features,
                         curr_gripper_pose):
         """
@@ -579,42 +566,47 @@ class DiffusionHead(nn.Module):
             timesteps, curr_gripper_features
         )
 
-        # Self attention among trajectory and curr_gripper
-        features = torch.cat([trajectory_features, curr_gripper_features], 1)
-        poses = {}
-        poses['rotations'] = torch.cat([trajectory_pose[..., :3, :3], curr_gripper_pose[..., :3, :3]], 1)
-        poses['translations'] = torch.cat([trajectory_pose[..., :3, 3], curr_gripper_pose[..., :3, 3]], 1)
+        pcd_rotations = torch.eye(3).reshape(1,1,3,3).repeat(pcd.size(0), pcd.size(1), 1, 1).to(pcd.device)
+        pcd_translations = pcd
 
-        ## Set Mask ##
-        act_tokens = trajectory_features.shape[1]
-        obs_tokens = curr_gripper_features.shape[1]
-        mask = torch.ones(act_tokens + obs_tokens, act_tokens + obs_tokens)
-        mask[:act_tokens, :act_tokens] = torch.tril(mask[:act_tokens, :act_tokens])
-        mask[act_tokens:, :act_tokens] = torch.zeros_like(mask[act_tokens:, :act_tokens])
-        mask = mask.to(features.device).bool()
+        time_feats = self.time_emb(timesteps)
+        trajectory_features = trajectory_features + time_feats[:, None, :]
+        curr_gripper_features = curr_gripper_features + time_feats[:, None, :]
+        pcd_features = pcd_features + time_feats[:, None, :]
 
-        features = self.self_attn(features, poses, diff_ts=time_embs, mask=mask)
+        poses_x = {'rotations': trajectory_pose[..., :3, :3], 
+                   'translations': trajectory_pose[..., :3, 3], 'types': 'se3'}
+        poses_z = {'rotations': torch.cat([curr_gripper_pose[..., :3, :3], pcd_rotations], 1),
+                   'translations': torch.cat([curr_gripper_pose[..., :3, 3], pcd_translations], 1), 'types': 'se3'}
+        point_mask_z = torch.cat([torch.zeros_like(curr_gripper_pose[..., 0, 0]).bool(), torch.ones_like(pcd[..., 0]).bool()], 1)
+        context = torch.cat([curr_gripper_features, pcd_features], 1)
+        features = self.cross_attn(x=trajectory_features, poses_x=poses_x, z=context, poses_z=poses_z, point_mask_z=point_mask_z, diff_ts=time_embs)
 
-        trajectory_features = features[:, :act_tokens]
-        curr_gripper_features = features[:, act_tokens:]
+        # Self-attention
+        poses_x = {'rotations': torch.cat([poses_x['rotations'], poses_z['rotations']], 1),
+                     'translations': torch.cat([poses_x['translations'], poses_z['translations']], 1), 'types': 'se3'}
+        point_mask_x = torch.cat([torch.zeros_like(trajectory_pose[..., 0, 0]).bool(), point_mask_z], 1)
+        features = torch.cat([features, context], 1)
+        num_trajectory = trajectory_features.shape[1]
+        num_observations = pcd_features.shape[1] + curr_gripper_features.shape[1]
+        if self.causal_attn:
+            mask = torch.ones(num_trajectory + num_observations, num_trajectory + num_observations)
+            mask[:num_trajectory, :num_trajectory] = torch.tril(mask[:num_trajectory, :num_trajectory])
+            mask[num_trajectory:, :num_trajectory] = torch.zeros_like(mask[num_trajectory:, :num_trajectory])
+            mask = mask.to(features.device).bool()
+        else:
+            mask = None
 
-
-        context = torch.cat([curr_gripper_pose[..., :3, 3], context_pcd], 1)
-        features = torch.cat([curr_gripper_features, context_features], 1)
-        extras = {'x_poses': trajectory_pose, 'z_poses': context,
-              'x_types':'se3', 'z_types':'3D'}
-
-        # Cross attention from trajectory to pcd + curr_gripper
-        trajectory_features = self.cross_attn(x=trajectory_features, z=features, extras=extras, diff_ts=time_embs)
+        features = self.self_attn(x=features, poses_x=poses_x, point_mask_x=point_mask_x, diff_ts=time_embs, mask=mask)
 
         # Rotation head
         rotation = self.predict_rot(
-            trajectory_features, trajectory_pose, features, context, time_embs
+            features, poses_x, point_mask_x, num_trajectory, time_embs, mask
         )
 
         # Position head
         position, position_features = self.predict_pos(
-            trajectory_features, trajectory_pose, features, context, time_embs
+            features, poses_x, point_mask_x, num_trajectory, time_embs, mask
         )
 
         # Openess head from position head
@@ -642,19 +634,17 @@ class DiffusionHead(nn.Module):
         curr_gripper_feats = self.curr_gripper_emb(curr_gripper_features)
         return time_feats + curr_gripper_feats
 
-    def predict_pos(self, trajectory_features, trajectory_pose, features, context, time_embs):
-        extras = {'x_poses': trajectory_pose, 'z_poses': context,
-                'x_types':'se3', 'z_types':'3D'}
-        position_features = self.position_cross_attn(x=trajectory_features, z=features, extras=extras, diff_ts=time_embs)
+    def predict_pos(self, features, poses, point_mask, num_trajectory, time_embs, mask=None):
+        position_features = self.position_self_attn(x=features, poses_x=poses, point_mask_x=point_mask, diff_ts=time_embs, mask=mask)        
         position_features = self.position_proj(position_features)  # (B, N, C)
+        position_features = position_features[:, :num_trajectory]
         position = self.position_predictor(position_features)
         return position, position_features
 
-    def predict_rot(self, trajectory_features, trajectory_pose, features, context, time_embs):
-        extras = {'x_poses': trajectory_pose, 'z_poses': context,
-                'x_types':'se3', 'z_types':'3D'}
-        rotation_features = self.rotation_cross_attn(x=trajectory_features, z=features, extras=extras, diff_ts=time_embs)
+    def predict_rot(self, features, poses, point_mask, num_trajectory, time_embs, mask=None):
+        rotation_features = self.rotation_self_attn(x=features, poses_x=poses, point_mask_x=point_mask, diff_ts=time_embs, mask=mask)        
         rotation_features = self.rotation_proj(rotation_features)  # (B, N, C)
+        rotation_features = rotation_features[:, :num_trajectory]
         rotation = self.rotation_predictor(rotation_features)
         return rotation
 

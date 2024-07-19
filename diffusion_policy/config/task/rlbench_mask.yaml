@@ -1,4 +1,5 @@
 image_size: [128, 128]
+type: image
 
 gripper_loc_bounds: 
   _target_: diffusion_policy.common.rlbench_util.get_gripper_loc_bounds

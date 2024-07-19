@@ -13,6 +13,8 @@ from einops import rearrange, repeat
 from torch.cuda.amp import autocast
 from contextlib import contextmanager
 
+from diffusion_policy.model.common.position_encodings import SinusoidalPosEmb
+
 
 __USE_DEFAULT_INIT__ = False
 
@@ -304,7 +306,7 @@ class InvariantPointAttention(nn.Module):
         if use_adaln:
             self.adaln = AdaLN(dim)
 
-    def forward(self, x, poses_x, z=None, poses_z=None,  mask=None, diff_ts=None):
+    def forward(self, x, poses_x, z=None, poses_z=None, point_mask_x=None, point_mask_z=None,  mask=None, diff_ts=None):
         if diff_ts is not None:
             x = self.adaln(x, diff_ts)
         else:
@@ -320,6 +322,12 @@ class InvariantPointAttention(nn.Module):
         q_scalar, k_scalar, v_scalar = self.to_scalar_q(x), self.to_scalar_k(z), self.to_scalar_v(z)
 
         q_point, k_point, v_point = self.to_point_q(x), self.to_point_k(z), self.to_point_v(z)
+
+        if point_mask_x is not None:
+            q_point[point_mask_x] = 0
+        if point_mask_z is not None:
+            k_point[point_mask_z] = 0
+            v_point[point_mask_z] = 0
 
         # split out heads
         q_scalar, k_scalar, v_scalar = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h = h), (q_scalar, k_scalar, v_scalar))
@@ -495,6 +503,55 @@ def point_invariant_attention_test():
     print('Is it invariant? ',torch.allclose(out, out2, atol=1e-5))
     print((out - out2).abs().max())
 
+def point_invariant_attention_v_2_test():
+
+    B = 150
+
+    H = 10
+    q_dim = 56
+    k_dim = 12
+
+    q_token = 11
+    k_token = 32
+
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    q_mask = torch.randint(0, 2, (B, q_token)).bool().to(device)
+    k_mask = torch.randint(0, 2, (B, k_token)).bool().to(device)
+    ## Attention Function ##
+    multihead_attention = InvariantPointAttention(dim=q_dim, heads=H, dim_head=64, kv_dim=k_dim).to(device)
+
+    ## Run test ##
+    x = torch.randn(B, q_token, q_dim).to(device)
+    Hx = random_se3_batch(B)[:, None, ...].repeat(1, q_token, 1, 1).to(device)
+
+    z = torch.randn(B, k_token, k_dim).to(device)
+    Hz = random_se3_batch(B)[:, None, ...].repeat(1, k_token, 1, 1).to(device)
+
+    poses_x = {'rotations': Hx[..., :3, :3], 'translations': Hx[..., :3, -1], 'types':'se3'}
+    poses_z = {'rotations': Hz[..., :3, :3], 'translations': Hz[..., :3, -1], 'types':'se3'}
+
+    poses_x['rotations'][q_mask] = torch.eye(3).to(device)
+    poses_z['rotations'][k_mask] = torch.eye(3).to(device)
+
+    time0 = time.time()
+    out = multihead_attention(x, z=z, poses_x=poses_x, poses_z=poses_z)
+    print('Time: ', time.time() - time0)
+
+    ############### TEST 2 #################
+    rot = random_se3_batch(B).to(device)
+    Hx2 = torch.einsum('bmn,btnk->btmk', rot, Hx)
+    Hz2 = torch.einsum('bmn,btnk->btmk', rot, Hz)
+
+    poses_x = {'rotations': Hx2[..., :3, :3], 'translations': Hx2[..., :3, -1], 'types':'se3'}
+    poses_z = {'rotations': Hz2[..., :3, :3], 'translations': Hz2[..., :3, -1], 'types':'se3'}
+
+    out2 = multihead_attention(x, z=z, poses_x=poses_x, poses_z=poses_z)
+
+    print('Is it invariant? ',torch.allclose(out, out2, atol=1e-5))
+    print((out - out2).abs().max())
+
 
 if __name__ == "__main__":
     def random_so3_batch(batch_size):
@@ -544,6 +601,10 @@ if __name__ == "__main__":
         return H
 
     import time
+    print('Testing Point Invariant Attention v2')
+    point_invariant_attention_v_2_test()
+
+
     print('Testing Pose Invariant Attention')
     pose_invariant_attention_test()
 

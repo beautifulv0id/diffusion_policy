@@ -39,11 +39,8 @@ OmegaConf.register_new_resolver("eval", eval, replace=True)
 class Arguments(tap.Tap):
     save_root : str = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data', 'eval')
     hydra_path: str = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data/outputs/2024.07.10/17.22.29_train_diffuser_actor_sweep_to_dustpan_of_size_mask')
-    data_root = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data/image')
     config : str = 'train_diffuser_actor.yaml'
     overrides: List[str] = []
-
-
 
 
 def load_model(hydra_path, cfg):
@@ -88,7 +85,7 @@ if __name__ == '__main__':
     cfg = load_config(args.config, overrides)
 
     task_str = cfg.task.dataset.task_name
-    data_root = args.data_root
+    lowdim = cfg.task.type == 'lowdim'
     hydra_path = args.hydra_path
     save_path = os.path.join(args.save_root, task_str, hydra_path.split('/')[-1])
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
@@ -111,5 +108,5 @@ if __name__ == '__main__':
         pred = policy.predict_action(dict_apply(batch, lambda x: x.to(device))['obs'])['rlbench_action'].cpu().detach()
         print("Pred: ", pred[...,7])
         print("GT: ", batch['action']['gt_trajectory'][...,7])
-        imgs = create_obs_state_plot(batch['obs'], gt_action=batch['action']['gt_trajectory'], pred_action=pred, downsample=1, use_mask=False, lowdim = False, quaternion_format='xyzw')
+        imgs = create_obs_state_plot(batch['obs'], gt_action=batch['action']['gt_trajectory'], pred_action=pred, downsample=1, use_mask=False, lowdim = lowdim, quaternion_format='xyzw')
         save_image(torch.from_numpy(imgs).float() / 255, os.path.join(save_path, f'pred_vs_gt.png'))

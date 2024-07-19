@@ -68,11 +68,13 @@ class GeometryInvariantTransformer(nn.Module):
                  dropout=0.,
                  kv_dim=None,
                  return_last_attmap=False,
+                 normal_attn_depth=0,
                  use_adaln=False,):
 
         super().__init__()
         self.heads = heads
         self.layers = nn.ModuleList([])
+        self.normal_layers = nn.ModuleList([])
 
         linear_module_attn = lambda *args, **kwargs: JaxLinear(*args, **kwargs)
         linear_module_ff = lambda *args, **kwargs: ViTLinear(*args, **kwargs)
@@ -88,16 +90,32 @@ class GeometryInvariantTransformer(nn.Module):
                 dropout=dropout,
                 linear_module=linear_module_ff))
             self.layers.append(nn.ModuleList([attn, ff]))
+
+        for k in range(normal_attn_depth):
+            attn = prenorm_fn(torch.nn.MultiheadAttention(
+                embed_dim=dim, num_heads=heads, dropout=dropout, 
+                kdim=kv_dim, vdim=kv_dim, batch_first=True))
+            ff = prenorm_fn(FeedForward(
+                dim, mlp_dim,
+                dropout=dropout,
+                linear_module=linear_module_ff))
+            self.normal_layers.append(nn.ModuleList([attn, ff]))
+
         self.return_last_attmap = return_last_attmap
 
     def forward(self, x, z=None, extras=None, diff_ts=None):
 
         for l, (attn, ff) in enumerate(self.layers):
-            if l == len(self.layers) - 1 and self.return_last_attmap:
+            if l == len(self.layers) - 1 and self.return_last_attmap and len(self.normal_layers) == 0:
                 out, attmap = attn(x, z=z, return_attmap=True, diff_ts=diff_ts, extras=extras)
                 x = out + x
             else:
                 x = attn(x, z=z, extras=extras) + x
+            x = ff(x) + x
+
+        for l, (attn, ff) in enumerate(self.normal_layers):
+            out, attmap = attn(x, key=z, value=z)
+            x = out + x
             x = ff(x) + x
 
         if self.return_last_attmap:
