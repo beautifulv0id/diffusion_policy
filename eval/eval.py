@@ -51,7 +51,7 @@ def load_dataset(cfg):
     return dataset
 
 def load_config(config_name: str, overrides: list = []):
-    with initialize(config_path=Path('../diffusion_policy/config'), version_base=None):
+    with initialize(config_path="../diffusion_policy/config", version_base=None):
         cfg = compose(config_name=config_name, overrides=overrides)
     OmegaConf.resolve(cfg)
     return cfg

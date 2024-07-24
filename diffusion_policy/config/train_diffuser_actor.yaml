@@ -34,14 +34,14 @@ policy:
   use_mask: ${task.dataset.use_mask}
 
 dataloader:
-  batch_size: 32
+  batch_size: 8
   num_workers: 0
   shuffle: True
   pin_memory: False
   persistent_workers: False
 
 val_dataloader:
-  batch_size: 32
+  batch_size: 8
   num_workers: 0
   shuffle: False
   pin_memory: False
@@ -62,7 +62,7 @@ training:
   # optimization
   lr_scheduler: cosine
   lr_warmup_steps: 500
-  num_epochs: 20000
+  num_epochs: 60001
   gradient_accumulate_every: 1
   # EMA destroys performance when used with BatchNorm
   # replace BatchNorm with GroupNorm.
@@ -70,13 +70,12 @@ training:
   # training loop control
   # in epochs
   model_evaluation_every: 50
-  visualize_batch_size: 4
   rollout_every: 1000
-  visualize_every: 50
-  visualize_batch_size: 4
   checkpoint_every: 10
-  val_every: 1
-  sample_every: 5
+  visualize_every: 1000
+  visualize_batch_size: 8
+  val_every: 10
+  sample_every: 10
   # steps per epoch
   max_train_steps: null
   max_val_steps: null
