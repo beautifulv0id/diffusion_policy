@@ -15,6 +15,7 @@ dependencies:
   - pytorch-cuda=12.1
   - dgl
   - wandb
+  - matplotlib
   - click
   - hydra-core
   - dill
@@ -41,12 +42,4 @@ dependencies:
     - packaging
     - ninja 
     - git+https://github.com/openai/CLIP.git
-    # rlbench
-    - pyquaternion
-    - html-testRunner
-    - setuptools
-    - natsort
-    # pyrep
-    - cffi==1.14.2
-
 

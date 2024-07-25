@@ -1,10 +1,10 @@
 {
     "stack_blocks": 63,
     "slide_block_to_color_target": 5,
-    "sweep_to_dustpan_of_size": 15,
+    "sweep_to_dustpan_of_size": 63,
     "stack_cups": 7,
-    "open_drawer": 5,
+    "open_drawer": 21,
     "open_drawer_keypoint": 35,
     "put_item_in_drawer": 28,
-    "turn_tap": 6
+    "turn_tap": 14
 }

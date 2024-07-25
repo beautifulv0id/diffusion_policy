@@ -4,7 +4,7 @@ from absl import app
 from absl import flags
 import os
 from diffusion_policy.env.rlbench.rlbench_env import RLBenchEnv
-from diffusion_policy.common.rlbench_util import CAMERAS, create_obs_config
+from diffusion_policy.common.rlbench_util import CAMERAS, create_obs_config, get_task_num_low_dim_pcd
 from rlbench.utils import get_stored_demos
 from diffusion_policy.common.rlbench_util import _keypoint_discovery
 import numcodecs
@@ -13,7 +13,7 @@ from tqdm import tqdm
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string('save_path',
-                    os.environ['DIFFUSION_POLICY_ROOT'] + '/data/image_keypoints.zarr',
+                    os.environ['DIFFUSION_POLICY_ROOT'] + '/data/image_keypoints_v2.zarr',
                     'Where to save the dataset.')
 flags.DEFINE_string('data_path',
                     os.environ['DIFFUSION_POLICY_ROOT'] + '/data/image',
@@ -22,7 +22,9 @@ flags.DEFINE_integer('n_demos', -1, 'Number of demos to use.')
 flags.DEFINE_list('tasks', ['open_drawer', 'put_item_in_drawer', 'stack_blocks', 'sweep_to_dustpan_of_size', 'turn_tap'], 'Tasks to use.')
 flags.DEFINE_list('image_size', [128, 128],
                   'The size of the images tp save.')
-
+flags.DEFINE_string('num_objects_path', 
+                    os.environ['DIFFUSION_POLICY_ROOT'] + '/diffusion_policy/tasks/peract_tasks_num_lowdim_pcd.json', 
+                    'Path to the number of objects in each task.')
 
 def write_rlbench_dataset():
 
@@ -38,7 +40,10 @@ def write_rlbench_dataset():
 
             if num_demos == -1:
                 num_demos = len(os.listdir(episodes_path))
-                
+
+            print(f"Task: {task}, Number of episodes: {num_demos}")
+            npcd = get_task_num_low_dim_pcd(FLAGS.num_objects_path, task)
+
             # Create a new dataset
 
             task_group = dataset.create_group(task)
@@ -56,6 +61,7 @@ def write_rlbench_dataset():
             data_group.create_dataset('ignore_collisions', shape=(0, 1), dtype=np.bool_, chunks=(1, 1))
             data_group.create_dataset('gripper_open', shape=(0, 1), dtype=np.bool_, chunks=(1, 1))
             data_group.create_dataset('gripper_joint_positions', shape=(0, 2), dtype=np.float32, chunks=(1, 2))
+            data_group.create_dataset('low_dim_pcd', shape=(0, npcd, 3), dtype=np.float32, chunks=(1, npcd, 3))
 
             # Create the meta group
             meta_group = task_group.create_group('meta')
@@ -82,7 +88,7 @@ def write_rlbench_dataset():
                             data_group[f'{camera}_point_cloud'].append(obs.__dict__[f"{camera}_point_cloud"].transpose(2, 0, 1)[None,...])
                             mask = (obs.__dict__[f"{camera}_mask"] > 97).astype(np.bool_)
                             data_group[f'{camera}_mask'].append(mask[None,None,...])
-
+                        data_group['low_dim_pcd'].append(obs.misc['low_dim_pcd'][None,...])
                         data_group['gripper_pose'].append(obs.gripper_pose[None,...])
                         data_group['gripper_open'].append(np.array([obs.gripper_open], dtype=np.bool_)[None,...])
                         data_group['ignore_collisions'].append(np.array([obs.ignore_collisions], dtype=np.bool_)[None,...])

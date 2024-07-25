@@ -16,7 +16,7 @@ class DiffuserActorEncoder(ModuleAttrMixin):
 
     def __init__(self,
                  backbone="clip",
-                 image_size=(256, 256),
+                 image_size=(128, 128),
                  embedding_dim=60,
                  num_sampling_level=3,
                  nhist=3,

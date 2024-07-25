@@ -353,7 +353,7 @@ class InvariantPointAttention(nn.Module):
         #point_dist = self.point_distance_encoder(point_dist).squeeze(-1)
         #point_dist = point_dist.mean(dim=-1)
 
-        self.point_qk_diff = point_qk_diff
+        # self.point_qk_diff = point_qk_diff
 
         point_weights = F.softplus(self.point_weights)
         point_weights = repeat(point_weights, 'h -> (b h) () ()', b = b)
