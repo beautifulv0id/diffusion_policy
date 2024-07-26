@@ -13,13 +13,13 @@ from tqdm import tqdm
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string('save_path',
-                    os.environ['DIFFUSION_POLICY_ROOT'] + '/data/image_keypoints_v2.zarr',
+                    os.environ['DIFFUSION_POLICY_ROOT'] + '/data/image_keypoints.zarr',
                     'Where to save the dataset.')
 flags.DEFINE_string('data_path',
                     os.environ['DIFFUSION_POLICY_ROOT'] + '/data/image',
                     'Path to the data folder.')
 flags.DEFINE_integer('n_demos', -1, 'Number of demos to use.')
-flags.DEFINE_list('tasks', ['open_drawer', 'put_item_in_drawer', 'stack_blocks', 'sweep_to_dustpan_of_size', 'turn_tap'], 'Tasks to use.')
+flags.DEFINE_list('tasks', ['sweep_to_dustpan_of_size', 'turn_tap', 'open_drawer', 'put_item_in_drawer', 'stack_blocks'], 'Tasks to use.')
 flags.DEFINE_list('image_size', [128, 128],
                   'The size of the images tp save.')
 flags.DEFINE_string('num_objects_path', 

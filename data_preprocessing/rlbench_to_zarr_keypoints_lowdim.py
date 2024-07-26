@@ -13,13 +13,13 @@ from tqdm import tqdm
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string('save_path',
-                    os.environ['DIFFUSION_POLICY_ROOT'] + '/data/lowdim_test_keypoints.zarr',
+                    os.environ['DIFFUSION_POLICY_ROOT'] + '/data/lowdim_keypoints.zarr',
                     'Where to save the dataset.')
 flags.DEFINE_string('data_path',
-                    os.environ['DIFFUSION_POLICY_ROOT'] + '/data/image',
+                    os.environ['DIFFUSION_POLICY_ROOT'] + '/data/keypoint',
                     'Path to the data folder.')
 flags.DEFINE_integer('n_demos', -1, 'Number of demos to use.')
-flags.DEFINE_list('tasks', ['put_item_in_drawer', 'stack_blocks'], 'Tasks to use.')
+flags.DEFINE_list('tasks', ['open_drawer', 'put_item_in_drawer', 'stack_blocks', 'sweep_to_dustpan_of_size', 'turn_tap'], 'Tasks to use.')
 flags.DEFINE_string('num_objects_path', 
                     os.environ['DIFFUSION_POLICY_ROOT'] + '/diffusion_policy/tasks/peract_tasks_num_lowdim_pcd.json', 
                     'Path to the number of objects in each task.')
