@@ -6,3 +6,5 @@ task_name: stack_blocks
 
 env_runner:
   max_steps: 12
+
+nkeypoints: 63

@@ -1,0 +1,10 @@
+defaults:
+  - rlbench_lowdim
+
+name: sweep_to_dustpan_of_size_lowdim
+task_name: sweep_to_dustpan_of_size
+
+env_runner:
+  max_steps: 5
+
+nkeypoints: 63

@@ -1,0 +1,10 @@
+defaults:
+  - rlbench_lowdim
+
+name: put_item_in_drawer_lowdim
+task_name: put_item_in_drawer
+
+env_runner:
+  max_steps: 12
+
+nkeypoints: 28

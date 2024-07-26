@@ -26,7 +26,7 @@ class Arguments(tap.Tap):
     save_root : str = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data', 'eval')
     hydra_path: str = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'])
     data_root = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data/image')
-    config : str = 'train_diffuser_actor.yaml'
+    config : str = 'train_diffuser_actor_pose_invariant_v2.yaml'
     overrides: List[str] = []
     render_image_size: tuple = (256, 256)
     n_demos: int = -1

@@ -295,7 +295,7 @@ class TrainingWorkspace(BaseWorkspace):
                             obs = train_sampling_batch['obs']
                             gt_action = train_sampling_batch['action']['gt_trajectory']
                             pred_action = pred['rlbench_action'].cpu().detach()
-                            imgs = create_obs_state_plot(obs=obs, gt_action=gt_action, pred_action=pred_action, quaternion_format=policy._quaternion_format, lowdim=False)
+                            imgs = create_obs_state_plot(obs=obs, gt_action=gt_action, pred_action=pred_action, quaternion_format=policy._quaternion_format, lowdim=cfg.task.type == 'lowdim')
                             img = make_grid(torch.from_numpy(imgs).float() / 255)
                             image = wandb.Image(img, caption="Prediction vs Ground Truth")
                             wandb_run.log({"prediction_vs_gt": image}, step=self.global_step)

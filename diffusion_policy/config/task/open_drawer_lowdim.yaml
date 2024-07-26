@@ -1,0 +1,10 @@
+defaults:
+  - rlbench_lowdim
+
+name: open_drawer_mask
+task_name: open_drawer
+
+env_runner:
+  max_steps: 3
+
+nkeypoints: 21

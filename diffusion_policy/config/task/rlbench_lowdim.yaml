@@ -13,7 +13,7 @@ nkeypoints:
 
 dataset:
   _target_: diffusion_policy.dataset.rlbench_dataset.RLBenchLowDimNextBestPoseDataset
-  dataset_path: ${oc.env:DIFFUSION_POLICY_ROOT}/data/lowdim_test_keypoints.zarr
+  dataset_path: ${oc.env:DIFFUSION_POLICY_ROOT}/data/image_keypoints_v3.zarr
   n_episodes: ${num_episodes}
   task_name: ${task.task_name}
   n_obs_steps: ${n_obs_steps}
