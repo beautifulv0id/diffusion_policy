@@ -8,7 +8,7 @@ task:
     n_procs_max: 1
 
 name: train_diffuser_actor_pose_invariant_lowdim_v2
-_target_: diffusion_policy.workspace.train_diffuser_actor.TrainingWorkspace
+_target_: diffusion_policy.workspace.train_diffuser_actor_pose_invariant_lowdim_v2.TrainingWorkspace
 
 exp_name: "train_diffuser_actor_pose_invariant_lowdim"
 n_obs_steps: &n_obs_steps 3

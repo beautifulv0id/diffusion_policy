@@ -20,8 +20,8 @@ dataset:
   val_ratio: 0.2
   use_low_dim_state: True
   cache_size: 200
-  rot_noise_scale: 0.05
-  pos_noise_scale: 0.01
+  rot_noise_scale: 0.0
+  pos_noise_scale: 0.0
 
 env_runner:
   _target_: diffusion_policy.env_runner.rlbench_runner.RLBenchRunner

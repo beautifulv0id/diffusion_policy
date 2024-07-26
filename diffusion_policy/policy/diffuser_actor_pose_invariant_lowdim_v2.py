@@ -73,7 +73,10 @@ class DiffuserActor(BaseImagePolicy):
         self.vector_field_at_t = self.flow.vector_field_at_t
         self.step = self.flow.step
         self._relative = relative
-        self.gripper_loc_bounds = torch.tensor(gripper_loc_bounds) if gripper_loc_bounds is not None else None
+        if gripper_loc_bounds is not None:
+            self.gripper_loc_bounds = torch.tensor(gripper_loc_bounds) 
+        else:
+            self.gripper_loc_bounds = None
 
     def encode_inputs(self, keypoint_pcd,
                       curr_gripper):

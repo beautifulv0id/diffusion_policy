@@ -11,7 +11,6 @@ echo "task_config: $task_config"
 echo "SLURM_ARRAY_TASK_ID: $SLURM_ARRAY_TASK_ID"
 echo "args: $args"
 
-WANDB_API_KEY=8009cee998358d908f42c2fce77f1ee094836701
 HYDRA_RUN_DIR_FILE=/home/stud_herrmann/diffusion_policy_felix/slurm_scripts/logs/${SLURM_ARRAY_JOB_ID}_${task_config}/hydra_run_dir.txt
 
 check_and_make_hydra_run_dir() {
@@ -34,15 +33,11 @@ then
 fi
 
 hydra_run_dir=$(cat $HYDRA_RUN_DIR_FILE)
-id=$(docker run -dt  -v ${DIFFUSION_POLICY_ROOT}:/workspace 725f43c2daa2)
+id=$(docker run -dt  -v ${DIFFUSION_POLICY_ROOT}:/workspace oddtoddler400/se3diffuser:latest)
 echo "Container ID: $id"
-echo "Setting up python environment"
-docker exec -t $id /bin/bash -c "cd /workspace/installs/RLBench && python setup.py develop &&
-                        cd /workspace/installs/PyRep && pip install . &&
-                        cd /workspace && pip install -e ."
 echo "Running training script"
-docker exec -t -e DGLBACKEND=pytorch -e WANDB_API_KEY=$WANDB_API_KEY $id /bin/bash -c "source activate se3diffuser && 
+docker exec -t $id /bin/bash -c "source activate se3diffuser && 
                         cd /workspace/diffusion_policy/workspace &&
-                        xvfb-run -a python3 $training_script $args hydra.run.dir=$hydra_run_dir"
+                        HYDRA_FULL_ERROR=1 xvfb-run -a python3 $training_script $args hydra.run.dir=$hydra_run_dir"
 docker stop $id
 

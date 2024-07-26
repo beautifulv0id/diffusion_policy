@@ -64,7 +64,6 @@ class DiffuserActor(BaseImagePolicy):
         self.nhorizon = nhorizon
         self.scaling_factor = torch.tensor(scaling_factor)
         
-        self.gripper_loc_bounds = torch.tensor(gripper_loc_bounds)
         ## Flow Model ##
         self.t_switch = t_switch
         self.flow = SE3LinearAttractorFlow(t_switch=self.t_switch)
@@ -73,6 +72,10 @@ class DiffuserActor(BaseImagePolicy):
         self.vector_field_at_t = self.flow.vector_field_at_t
         self.step = self.flow.step
         self._relative = relative
+        if gripper_loc_bounds is not None:
+            self.gripper_loc_bounds = torch.tensor(gripper_loc_bounds) 
+        else:
+            self.gripper_loc_bounds = None
 
     def encode_inputs(self, keypoint_pcd,
                       curr_gripper):
