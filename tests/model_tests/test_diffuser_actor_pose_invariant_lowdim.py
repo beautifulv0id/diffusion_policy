@@ -1,4 +1,4 @@
-from diffusion_policy.policy.diffuser_actor_lowdim import DiffuserActor
+from diffusion_policy.policy.diffuser_actor_pose_invariant_lowdim import DiffuserActor
 from diffusion_policy.dataset.rlbench_dataset import RLBenchLowDimNextBestPoseDataset
 from diffusion_policy.common.pytorch_util import print_dict
 import os

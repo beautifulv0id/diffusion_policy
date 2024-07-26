@@ -29,7 +29,7 @@ OmegaConf.register_new_resolver("eval", eval, replace=True)
 
 class Arguments(tap.Tap):
     save_root : str = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data', 'eval')
-    hydra_path: str = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data/outputs/2024.07.03/17.32.42_train_diffuser_actor_turn_tap_mask')
+    hydra_path: str = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data/outputs/2024.07.16/19.27.52_train_diffuser_actor_stack_blocks_mask')
     data_root = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data/image')
     config : str = 'train_diffuser_actor.yaml'
     overrides: List[str] = []
@@ -69,17 +69,24 @@ def load_overrides(hydra_path, overrides):
     this_overrides = [k + '=' + v for k, v in overrides_map.items()]
     return this_overrides
 
-def extract_pcd(obs, scale_factor):
+def extract_pcd_rgb(obs, scale_factor):
     pcd = obs['pcd']
+    rgb = obs['rgb']
     b,n,c,h_in, w_in= pcd.shape
     h, w = h_in // scale_factor, w_in // scale_factor
     pcd = F.interpolate(
                 pcd.flatten(0, 1),
                 (h, w),
-                mode='bilinear'
+                mode='nearest'
             )
     pcd = einops.rearrange(pcd, '(b npts) c h w -> b (npts h w) c', b = b).cpu().numpy()
-    return pcd
+    rgb = F.interpolate(
+                rgb.flatten(0, 1),
+                (h, w),
+                mode='bilinear'
+            )
+    rgb = einops.rearrange(rgb, '(b npts) c h w -> b (npts h w) c', b = b).cpu().numpy()
+    return pcd[0], rgb[0]
 
 if __name__ == '__main__':
     args = Arguments().parse_args()
@@ -103,8 +110,8 @@ if __name__ == '__main__':
     policy.eval()
     print("Model loaded")
 
-    cvals  = [0, 0.5,  1]
-    colors = ["dimgray","salmon","red"]
+    cvals  = [-1, 0, 0.5,  1]
+    colors = [(0.9, 0.9, 0.9, 0.01), (0.5, 0.5, 0.5, 0.01),"salmon","red"]
 
     norm=plt.Normalize(min(cvals),max(cvals))
     tuples = list(zip(map(norm,cvals), colors))
@@ -124,9 +131,10 @@ if __name__ == '__main__':
         attn_pcd = policy.unnormalize_pos(output['attn_pcd']).squeeze().cpu().numpy()
 
         scale_factor = policy.encoder.downscaling_factor_pyramid[0]
-        pcd = extract_pcd(batch['obs'], scale_factor)[0]
+        pcd, rgb = extract_pcd_rgb(batch['obs'], scale_factor)
 
-        c = np.full_like(pcd[:,0], 0.0)
+
+        c = np.full_like(pcd[:,0], -1.0)
         if policy.use_mask:
             idx = output['mask_idx'][1].cpu().numpy()
             c[idx] = attn_weights.flatten()
@@ -138,5 +146,12 @@ if __name__ == '__main__':
         ax.view_init(elev=30, azim=0, roll=0)
         cb = ax.scatter(pcd[:, 0], pcd[:, 1], pcd[:, 2], c=c, cmap=cmap)
         fig.colorbar(cb)
-        fig.savefig(os.path.join(save_path, f'attn_pcd_{i}.png'))
+        fig.savefig(os.path.join(save_path, f'attn_pcd_{i}.png'), dpi=300)
+        plt.clf()
+
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+        ax.view_init(elev=30, azim=0, roll=0)
+        cb = ax.scatter(pcd[:, 0], pcd[:, 1], pcd[:, 2], c=rgb)
+        fig.savefig(os.path.join(save_path, f'rgb_pcd_{i}.png'), dpi=300)
         plt.clf()
