@@ -48,7 +48,7 @@ def load_dataset(cfg):
     return dataset
 
 def load_config(config_name: str, overrides: list = []):
-    with initialize(config_path=Path('../diffusion_policy/config'), version_base=None):
+    with initialize(config_path='../diffusion_policy/config', version_base=None):
         cfg = compose(config_name=config_name, overrides=overrides)
     OmegaConf.resolve(cfg)
     return cfg
@@ -77,8 +77,9 @@ if __name__ == '__main__':
 
     log_data = _evaluate_task_on_demos(env_args=runner.env_args,
                             task_str=runner.task_str,
-                            demos=demos[:1],
-                            max_steps=3,
+                            demos=demos[:3],
+                            n_procs_max=3,
+                            max_steps=1,
                             actioner=actioner,
                             max_rrt_tries=1,
                             demo_tries=1,

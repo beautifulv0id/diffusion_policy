@@ -11,7 +11,7 @@ from diffusion_policy.common.pytorch_util import dict_apply
 import torch.nn.functional as F
 from rlbench.backend.exceptions import InvalidActionError
 from pyrep.errors import IKError, ConfigurationPathError
-from multiprocessing import Process, Manager
+import torch.multiprocessing as mp
 
 
 @torch.no_grad()
@@ -29,43 +29,46 @@ def _evaluate_task_on_demos(env_args : dict,
                             return_model_obs : bool = False):
     n_procs = min(n_procs_max, len(demos))
 
-    if n_procs == 1:
-        proc_log_data = [{}]
-        _evaluate_task_on_demos_multiproc(0, 1, proc_log_data, env_args, task_str, demos, 
-                                          max_steps, actioner, max_rrt_tries, demo_tries, 
-                                          n_visualize, verbose, plot_gt_action=plot_gt_action,
-                                          return_model_obs=return_model_obs)
-    else:
-        manager = Manager()
-        proc_log_data = manager.dict()
-        processes = [Process(target=_evaluate_task_on_demos_multiproc, 
-                                        args=(i, n_procs, proc_log_data, env_args, 
-                                            task_str, demos, max_steps, actioner, 
-                                            max_rrt_tries, demo_tries, n_visualize, 
-                                            verbose, plot_gt_action,return_model_obs)
-                            ) for i in range(n_procs)]
-        [p.start() for p in processes]
-        [p.join() for p in processes]
+    queue = mp.Queue()
+    lock = mp.Lock()
+    demo_idx = mp.Value('i', 0)
+    events = [mp.Event() for _ in range(n_procs)]  
+    processes = [mp.Process(target=_evaluate_task_on_demos_multiproc, 
+                                    args=(demo_idx, lock, queue, events[i], env_args, 
+                                        task_str, demos, max_steps, actioner, 
+                                        max_rrt_tries, demo_tries, n_visualize, 
+                                        verbose, plot_gt_action,return_model_obs)
+                        ) for i in range(n_procs)]
+    for p in processes:
+        p.start()
 
-    log_data = {k: [] for k in proc_log_data[0].keys()}
-    for i in range(len(proc_log_data)):
-        proc_data = proc_log_data[i]
-        for k, v in proc_data.items():
+    for event in events:
+        event.wait()
+
+    log_data = {}
+    while not queue.empty():
+        data = queue.get()
+        for k, v in data.items():
+            if k not in log_data:
+                log_data[k] = []
             if type(v) == list:
                 log_data[k].extend(v)
             else:
                 log_data[k].append(v)
+    for p in processes:
+        p.join()
     
-    successful_demos = sum(log_data["successful_demos"])
+    successful_demos = sum(log_data["demo_success"])
     success_rate = successful_demos / (len(demos) * demo_tries)
     log_data["success_rate"] = success_rate
-    log_data.pop("successful_demos")
+    log_data.pop("demo_success")
     return log_data
 
 @torch.no_grad()
-def _evaluate_task_on_demos_multiproc(proc_num : int, 
-                                      num_procs : int,
-                            proc_log_data : List[dict],
+def _evaluate_task_on_demos_multiproc(demo_idx : mp.Value,
+                            lock : mp.Lock,
+                            proc_log_data : mp.Queue,
+                            event : mp.Event,
                             env_args : dict,      
                             task_str: str,
                             demos: List[Demo],  
@@ -77,38 +80,46 @@ def _evaluate_task_on_demos_multiproc(proc_num : int,
                             verbose: bool = False,
                             plot_gt_action: bool = False,
                             return_model_obs: bool = False):
+    
+    # del actioner
+    # event.set()
+    # return None
     env = RLBenchEnv(**env_args)
     env.launch()
     device = actioner.device
     dtype = actioner.dtype
-    successful_demos = 0
-    total_reward = 0
-    log_data = {
-        "rgbs" : [],
-        "obs_state" : [],
-        "mask" : [],
-    }
-    if return_model_obs:
-        log_data["model_obs"] = []
-
     task_type = task_file_to_task_class(task_str)
     task : TaskEnvironment = env.env.get_task(task_type)
     task.set_variation(0)
-
-
     n_obs_steps = env.n_obs_steps
+
+    while True:
+        with lock:
+            my_demo_id = demo_idx.value
+            demo_idx.value += 1
+            if my_demo_id >= len(demos):
+                break
     
-    for demo_id in range(proc_num, len(demos), num_procs):
-        demo = demos[demo_id]
+        demo = demos[my_demo_id]
         if plot_gt_action:
             gt_actions = get_actions_from_demo(demo)
         gt_action = None
+        
+        log_data = {
+            "rgbs" : [],
+            "obs_state" : [],
+            "mask" : [],
+        }
+        successful_demo = 0
+
+        if return_model_obs:
+            log_data["model_obs"] = []
 
         if verbose:
                 print()
-                print(f"Starting demo {demo_id}")
+                print(f"Starting demo {my_demo_id}")
         for demo_try_i in range(demo_tries):
-            if demo_id < n_visualize and demo_try_i == 0:
+            if my_demo_id < n_visualize and demo_try_i == 0:
                 env.start_recording()
                 obs_state = []
                 if env.apply_mask:
@@ -125,14 +136,13 @@ def _evaluate_task_on_demos_multiproc(proc_num : int,
             low_dim_states = torch.Tensor([])
             env.reset_obs_history()
 
-            descriptions, observation = task.reset_to_demo(demo)
+            _, observation = task.reset_to_demo(demo)
             env.store_obs(observation)
             env.record_frame(observation)
             actioner.load_episode(task_str, demo.variation_number)
 
             move = Mover(task, max_tries=max_rrt_tries)
             reward = 0.0
-            max_reward = 0.0
 
             for step_id in range(max_steps):
                 # Fetch the current observation, and predict one action
@@ -202,8 +212,8 @@ def _evaluate_task_on_demos_multiproc(proc_num : int,
                     obs_dict["mask"] = masks[-1:].bool()
                     masks = masks[-n_obs_steps:]
 
-
-                out = actioner.predict(dict_apply(obs_dict, lambda x: x.type(dtype).to(device)))
+                with lock:
+                    out = actioner.predict(dict_apply(obs_dict, lambda x: x.type(dtype).to(device)))
                 trajectory = out['rlbench_action']
 
                 if plot_gt_action:
@@ -235,48 +245,53 @@ def _evaluate_task_on_demos_multiproc(proc_num : int,
 
                     env.store_obs(observation)
 
-                    max_reward = max(max_reward, reward)
-
                     if reward == 1:
-                        successful_demos += 1
+                        successful_demo = 1
                         break
 
                     if terminate:
-                        print("The episode has terminated!")
+                        if verbose:
+                            print("The episode has terminated!")
 
                 except (IKError, ConfigurationPathError, InvalidActionError) as e:
-                    print(task_str, demo, step_id, successful_demos, e)
+                    print(task_str, demo, step_id, e)
                     reward = 0
                     #break
-            if demo_id < n_visualize and demo_try_i == 0:
+            if my_demo_id < n_visualize and demo_try_i == 0:
                 env.stop_recording()
                 rgbs = env.get_rgbs()
-                log_data["rgbs"].append(rgbs)
+                log_data["rgbs"] = rgbs
                 obs_state = np.array(obs_state)
-                log_data["obs_state"].append(obs_state)
+                log_data["obs_state"] = obs_state
                 if return_model_obs:
-                    log_data["model_obs"].append(model_obs)
+                    log_data["model_obs"] = model_obs
                 if env.apply_mask:
                     masks = np.array(logging_masks)
-                    log_data["mask"].append(masks)
+                    log_data["mask"] = masks
 
-            total_reward += max_reward
+            log_data["demo_success"] = successful_demo
 
-            print(
-                task_str,
-                "Variation",
-                demo.variation_number,
-                "Demo",
-                demo_id,
-                "Reward",
-                f"{reward:.2f}",
-                "max_reward",
-                f"{max_reward:.2f}",
-                f"SR: {successful_demos / ((demo_id+1) * demo_tries)}",
-                f"Total reward: {total_reward:.2f}/{(demo_id+1) * demo_tries}"                )
-
-    log_data.update( {
-        "successful_demos": successful_demos,
-    })
+            proc_log_data.put(log_data)
+            
+            if verbose:
+                print(
+                    task_str,
+                    "Variation",
+                    demo.variation_number,
+                    "Demo",
+                    my_demo_id,
+                    "Reward",
+                    f"{reward:.2f}")
     env.shutdown()
-    proc_log_data[proc_num] = log_data
+
+    del rgbs
+    del pcds
+    del masks
+    del low_dim_pcds
+    del keypoint_poses
+    del grippers
+    del low_dim_states
+    del actioner._policy
+
+    event.set()
+
