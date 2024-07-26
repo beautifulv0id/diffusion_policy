@@ -64,6 +64,24 @@ class AttnFn(torch.nn.Module):
         out = (attn @ v)
         return out, attn
 
+def _add_se3(v, x, query=True):
+    B, H, N, D = v.shape[0], v.shape[1], v.shape[2], v.shape[3]
+    _v = v.reshape(B, H, N, -1, x.shape[-1])
+    if query:
+        return torch.einsum('bnij,bhncj->bhnci', x.transpose(-1,-2), _v).reshape(B,H,N,D)
+    else:
+        return torch.einsum('bnij,bhncj->bhnci', x, _v).reshape(B,H,N,D)
+
+def _add_3d(v, x):
+    B, H, N, D = v.shape[0], v.shape[1], v.shape[2], v.shape[3]
+    _v = v.reshape(B, H, N, -1, x.shape[-1])
+    return torch.einsum('bnj,bhncj->bhncj', x, _v).reshape(B, H, N, D)
+
+def q_rel_map(v, x):
+    return _add_se3(v, x, query=True)
+
+def kv_rel_map(v, x):
+    return _add_se3(v, x, query=False)
 
 class GeomRelAttn(torch.nn.Module):
     def __init__(self, attn_fn):
@@ -79,29 +97,17 @@ class GeomRelAttn(torch.nn.Module):
             q_type: Tensor of shape [B, Nq] with the type of object
             k_type: Tensor of shape [B, Nq] with the type of object
         """
-        def _add_se3(v, x, query=True):
-            B, H, N, D = v.shape[0], v.shape[1], v.shape[2], v.shape[3]
-            _v = v.reshape(B, H, N, -1, x.shape[-1])
-            if query:
-                return torch.einsum('bnij,bhncj->bhnci', x.transpose(-1,-2), _v).reshape(B,H,N,D)
-            else:
-                return torch.einsum('bnij,bhncj->bhnci', x, _v).reshape(B,H,N,D)
-
-        def _add_3d(v, x):
-            B, H, N, D = v.shape[0], v.shape[1], v.shape[2], v.shape[3]
-            _v = v.reshape(B, H, N, -1, x.shape[-1])
-            return torch.einsum('bnj,bhncj->bhncj', x, _v).reshape(B, H, N, D)
-
+        
         if q_types is not dict:
             if q_types == 'se3':
                 self.q_inv_poses = invert_se3(q_poses)
-                self.q_rel_map = lambda v,x: _add_se3(v, x, query=True)
-                self.out_rel_map = lambda v,x: _add_se3(v, x, query=False)
+                self.q_rel_map = q_rel_map
+                self.out_rel_map = kv_rel_map
 
         if k_types is not dict:
             if k_types == 'se3':
                 self.kv_poses = k_poses
-                self.kv_rel_map = lambda v,x: _add_se3(v, x, query=False)
+                self.kv_rel_map = kv_rel_map
 
             if k_types == '3D':
                 _k_poses = torch.cat((k_poses, torch.ones_like(k_poses[..., :1])), dim=-1)
@@ -111,7 +117,7 @@ class GeomRelAttn(torch.nn.Module):
                 # self.kv_poses = inverted_poses
                 # self.q_inv_poses = torch.eye(4)[None,None, ...].repeat(self.q_inv_poses.shape[0], self.q_inv_poses.shape[1],1,1)
 
-                self.kv_rel_map = lambda v, x: _add_se3(v, x, query=False)
+                self.kv_rel_map = kv_rel_map
                 #self.kv_rel_map = _add_3d
 
         # previous_x = torch.einsum('btmn,bln->btlm',self.q_inv_poses, self.kv_poses)

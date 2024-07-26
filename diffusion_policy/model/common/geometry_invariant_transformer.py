@@ -40,8 +40,9 @@ class ViTLinear(nn.Linear):
 class PreNorm(nn.Module):
     def __init__(self, dim, fn):
         super().__init__()
+        def normalize(x): return torch.nn.functional.normalize(x, dim=-1)
         self.norm = nn.LayerNorm(
-            dim) if dim is not None else lambda x: torch.nn.functional.normalize(x, dim=-1)
+            dim) if dim is not None else normalize
         self.fn = fn
 
     def forward(self, x, **kwargs):
@@ -62,6 +63,12 @@ class FeedForward(nn.Module):
     def forward(self, x):
         return self.net(x)
 
+def linear_module_attn(*args, **kwargs):
+    return JaxLinear(*args, **kwargs)
+def linear_module_ff(*args, **kwargs):
+    return ViTLinear(*args, **kwargs)
+def prenorm_fn(m, dim):
+    return PreNorm(dim, m)
 
 class GeometryInvariantTransformer(nn.Module):
     def __init__(self, dim, depth, heads, dim_head, mlp_dim,
@@ -76,29 +83,26 @@ class GeometryInvariantTransformer(nn.Module):
         self.layers = nn.ModuleList([])
         self.normal_layers = nn.ModuleList([])
 
-        linear_module_attn = lambda *args, **kwargs: JaxLinear(*args, **kwargs)
-        linear_module_ff = lambda *args, **kwargs: ViTLinear(*args, **kwargs)
 
-        prenorm_fn = lambda m: PreNorm(dim, m)
         for k in range(depth):
             attn = prenorm_fn(MultiHeadGeometricRelativeAttention(
                 dim, heads=heads, dim_head=dim_head,
                 dropout=dropout, kv_dim=kv_dim,
-                linear_module=linear_module_attn, use_adaln=use_adaln))
+                linear_module=linear_module_attn, use_adaln=use_adaln), dim)
             ff = prenorm_fn(FeedForward(
                 dim, mlp_dim,
                 dropout=dropout,
-                linear_module=linear_module_ff))
+                linear_module=linear_module_ff), dim)
             self.layers.append(nn.ModuleList([attn, ff]))
 
         for k in range(normal_attn_depth):
             attn = prenorm_fn(torch.nn.MultiheadAttention(
                 embed_dim=dim, num_heads=heads, dropout=dropout, 
-                kdim=kv_dim, vdim=kv_dim, batch_first=True))
+                kdim=kv_dim, vdim=kv_dim, batch_first=True), dim)
             ff = prenorm_fn(FeedForward(
                 dim, mlp_dim,
                 dropout=dropout,
-                linear_module=linear_module_ff))
+                linear_module=linear_module_ff), dim)
             self.normal_layers.append(nn.ModuleList([attn, ff]))
 
         self.return_last_attmap = return_last_attmap

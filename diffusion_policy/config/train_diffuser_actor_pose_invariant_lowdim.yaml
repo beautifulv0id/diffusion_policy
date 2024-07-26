@@ -24,6 +24,7 @@ policy:
   embedding_dim: ${embedding_dim}
   fps_subsampling_factor: 5
   scaling_factor: 3.0
+  gripper_loc_bounds: ${task.gripper_loc_bounds}
   nkeypoints: ${task.nkeypoints}
   rotation_parametrization: 'so3'
   quaternion_format: 'xyzw' 
