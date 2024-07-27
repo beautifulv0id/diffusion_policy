@@ -30,4 +30,5 @@ cd ${DIFFUSION_POLICY_ROOT}/slurm_scripts/
             $task_name \
             $task_config \
             $SLURM_ARRAY_TASK_ID \
+            $task_config \
             $args \
