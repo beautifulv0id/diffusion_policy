@@ -12,7 +12,7 @@
 training_script=train_diffuser_actor.py
 task_name=open_drawer
 task_config=open_drawer_image
-
+jobname=$task_config
 
 args="task=$task_config\
     training.resume=True\
@@ -23,7 +23,6 @@ if [ $SLURM_ARRAY_TASK_ID -eq $SLURM_ARRAY_TASK_MAX ]; then
 fi
 
 kwargs=${@:1}
-
     
 args="$args $kwargs"
 

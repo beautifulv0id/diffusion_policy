@@ -12,6 +12,7 @@
 training_script=train_diffuser_actor_pose_invariant_lowdim.py
 task_name=open_drawer
 task_config=open_drawer_lowdim
+jobname=$task_config
 
 args="task=$task_config\
     training.resume=True\

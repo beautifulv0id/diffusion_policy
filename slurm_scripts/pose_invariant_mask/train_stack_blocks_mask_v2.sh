@@ -12,7 +12,7 @@
 training_script=train_diffuser_actor_pose_invariant_v2.py
 task_name=stack_blocks
 task_config=stack_blocks_mask
-
+jobname=$task_config
 
 args="task=$task_config\
     training.resume=True\

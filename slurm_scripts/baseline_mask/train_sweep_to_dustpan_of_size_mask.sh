@@ -9,11 +9,10 @@
 #SBATCH --output=../logs/%A_sweep_to_dustpan_of_size_mask/train_%a.out
 #SBATCH -J sweep_to_dustpan_of_size_mask
 
-
 training_script=train_diffuser_actor.py
 task_name=sweep_to_dustpan_of_size
 task_config=sweep_to_dustpan_of_size_mask
-
+jobname=$task_config
 
 args="task=$task_config\
     training.resume=True\

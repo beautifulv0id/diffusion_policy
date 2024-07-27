@@ -9,11 +9,10 @@
 #SBATCH --output=../logs/%A_stack_blocks_mask/train_%a.out
 #SBATCH -J stack_blocks_mask
 
-
 training_script=train_diffuser_actor.py
 task_name=stack_blocks
 task_config=stack_blocks_mask
-
+jobname=$task_config
 
 args="task=$task_config\
     training.resume=True\

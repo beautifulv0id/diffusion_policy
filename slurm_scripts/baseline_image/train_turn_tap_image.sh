@@ -9,11 +9,10 @@
 #SBATCH --output=../logs/%A_turn_tap_image/train_%a.out
 #SBATCH -J turn_tap_image
 
-
 training_script=train_diffuser_actor.py
 task_name=turn_tap
 task_config=turn_tap_image
-
+jobname=$task_config
 
 args="task=$task_config\
     training.resume=True\
