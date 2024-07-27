@@ -14,14 +14,11 @@ task_name=sweep_to_dustpan_of_size
 task_config=sweep_to_dustpan_of_size_lowdim
 
 args="task=$task_config\
-    num_episodes=-1\
     training.resume=True\
-    dataloader.batch_size=8\
-    val_dataloader.batch_size=8\
     task.env_runner.n_procs_max=5\
-    training.visualize_every=1000\
-    training.num_epochs=5000\
-    training.rollout_every=5000"
+    training.rollout_best_ckpt=True"
+
+
 
 kwargs=${@:1}
     

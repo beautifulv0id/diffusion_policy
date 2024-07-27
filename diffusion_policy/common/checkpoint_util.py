@@ -36,12 +36,13 @@ class TopKCheckpointManager:
             return None
 
         value = data[self.monitor_key]
+        ckpt_name = self.format_str.format(**data)
         ckpt_path = os.path.join(
-            self.save_dir, self.format_str.format(**data))
+            self.save_dir, ckpt_name)
         
         if len(self.path_value_map) < self.k:
             # under-capacity
-            self.path_value_map[ckpt_path] = value
+            self.path_value_map[ckpt_name] = value
             self.save_checkpoint_map()
             return ckpt_path
         
@@ -69,8 +70,8 @@ class TopKCheckpointManager:
             if not os.path.exists(self.save_dir):
                 os.mkdir(self.save_dir)
 
-            if os.path.exists(delete_path):
-                os.remove(delete_path)
+            if os.path.exists(os.path.join(self.save_dir, delete_path)):
+                os.remove(os.path.join(self.save_dir, delete_path))
             return ckpt_path
 
     def save_checkpoint_map(self):

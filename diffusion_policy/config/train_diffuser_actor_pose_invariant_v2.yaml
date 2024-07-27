@@ -10,7 +10,7 @@ task:
 name: train_diffuser_actor_pose_invariant_v2
 _target_: diffusion_policy.workspace.train_diffuser_actor.TrainingWorkspace
 
-exp_name: "train_diffuser_actor_pose_invariant"
+exp_name: "train_diffuser_actor_pose_invariant_v2"
 n_obs_steps: &n_obs_steps 3
 use_keyframe_actions: True
 horizon: ${eval:'1 if ${use_keyframe_actions} else 16'}
@@ -66,7 +66,7 @@ training:
   # optimization
   lr_scheduler: cosine
   lr_warmup_steps: 500
-  num_epochs: 60001
+  num_epochs: 5000
   gradient_accumulate_every: 1
   # EMA destroys performance when used with BatchNorm
   # replace BatchNorm with GroupNorm.
@@ -74,17 +74,18 @@ training:
   # training loop control
   # in epochs
   model_evaluation_every: 50
-  rollout_every: 1000
+  rollout_every: 5000
   checkpoint_every: 10
   visualize_every: 1000
   visualize_batch_size: 8
-  val_every: 10
-  sample_every: 10
+  val_every: 50
+  sample_every: 50
   # steps per epoch
   max_train_steps: null
   max_val_steps: null
   # misc
   tqdm_interval_sec: 1.0
+  rollout_best_ckpt: True
 
 ema:
   _target_: diffusion_policy.model.diffusion.ema_model.EMAModel

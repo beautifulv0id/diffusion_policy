@@ -10,7 +10,7 @@ task:
 name: train_diffuser_actor_pose_invariant_lowdim_v2
 _target_: diffusion_policy.workspace.train_diffuser_actor_pose_invariant_lowdim_v2.TrainingWorkspace
 
-exp_name: "train_diffuser_actor_pose_invariant_lowdim"
+exp_name: "train_diffuser_actor_pose_invariant_lowdim_v2"
 n_obs_steps: &n_obs_steps 3
 use_keyframe_actions: True
 horizon: ${eval:'1 if ${use_keyframe_actions} else 16'}
@@ -36,14 +36,14 @@ policy:
   causal_attn: True
 
 dataloader:
-  batch_size: 32
+  batch_size: 8
   num_workers: 0
   shuffle: True
   pin_memory: False
   persistent_workers: False
 
 val_dataloader:
-  batch_size: 32
+  batch_size: 8
   num_workers: 0
   shuffle: False
   pin_memory: False
@@ -64,25 +64,26 @@ training:
   # optimization
   lr_scheduler: cosine
   lr_warmup_steps: 500
-  num_epochs: 60001
+  num_epochs: 2000
   gradient_accumulate_every: 1
   # EMA destroys performance when used with BatchNorm
   # replace BatchNorm with GroupNorm.
   use_ema: False
   # training loop control
   # in epochs
-  model_evaluation_every: 50
-  rollout_every: 1000
+  model_evaluation_every: 5
+  rollout_every: 2000
   checkpoint_every: 10
   visualize_every: 1000
   visualize_batch_size: 8
-  val_every: 50
-  sample_every: 50
+  val_every: 5
+  sample_every: 5
   # steps per epoch
   max_train_steps: null
   max_val_steps: null
   # misc
   tqdm_interval_sec: 1.0
+  rollout_best_ckpt: True
 
 ema:
   _target_: diffusion_policy.model.diffusion.ema_model.EMAModel
@@ -95,10 +96,10 @@ ema:
 
 checkpoint:
   topk:
-    monitor_key: train_loss
+    monitor_key: val_loss
     mode: min
-    k: 1
-    format_str: 'epoch={epoch:04d}-train_loss={train_loss:.3f}.ckpt'
+    k: 5
+    format_str: 'epoch={epoch:04d}-val_loss={val_loss:.3f}.ckpt'
   save_last_ckpt: True
   save_last_snapshot: False
 

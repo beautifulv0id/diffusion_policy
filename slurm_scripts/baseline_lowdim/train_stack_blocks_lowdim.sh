@@ -6,18 +6,16 @@
 #SBATCH --gres=gpu:1
 #SBATCH -C 'rtx3090|a5000'
 #SBATCH --array=0-3%1
-#SBATCH --output=/home/stud_herrmann/diffusion_policy_felix/slurm_scripts/logs/%A_sweep_to_dustpan_of_size_image/train_%a.out
-#SBATCH -J sweep_to_dustpan_of_size_image
+#SBATCH --output=/home/stud_herrmann/diffusion_policy_felix/slurm_scripts/logs/%A_stack_blocks_lowdim/train_%a.out
+#SBATCH -J stack_blocks_lowdim
 
-training_script=train_diffuser_actor_pose_invariant_v2.py
-task_name=sweep_to_dustpan_of_size
-task_config=sweep_to_dustpan_of_size_image
+
+training_script=train_diffuser_actor_lowdim.py
+task_name=stack_blocks
+task_config=stack_blocks_lowdim
 
 args="task=$task_config\
     training.resume=True\
-    dataloader.batch_size=4\
-    val_dataloader.batch_size=4\
-    training.gradient_accumulate_every=2\
     task.env_runner.n_procs_max=5\
     training.rollout_best_ckpt=True"
 

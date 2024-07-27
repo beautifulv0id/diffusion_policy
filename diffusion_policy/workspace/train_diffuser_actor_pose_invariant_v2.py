@@ -331,6 +331,22 @@ class TrainingWorkspace(BaseWorkspace):
                     self.global_step += 1
                     self.epoch += 1
                     gepoch.set_postfix(train_loss=train_loss, refresh=False)
+
+        # final evaluation
+        if cfg.training.rollout_best_ckpt:
+            best_ckpt_path = self.get_best_checkpoint_path()
+            if best_ckpt_path.is_file():
+                print(f"Best checkpoint path {best_ckpt_path}")
+                self.load_checkpoint(path=best_ckpt_path)
+            self.model.eval()
+            with torch.no_grad():
+                runner_log = env_runner.run(policy, dataset.demos, mode="train")
+                runner_log.update(
+                    env_runner.run(policy, val_dataset.demos, mode="eval")
+                )
+                # log all
+                wandb_run.log(runner_log, step=self.global_step)
+
 @hydra.main(
     version_base=None,
     config_path=str(pathlib.Path(__file__).parent.parent.joinpath("config")),
