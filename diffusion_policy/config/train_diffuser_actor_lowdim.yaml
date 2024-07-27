@@ -77,7 +77,6 @@ training:
   max_val_steps: null
   # misc
   tqdm_interval_sec: 1.0
-  rollout_best_ckpt: True
 
 ema:
   _target_: diffusion_policy.model.diffusion.ema_model.EMAModel

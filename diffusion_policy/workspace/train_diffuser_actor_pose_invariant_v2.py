@@ -332,28 +332,57 @@ class TrainingWorkspace(BaseWorkspace):
                     self.epoch += 1
                     gepoch.set_postfix(train_loss=train_loss, refresh=False)
 
-        # final evaluation
-        if cfg.training.rollout_best_ckpt:
-            best_ckpt_path = self.get_best_checkpoint_path()
-            if best_ckpt_path.is_file():
-                print(f"Best checkpoint path {best_ckpt_path}")
-                self.load_checkpoint(path=best_ckpt_path)
-            self.model.eval()
+    def rollout(self):
+        cfg = copy.deepcopy(self.cfg)
+
+        # resume training
+        best_ckpt_path = self.get_best_checkpoint_path()
+        if best_ckpt_path.is_file():
+            print(f"Best checkpoint path {best_ckpt_path}")
+            self.load_checkpoint(path=best_ckpt_path)
+        
+        device = torch.device(cfg.training.device)
+        self.model.to(device)
+        policy = self.model
+        policy.eval()
+
+        env_runner = hydra.utils.instantiate(
+                    cfg.task.env_runner,
+                    output_dir=self.output_dir)
+        dataset = hydra.utils.instantiate(cfg.task.dataset)
+        val_dataset = dataset.get_validation_dataset()
+
+        wandb_run = wandb.init(
+            dir=str(self.output_dir),
+            config=OmegaConf.to_container(cfg, resolve=True),
+            **cfg.logging
+        )
+
+        log_path = os.path.join(self.output_dir, 'logs.json.txt')
+        with JsonLogger(log_path) as json_logger:
             with torch.no_grad():
+                env_runner.max_rrt_tries = 10
                 runner_log = env_runner.run(policy, dataset.demos, mode="train")
                 runner_log.update(
                     env_runner.run(policy, val_dataset.demos, mode="eval")
                 )
+                runner_log['epoch'] = self.epoch
                 # log all
                 wandb_run.log(runner_log, step=self.global_step)
-
+                json_logger.log(runner_log)
 @hydra.main(
     version_base=None,
     config_path=str(pathlib.Path(__file__).parent.parent.joinpath("config")),
     config_name=pathlib.Path(__file__).stem)
 def main(cfg):
     workspace = TrainingWorkspace(cfg)
-    workspace.run()
+    if cfg.mode == 'train':
+        workspace.run()
+    elif cfg.mode == 'rollout':
+        print("Rollout")
+        workspace.rollout()
+    else:
+        raise ValueError(f"Unknown mode {cfg.mode}")
 
 if __name__ == "__main__":
     main()

@@ -16,8 +16,7 @@ task_config=put_item_in_drawer_image
 
 args="task=$task_config\
     training.resume=True\
-    task.env_runner.n_procs_max=5\
-    training.rollout_best_ckpt=True"
+    task.env_runner.n_procs_max=5"
 
 
 
