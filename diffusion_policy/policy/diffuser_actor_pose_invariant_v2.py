@@ -295,17 +295,6 @@ class DiffuserActor(BaseImagePolicy):
             return trajectory, curr_gripper, pcd
         return trajectory
     
-    def world2gripper(self, curr_gripper, trajectory):
-        ip, ir = se3_inverse(curr_gripper[:, -1, :3, 3], curr_gripper[:, -1, :3, :3])
-        inv_pose = se3_from_rot_pos(ir, ip)
-        trajectory = einsum('bmn,blnk->blmk', inv_pose, trajectory)
-        return 
-    
-    def gripper2world(self, curr_gripper, trajectory):
-        inv_pose = se3_from_rot_pos(curr_gripper[:, -1, :3, :3], curr_gripper[:, -1, :3, 3])
-        trajectory = einsum('bmn,blnk->blmk', inv_pose, trajectory)
-        return 
-    
     def forward(
         self,
         gt_trajectory,
@@ -455,7 +444,7 @@ class DiffuserActor(BaseImagePolicy):
         action = out['action']
         pred_act_p = action['act_p']
         pred_act_r = action['act_r']
-        pred_act_gr = action['act_gr']
+        pred_act_gr = out['rlbench_action'][:,:,7]
 
         pos_error = torch.nn.functional.mse_loss(pred_act_p, gt_act_p)
 

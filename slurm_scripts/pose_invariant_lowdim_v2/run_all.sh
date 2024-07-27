@@ -6,13 +6,13 @@
 #SBATCH --gres=gpu:1
 #SBATCH -C 'rtx3090|a5000'
 #SBATCH --array=0-3%1
-#SBATCH --output=/home/urain/diffusion_policy/slurm_scripts/logs/%A_baseline_lowdim/train_%a.out
-#SBATCH -J baseline_lowdim
+#SBATCH --output=/home/urain/diffusion_policy/slurm_scripts/logs/%A_pose_invariant_lowdim_v2/train_%a.out
+#SBATCH -J pose_invariant_lowdim_v2
 
 FILE_DIR=$pwd
 task_names=("open_drawer" "put_item_in_drawer" "stack_blocks" "turn_tap" "sweep_to_dustpan_of_size")
-training_script=train_diffuser_actor_lowdim.py
-job_name=baseline_lowdim
+training_script=train_diffuser_actor_pose_invariant_lowdim_v2.py
+job_name=pose_invariant_lowdim_v2
 pids=()
 for task_name in "${task_names[@]}"
 do

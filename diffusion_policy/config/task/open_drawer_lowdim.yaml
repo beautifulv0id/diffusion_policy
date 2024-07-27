@@ -1,7 +1,7 @@
 defaults:
   - rlbench_lowdim
 
-name: open_drawer_mask
+name: open_drawer_lowdim
 task_name: open_drawer
 
 env_runner:

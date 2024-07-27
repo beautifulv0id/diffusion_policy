@@ -4,7 +4,8 @@ task_name=$2 #" put_item_in_drawer"
 task_config=$3 # "put_item_in_drawer_mask"
 SLURM_ARRAY_TASK_ID=$4
 job_name=$5
-args=${@:6}
+HYDRA_RUN_DIR_FILE=$6
+args=${@:7}
 
 echo "training_script: $training_script"
 echo "task_name: $task_name"
@@ -12,8 +13,6 @@ echo "task_config: $task_config"
 echo "SLURM_ARRAY_TASK_ID: $SLURM_ARRAY_TASK_ID"
 echo "job_name: $job_name"
 echo "args: $args"
-
-HYDRA_RUN_DIR_FILE=/home/stud_herrmann/diffusion_policy_felix/slurm_scripts/logs/${SLURM_ARRAY_JOB_ID}_${job_name}/hydra_run_dir.txt
 
 check_and_make_hydra_run_dir() {
     for arg in "$@"; do

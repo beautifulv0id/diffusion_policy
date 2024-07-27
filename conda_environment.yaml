@@ -30,7 +30,7 @@ dependencies:
     - moviepy 
     - imageio 
     - matplotlib==3.6.1
-    - tabulate
+    - typed-argument-parser
     - einops
     - zarr
     - dill
