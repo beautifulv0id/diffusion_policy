@@ -19,7 +19,7 @@ dataset:
   n_obs_steps: ${n_obs_steps}
   val_ratio: 0.2
   use_low_dim_state: True
-  cache_size: 200
+  cache_size: 2000
   rot_noise_scale: 0.0
   pos_noise_scale: 0.0
 

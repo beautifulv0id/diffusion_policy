@@ -19,7 +19,7 @@ dataset:
   val_ratio: 0.2
   use_low_dim_state: False
   use_mask: False
-  cache_size: 1000
+  cache_size: 2000
   image_rescale: [1., 1.]
   rot_noise_scale: 0.0
   pos_noise_scale: 0.0
