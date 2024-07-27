@@ -21,7 +21,7 @@ args="task=$task_config\
     training.gradient_accumulate_every=2\
     task.env_runner.n_procs_max=5"
 
-if [ $SLURM_ARRAY_TASK_ID -eq $SLURM_ARRAY_TASK_COUNT ]; then
+if [ $SLURM_ARRAY_TASK_ID -eq $SLURM_ARRAY_TASK_MAX ]; then
     args="$args mode=rollout"
 fi
 

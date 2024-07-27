@@ -4,7 +4,7 @@
 #SBATCH --mem=16G
 #SBATCH --gres=gpu:1
 #SBATCH -C 'rtx3090|a5000'
-#SBATCH --output=/home/stud_herrmann/diffusion_policy_felix/.out/train/slurm-%j.out
+#SBATCH --output=/home/urain/diffusion_policy/.out/train/slurm-%j.out
 
 task="open_drawer"
 args="--save_path=${DIFFUSION_POLICY_ROOT}/data/images\

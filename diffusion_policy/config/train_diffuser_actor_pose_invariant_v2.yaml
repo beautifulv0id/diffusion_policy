@@ -3,10 +3,6 @@ defaults:
   - _self_
   - task: open_drawer_image
 
-task:
-  env_runner:
-    n_procs_max: 1
-
 name: train_diffuser_actor_pose_invariant_v2
 _target_: diffusion_policy.workspace.train_diffuser_actor.TrainingWorkspace
 
