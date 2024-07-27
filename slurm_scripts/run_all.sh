@@ -1,15 +1,15 @@
-# sbatch baseline_image/train_open_drawer_image.sh 
-# sbatch baseline_image/train_put_item_in_drawer_image.sh
-# sbatch baseline_image/train_stack_blocks_image.sh
-# sbatch baseline_image/train_sweep_to_dustpan_of_size_image.sh
-# sbatch baseline_image/train_turn_tap_image.sh
+sbatch baseline_image/train_open_drawer_image.sh 
+sbatch baseline_image/train_put_item_in_drawer_image.sh
+sbatch baseline_image/train_stack_blocks_image.sh
+sbatch baseline_image/train_sweep_to_dustpan_of_size_image.sh
+sbatch baseline_image/train_turn_tap_image.sh
 
   
-sbatch baseline_lowdim/train_open_drawer_lowdim.sh
-sbatch baseline_lowdim/train_put_item_in_drawer_lowdim.sh
-sbatch baseline_lowdim/train_stack_blocks_lowdim.sh
-sbatch baseline_lowdim/train_sweep_to_dustpan_of_size_lowdim.sh
-sbatch baseline_lowdim/train_turn_tap_lowdim.sh
+# sbatch baseline_lowdim/train_open_drawer_lowdim.sh
+# sbatch baseline_lowdim/train_put_item_in_drawer_lowdim.sh
+# sbatch baseline_lowdim/train_stack_blocks_lowdim.sh
+# sbatch baseline_lowdim/train_sweep_to_dustpan_of_size_lowdim.sh
+# sbatch baseline_lowdim/train_turn_tap_lowdim.sh
 
   
 # sbatch baseline_mask/train_open_drawer_mask.sh
