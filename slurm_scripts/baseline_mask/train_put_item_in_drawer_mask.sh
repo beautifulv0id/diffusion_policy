@@ -12,7 +12,7 @@
 training_script=train_diffuser_actor.py
 task_name=put_item_in_drawer
 task_config=put_item_in_drawer_mask
-jobname=$task_config
+job_name=$task_config
 
 args="task=$task_config\
     training.resume=True\

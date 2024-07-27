@@ -12,7 +12,7 @@
 training_script=train_diffuser_actor.py
 task_name=turn_tap
 task_config=turn_tap_image
-jobname=$task_config
+job_name=$task_config
 
 args="task=$task_config\
     training.resume=True\

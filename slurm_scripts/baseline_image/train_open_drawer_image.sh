@@ -12,7 +12,7 @@
 training_script=train_diffuser_actor.py
 task_name=open_drawer
 task_config=open_drawer_image
-jobname=$task_config
+job_name=$task_config
 
 args="task=$task_config\
     training.resume=True\

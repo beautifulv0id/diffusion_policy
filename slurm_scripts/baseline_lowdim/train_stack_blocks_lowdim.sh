@@ -12,7 +12,7 @@
 training_script=train_diffuser_actor_lowdim.py
 task_name=stack_blocks
 task_config=stack_blocks_lowdim
-jobname=$task_config
+job_name=$task_config
 
 args="task=$task_config\
     training.resume=True\
