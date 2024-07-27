@@ -5,7 +5,7 @@
 #SBATCH -p gpu
 #SBATCH --gres=gpu:1
 #SBATCH -C 'rtx3090|a5000'
-#SBATCH --array=0-3%1
+#SBATCH --array=0-7%1
 #SBATCH --output=/home/urain/diffusion_policy/slurm_scripts/logs/%A_pose_invariant_lowdim_v2/train_%a.out
 #SBATCH -J pose_invariant_lowdim_v2
 
