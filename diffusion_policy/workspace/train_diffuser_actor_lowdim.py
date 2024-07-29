@@ -369,7 +369,7 @@ class TrainingWorkspace(BaseWorkspace):
                 )
                 runner_log['epoch'] = self.epoch
                 # log all
-                wandb_run.log(runner_log, step=self.global_step)
+                wandb_run.log(runner_log)
                 json_logger.log(runner_log)
 @hydra.main(
     version_base=None,
