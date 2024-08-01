@@ -118,6 +118,8 @@ class GeometryInvariantTransformer(nn.Module):
             x = ff(x) + x
 
         for l, (attn, ff) in enumerate(self.normal_layers):
+            if z is None:
+                z = x
             out, attmap = attn(x, key=z, value=z)
             x = out + x
             x = ff(x) + x
