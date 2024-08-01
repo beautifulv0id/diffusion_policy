@@ -6,25 +6,23 @@ from torch.nn import functional as F
 from torchvision.ops import FeaturePyramidNetwork
 from diffusion_policy.model.common.module_attr_mixin import ModuleAttrMixin
 
-from diffusion_policy.model.common.layers import FFWRelativeCrossAttentionModule, ParallelAttention
-from diffusion_policy.model.common.position_encodings import RotaryPositionEncoding3D, SinusoidalPosEmb
+from diffusion_policy.model.common.geometry_invariant_transformer import GeometryInvariantTransformer
 from diffusion_policy.model.vision.resnet import load_resnet50, load_resnet18
 from diffusion_policy.model.vision.clip_wrapper import load_clip
-
 
 class DiffuserActorEncoder(ModuleAttrMixin):
 
     def __init__(self,
                  backbone="clip",
-                 image_size=(128, 128),
+                 image_size=(256, 256),
                  embedding_dim=60,
                  num_sampling_level=3,
                  nhist=3,
                  num_attn_heads=8,
-                 num_vis_ins_attn_layers=2,
-                 fps_subsampling_factor=5):
+                 fps_subsampling_factor=5,
+                 quaternion_format='xyzw'):
         super().__init__()
-        assert backbone in ["resnet50", "resnet18", "clip"]
+
         assert image_size in [(128, 128), (256, 256)]
         assert num_sampling_level in [1, 2, 3, 4]
 
@@ -32,6 +30,7 @@ class DiffuserActorEncoder(ModuleAttrMixin):
         self.num_sampling_level = num_sampling_level
         self.fps_subsampling_factor = fps_subsampling_factor
 
+        # 3D relative positional embeddings
         # Frozen backbone
         if backbone == "resnet50":
             self.backbone, self.normalize = load_resnet50()
@@ -62,34 +61,25 @@ class DiffuserActorEncoder(ModuleAttrMixin):
             self.feature_map_pyramid = ['res3', 'res1', 'res1', 'res1']
             self.downscaling_factor_pyramid = [8, 2, 2, 2]
 
-        # 3D relative positional embeddings
-        self.relative_pe_layer = RotaryPositionEncoding3D(embedding_dim)
+        head_dim = embedding_dim // num_attn_heads
+        assert head_dim * num_attn_heads == embedding_dim, "embed_dim must be divisible by num_heads"
 
         # Current gripper learnable features
         self.curr_gripper_embed = nn.Embedding(nhist, embedding_dim)
-        self.gripper_context_head = FFWRelativeCrossAttentionModule(
-            embedding_dim, num_attn_heads, num_layers=3, use_adaln=False
+        self.gripper_context_head = GeometryInvariantTransformer(
+            dim=embedding_dim,
+            dim_head=head_dim,
+            mlp_dim=embedding_dim,
+            heads=num_attn_heads,
+            depth=3,
+            kv_dim=embedding_dim,
+            use_adaln=False
         )
-
         # Goal gripper learnable features
         self.goal_gripper_embed = nn.Embedding(1, embedding_dim)
 
-        # Instruction encoder
-        self.instruction_encoder = nn.Linear(512, embedding_dim)
-
-        # Attention from vision to language
-        layer = ParallelAttention(
-            num_layers=num_vis_ins_attn_layers,
-            d_model=embedding_dim, n_heads=num_attn_heads,
-            self_attention1=False, self_attention2=False,
-            cross_attention1=True, cross_attention2=False
-        )
-        self.vl_attention = nn.ModuleList([
-            layer
-            for _ in range(1)
-            for _ in range(1)
-        ])
-
+        self._quaternion_format = quaternion_format
+        
     def forward(self):
         return None
 
@@ -107,29 +97,12 @@ class DiffuserActorEncoder(ModuleAttrMixin):
         return self._encode_gripper(curr_gripper, self.curr_gripper_embed,
                                     context_feats, context)
 
-    def encode_goal_gripper(self, goal_gripper, context_feats, context):
-        """
-        Compute goal gripper position features and positional embeddings.
-
-        Args:
-            - goal_gripper: (B, 3+)
-
-        Returns:
-            - goal_gripper_feats: (B, 1, F)
-            - goal_gripper_pos: (B, 1, F, 2)
-        """
-        goal_gripper_feats, goal_gripper_pos = self._encode_gripper(
-            goal_gripper[:, None], self.goal_gripper_embed,
-            context_feats, context
-        )
-        return goal_gripper_feats, goal_gripper_pos
-
     def _encode_gripper(self, gripper, gripper_embed, context_feats, context):
         """
         Compute gripper position features and positional embeddings.
 
         Args:
-            - gripper: (B, npt, 3+)
+            - gripper: (B, npt, 4, 4)
             - context_feats: (B, npt, C)
             - context: (B, npt, 3)
 
@@ -142,26 +115,15 @@ class DiffuserActorEncoder(ModuleAttrMixin):
             len(gripper), 1, 1
         )
 
-        # Rotary positional encoding
-        gripper_pos = self.relative_pe_layer(gripper[..., :3])
-        context_pos = self.relative_pe_layer(context)
 
-        gripper_feats = einops.rearrange(
-            gripper_feats, 'b npt c -> npt b c'
-        )
-        context_feats = einops.rearrange(
-            context_feats, 'b npt c -> npt b c'
-        )
-        gripper_feats = self.gripper_context_head(
-            query=gripper_feats, value=context_feats,
-            query_pos=gripper_pos, value_pos=context_pos
-        )[-1]
-        gripper_feats = einops.rearrange(
-            gripper_feats, 'nhist b c -> b nhist c'
-        )
+        extras = {'x_poses': gripper, 'z_poses': context,
+              'x_types':'se3', 'z_types':'3D'}
 
-        return gripper_feats, gripper_pos
-    
+        gripper_feats = self.gripper_context_head(x=gripper_feats, z=context_feats, extras=extras)
+
+        return gripper_feats
+
+
     def mask_out_features_pcd(self, mask, rgb_features, pcd, n_min=0, n_max=1000000):
         """
         Masks out features and point cloud data based on a given mask.
@@ -179,7 +141,6 @@ class DiffuserActorEncoder(ModuleAttrMixin):
         this_mask = mask.clone()
         b, v, _, h, w = rgb_features.shape
         rgb_features = einops.rearrange(rgb_features, 'b v c h w -> b (v h w) c')
-        pcd = einops.rearrange(pcd, 'b v c h w -> b (v h w) c')
         this_mask = F.interpolate(this_mask.flatten(0, 1).float(), (h, w), mode='nearest').bool().reshape(b, v, h, w)
 
         B = this_mask.size(0)
@@ -222,8 +183,6 @@ class DiffuserActorEncoder(ModuleAttrMixin):
         pcd = pcd[idx].reshape(B, n_sample, -1)
         
         return rgb_features, pcd, idx
-
-
 
     def encode_images(self, rgb, pcd):
         """
@@ -280,38 +239,15 @@ class DiffuserActorEncoder(ModuleAttrMixin):
 
         return rgb_feats_pyramid, pcd_pyramid
 
-    def encode_instruction(self, instruction):
-        """
-        Compute language features/pos embeddings on top of CLIP features.
-
-        Args:
-            - instruction: (B, max_instruction_length, 512)
-
-        Returns:
-            - instr_feats: (B, 53, F)
-            - instr_dummy_pos: (B, 53, F, 2)
-        """
-        instr_feats = self.instruction_encoder(instruction)
-        # Dummy positional embeddings, all 0s
-        instr_dummy_pos = torch.zeros(
-            len(instruction), instr_feats.shape[1], 3,
-            device=instruction.device
-        )
-        instr_dummy_pos = self.relative_pe_layer(instr_dummy_pos)
-        return instr_feats, instr_dummy_pos
-
     def run_fps(self, context_features, context_pos):
-        # context_features (Np, B, F)
-        # context_pos (B, Np, F, 2)
+        # context_features (B, Np, F)
+        # context_pos (B, Np, F)
         # outputs of analogous shape, with smaller Np
-        npts, bs, ch = context_features.shape
+        bs, npts, ch = context_features.shape
 
         # Sample points with FPS
         sampled_inds = dgl_geo.farthest_point_sampler(
-            einops.rearrange(
-                context_features,
-                "npts b c -> b npts c"
-            ).to(torch.float64),
+                context_features.to(torch.float64),
             max(npts // self.fps_subsampling_factor, 1), 0
         ).long()
 
@@ -319,8 +255,8 @@ class DiffuserActorEncoder(ModuleAttrMixin):
         expanded_sampled_inds = sampled_inds.unsqueeze(-1).expand(-1, -1, ch)
         sampled_context_features = torch.gather(
             context_features,
-            0,
-            einops.rearrange(expanded_sampled_inds, "b npts c -> npts b c")
+            1,
+            expanded_sampled_inds
         )
 
         # Sample positional embeddings
@@ -333,26 +269,21 @@ class DiffuserActorEncoder(ModuleAttrMixin):
         )
         return sampled_context_features, sampled_context_pcd
 
-    def vision_language_attention(self, feats, instr_feats):
-        feats, _ = self.vl_attention[0](
-            seq1=feats, seq1_key_padding_mask=None,
-            seq2=instr_feats, seq2_key_padding_mask=None,
-            seq1_pos=None, seq2_pos=None,
-            seq1_sem_pos=None, seq2_sem_pos=None
-        )
-        return feats
-    
-
 
 def test():
-    embedder = DiffuserActorEncoder(
-        backbone="clip", image_size=(256, 256), embedding_dim=60,
-        num_sampling_level=3, nhist=3, num_attn_heads=3,
-        num_vis_ins_attn_layers=2, fps_subsampling_factor=5
-    )
+    from diffusion_policy.model.common.se3_util import random_se3
 
-    rgb = torch.randn(64, 2, 3, 256, 256)
-    pcd = torch.randn(64, 2, 3, 256, 256)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    embedder = DiffuserActorEncoder(
+        backbone="clip", image_size=(128, 128), embedding_dim=60,
+        num_sampling_level=3, nhist=3, num_attn_heads=3,
+        fps_subsampling_factor=5
+    ).to(device)
+
+
+
+    rgb = torch.randn(64, 2, 3, 128, 128).to(device)
+    pcd = torch.randn(64, 2, 3, 128, 128).to(device)
     rgb_feats_pyramid, pcd_pyramid = embedder.encode_images(rgb, pcd)
     print("RGB features pyramid shapes:")
     for i, rgb_feats in enumerate(rgb_feats_pyramid):
@@ -362,13 +293,26 @@ def test():
     for i, pcd_i in enumerate(pcd_pyramid):
         print(f"Level {i}:", pcd_i.shape)
 
-    curr_gripper = torch.randn(64, 3, 3)
-    context_feats = torch.randn(64, 3, 60)
-    context = torch.randn(64, 3, 3)
+    curr_gripper = random_se3(64*3).reshape(64, 3, 4, 4).to(device)
+    context_feats = torch.randn(64, 3, 60).to(device)
+    context = torch.randn(64, 3, 3).to(device)
     
-    curr_gripper_feats, curr_gripper_pos = embedder.encode_curr_gripper(
+    curr_gripper_feats = embedder.encode_curr_gripper(
         curr_gripper, context_feats, context
     )
+
+    pcd = pcd_pyramid[0]
+    rgb_feats = einops.rearrange(
+                rgb_feats_pyramid[0],
+                "b ncam c h w -> b (ncam h w) c"
+            )
+
+    sampled_context_features, sampled_context_pcd = embedder.run_fps(
+        rgb_feats, pcd
+    )
+
+    print("Sampled context features shape:", sampled_context_features.shape)
+    print("Sampled context pcd shape:", sampled_context_pcd.shape)
 
 if __name__ == "__main__":
     test()

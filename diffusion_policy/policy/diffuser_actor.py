@@ -24,11 +24,25 @@ from diffusion_policy.common.rotation_utils import (
     )
 
 from diffusion_policy.common.rlbench_util import create_robomimic_from_rlbench_action
-from pytorch3d.transforms import matrix_to_quaternion, quaternion_to_matrix
-from diffusion_policy.model.common.so3_util import log_map
+from pytorch3d.transforms import matrix_to_quaternion, quaternion_to_matrix, quaternion_invert, quaternion_multiply, quaternion_apply
+from diffusion_policy.model.common.so3_util import log_map, se3_inverse
+from diffusion_policy.model.common.se3_util import se3_from_rot_pos
 from diffusion_policy.policy.base_image_policy import BaseImagePolicy
 from typing import Dict
 
+from torch import einsum
+
+def pos_quat_apply(pq1, pq2):
+    p1, q1 = pq1[..., :3], pq1[..., 3:7]
+    p2, q2 = pq2[..., :3], pq2[..., 3:7]
+    p = p1 + quaternion_apply(q1, p2)
+    q = quaternion_multiply(q1, q2)
+    pq = torch.cat((p, q), -1)
+    if pq2.size(-1) > 7:
+        ret = pq2[..., 7:]
+        pq = torch.cat((pq, ret), -1)
+    return pq
+    
 
 class DiffuserActor(BaseImagePolicy):
 
@@ -43,6 +57,7 @@ class DiffuserActor(BaseImagePolicy):
                  rotation_parametrization='6D',
                  quaternion_format='xyzw',
                  diffusion_timesteps=100,
+                 scaling_factor=1.0,
                  nhist=3,
                  nhorizon=16,
                  relative=False,
@@ -79,10 +94,11 @@ class DiffuserActor(BaseImagePolicy):
             beta_schedule="squaredcos_cap_v2",
             prediction_type="epsilon"
         )
+        self.scaling_factor = torch.tensor(scaling_factor)
         self.n_steps = diffusion_timesteps
         self.nhorizon = nhorizon
         self.use_mask = use_mask
-        self.gripper_loc_bounds = torch.tensor(gripper_loc_bounds)
+        self.gripper_loc_bounds = torch.tensor(gripper_loc_bounds) if gripper_loc_bounds is not None else None
 
     def encode_inputs(self, visible_rgb, visible_pcd, instruction,
                       curr_gripper, mask=None):
@@ -219,14 +235,13 @@ class DiffuserActor(BaseImagePolicy):
         mask_obs=None,
         need_attn_weights=False
     ):
-        # Normalize all pos
-        pcd_obs = pcd_obs.clone()
-        curr_gripper = curr_gripper.clone()
-        pcd_obs = torch.permute(self.normalize_pos(
-            torch.permute(pcd_obs, [0, 1, 3, 4, 2])
-        ), [0, 1, 4, 2, 3])
-        curr_gripper[..., :3] = self.normalize_pos(curr_gripper[..., :3])
+        
+        if self._relative:
+            curr_gripper_abs = curr_gripper.clone()
+            pcd_obs, curr_gripper = self.convert2rel(pcd_obs, curr_gripper)
+
         curr_gripper = self.convert_rot(curr_gripper)
+        
 
         # Prepare inputs
         fixed_inputs, mask_idx = self.encode_inputs(
@@ -255,8 +270,13 @@ class DiffuserActor(BaseImagePolicy):
         # Normalize quaternion
         if self._rotation_parametrization != '6D':
             trajectory[:, :, 3:7] = normalise_quat(trajectory[:, :, 3:7])
+        
         # Back to quaternion
         trajectory = self.unconvert_rot(trajectory)
+
+        if self._relative:
+            trajectory = self.convert2abs(trajectory, curr_gripper_abs)
+
         # unnormalize position
         trajectory[:, :, :3] = self.unnormalize_pos(trajectory[:, :, :3])
         # Convert gripper status to probaility
@@ -271,11 +291,15 @@ class DiffuserActor(BaseImagePolicy):
         return output
 
     def normalize_pos(self, pos):
+        if self.gripper_loc_bounds is None:
+            return pos * self.scaling_factor
         pos_min = self.gripper_loc_bounds[0].float().to(pos.device)
         pos_max = self.gripper_loc_bounds[1].float().to(pos.device)
         return (pos - pos_min) / (pos_max - pos_min) * 2.0 - 1.0
 
     def unnormalize_pos(self, pos):
+        if self.gripper_loc_bounds is None:
+            return pos / self.scaling_factor
         pos_min = self.gripper_loc_bounds[0].float().to(pos.device)
         pos_max = self.gripper_loc_bounds[1].float().to(pos.device)
         return (pos + 1.0) / 2.0 * (pos_max - pos_min) + pos_min
@@ -320,15 +344,35 @@ class DiffuserActor(BaseImagePolicy):
             if self._quaternion_format == 'xyzw':
                 signal[..., 3:7] = signal[..., (4, 5, 6, 3)]
         return signal
+    
 
-    def convert2rel(self, pcd, curr_gripper):
+    def convert2rel(self, pcd, curr_gripper, trajectory=None):
         """Convert coordinate system relaative to current gripper."""
-        center = curr_gripper[:, -1, :3]  # (batch_size, 3)
-        bs = center.shape[0]
-        pcd = pcd - center.view(bs, 1, 3, 1, 1)
-        curr_gripper = curr_gripper.clone()
-        curr_gripper[..., :3] = curr_gripper[..., :3] - center.view(bs, 1, 3)
+       # convert2rel
+        inv_rot = quaternion_invert(curr_gripper[:,-1:, 3:7])
+        inv_pos = -quaternion_apply(inv_rot, curr_gripper[:,-1:, :3])
+        inv_pos_rot = torch.cat((inv_pos, inv_rot), -1)
+
+        b, v, c, h, w = pcd.shape
+        pcd = einops.rearrange(pcd, 'b v c h w->b (v h w) c')
+        pcd = quaternion_apply(inv_rot, pcd) + inv_pos.view(b, 1, 3)
+        pcd = einops.rearrange(pcd, 'b (v h w) c->b v c h w', v=v, h=h, w=w)
+        curr_gripper = pos_quat_apply(inv_pos_rot, curr_gripper)
+        if trajectory is not None:
+            trajectory = pos_quat_apply(inv_pos_rot, trajectory)
+            return pcd, curr_gripper, trajectory
+        
         return pcd, curr_gripper
+    
+    def convert2abs(self, trajectory, curr_gripper, pcd=None):
+        trajectory = pos_quat_apply(curr_gripper[:,-1:], trajectory)
+        if pcd is not None:
+            b, v, c, h, w = pcd.shape
+            pcd = einops.rearrange(pcd, 'b v c h w->b (v h w) c')
+            pcd = quaternion_apply(curr_gripper[:,-1:, 3:7], pcd) + curr_gripper[:,-1:, :3]
+            pcd = einops.rearrange(pcd, 'b (v h w) c->b v c h w', v=v, h=h, w=w)
+            return trajectory, pcd
+        return trajectory
 
     def forward(
         self,
@@ -357,8 +401,17 @@ class DiffuserActor(BaseImagePolicy):
             is ALWAYS expressed as a quaternion form.
             The model converts it to 6D internally if needed.
         """
-        if self._relative:
-            pcd_obs, curr_gripper = self.convert2rel(pcd_obs, curr_gripper)
+        # Normalize all pos
+        if gt_trajectory is not None:
+            gt_trajectory = gt_trajectory.clone()
+            gt_trajectory[:, :, :3] = self.normalize_pos(gt_trajectory[:, :, :3])
+        pcd_obs = pcd_obs.clone()
+        curr_gripper = curr_gripper.clone()
+        pcd_obs = torch.permute(self.normalize_pos(
+            torch.permute(pcd_obs, [0, 1, 3, 4, 2])
+        ), [0, 1, 4, 2, 3])
+        curr_gripper[..., :3] = self.normalize_pos(curr_gripper[..., :3])
+
         if gt_trajectory is not None:
             gt_openess = gt_trajectory[..., 7:8]
             gt_trajectory = gt_trajectory[..., :7]
@@ -375,19 +428,12 @@ class DiffuserActor(BaseImagePolicy):
                 mask_obs,
                 need_attn_weights=need_attn_weights
             )
-        # Normalize all pos
-        gt_trajectory = gt_trajectory.clone()
-        pcd_obs = pcd_obs.clone()
-        curr_gripper = curr_gripper.clone()
-        gt_trajectory[:, :, :3] = self.normalize_pos(gt_trajectory[:, :, :3])
-        pcd_obs = torch.permute(self.normalize_pos(
-            torch.permute(pcd_obs, [0, 1, 3, 4, 2])
-        ), [0, 1, 4, 2, 3])
-        curr_gripper[..., :3] = self.normalize_pos(curr_gripper[..., :3])
-
+        if self._relative:
+            pcd_obs, curr_gripper, gt_trajectory = self.convert2rel(pcd_obs, curr_gripper, gt_trajectory)
         # Convert rotation parametrization
         gt_trajectory = self.convert_rot(gt_trajectory)
         curr_gripper = self.convert_rot(curr_gripper)
+
 
         # Prepare inputs
         fixed_inputs, mask_idx = self.encode_inputs(
@@ -808,9 +854,10 @@ class DiffusionHead(nn.Module):
 
 def test():
     from diffusion_policy.common.pytorch_util import dict_apply
+    from pytorch3d.transforms import quaternion_to_matrix, matrix_to_quaternion, random_quaternions
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    horizon = 16
+    horizon = 1
     nhist = 3
     image_size = (256, 256)
 
@@ -827,16 +874,19 @@ def test():
         diffusion_timesteps=100,
         nhist=nhist,
         nhorizon=horizon,
-        relative=False,
+        relative=True,
         lang_enhanced=False
     )
 
     model.to(device)
 
+    gt_trajectory = torch.cat((torch.randn(1, horizon, 3), random_quaternions(horizon).reshape(1, horizon, 4), torch.randn(1, horizon, 2)), -1)
+    curr_gripper = torch.cat((torch.randn(1, nhist, 3), random_quaternions(nhist).reshape(1, nhist, 4), torch.randn(1, nhist, 2)), -1)
+
 
     batch = {
         'action': {
-            'gt_trajectory': torch.randn(1, horizon, 3+4+2),
+            'gt_trajectory': gt_trajectory,
             'act_p': torch.randn(1, horizon, 3),
             'act_r': torch.randn(1, horizon, 3, 3),
             'act_gr': torch.randn(1, horizon),
@@ -845,21 +895,67 @@ def test():
         'obs': {
             'rgb': torch.randn(1, 2, 3, 256, 256),
             'pcd': torch.randn(1, 2, 3, 256, 256),
-            'curr_gripper': torch.randn(1, nhist, 3+4+2)
+            'curr_gripper': curr_gripper
         }
     }
 
     batch = dict_apply(batch, lambda x: x.to(device))
 
-    model.compute_loss(batch)
-    print("Loss computed successfully")
-    model.predict_action(batch['obs'])
-    print("Action predicted successfully")
+    rot = random_quaternions(1, device=device).reshape(1, 1, 4)
+    pos = torch.randn(1, 3, device=device).reshape(1, 1, 3)
+    pq = torch.cat((pos, rot), -1)
+    rot_inv = quaternion_invert(rot)
+    pos_inv = -quaternion_apply(rot_inv, pos)
+    pq_inv = torch.cat((pos_inv, rot_inv), -1)
 
-    out = model.evaluate(batch)
-    print("Evaluation done successfully")
-    print(out)
-    print("DiffuserActor test passed")
+    def rotate_batch(batch, pq):
+        this_batch = dict_apply(batch, lambda x: x.clone())
+        pcd = this_batch['obs']['pcd'].clone()
+        curr_gripper = this_batch['obs']['curr_gripper'].clone()
+        trajectory = this_batch['action']['gt_trajectory'].clone()
+        inv_rot = pq[:,:, 3:7]
+        inv_pos = pq[:,:, :3]
+
+        b, v, c, h, w = pcd.shape
+        pcd = einops.rearrange(pcd, 'b v c h w->b (v h w) c')
+        pcd = quaternion_apply(inv_rot, pcd) + inv_pos
+        pcd = einops.rearrange(pcd, 'b (v h w) c->b v c h w', v=v, h=h, w=w)
+        curr_gripper = pos_quat_apply(pq, curr_gripper)
+        if trajectory is not None:
+            trajectory = pos_quat_apply(pq, trajectory)
+            this_batch['action']['gt_trajectory'] = trajectory
+        this_batch['obs']['pcd'] = pcd
+        this_batch['obs']['curr_gripper'] = curr_gripper  
+        return this_batch
+
+    rotated_batch = rotate_batch(batch, pq)
+    back_rotated_batch = rotate_batch(rotated_batch, pq_inv)
+
+    # compare batch and back rotated batch
+    print('curr_gripper', torch.abs(batch['obs']['curr_gripper']-back_rotated_batch['obs']['curr_gripper']).mean())
+    print('pcd', torch.abs(batch['obs']['pcd']-back_rotated_batch['obs']['pcd']).mean())
+    print('gt_trajectory', torch.abs(batch['action']['gt_trajectory']-back_rotated_batch['action']['gt_trajectory']).mean())
+
+
+    torch.random.manual_seed(0)
+    loss = model.compute_loss(batch)
+    print("Loss computed successfully: ", loss.item())
+    torch.random.manual_seed(0)
+    action = model.predict_action(batch['obs'])['rlbench_action']
+    print("Action predicted successfully", action.detach().cpu().numpy())
+
+    print("Rotation results:")
+    torch.random.manual_seed(0)
+    loss = model.compute_loss(rotated_batch)
+    print("Loss computed successfully: ", loss.item())
+    torch.random.manual_seed(0)
+    action = model.predict_action(rotated_batch['obs'])['rlbench_action']
+    print("Action predicted successfully", action.detach().cpu().numpy())
+
+    # out = model.evaluate(batch)
+    # print("Evaluation done successfully")
+    # print(out)
+    # print("DiffuserActor test passed")
 
 if __name__ == "__main__":
     test()

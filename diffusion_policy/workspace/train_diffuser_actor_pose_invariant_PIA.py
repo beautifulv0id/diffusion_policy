@@ -273,10 +273,9 @@ class TrainingWorkspace(BaseWorkspace):
 
                     ## Run Experiment related Validation ## #TODO: as far as I see, this currently has no effect!
                     if (self.epoch % cfg.training.model_evaluation_every) == 0:
-                        if val_sampling_batch is not None:
-                            evaluation_log = self.model.evaluate(val_sampling_batch, validation=True)
-                            # log all
-                            step_log.update(evaluation_log)
+                        evaluation_log = self.model.evaluate(val_sampling_batch, validation=True)
+                        # log all
+                        step_log.update(evaluation_log)
 
                     # sample on a training batch
                     if (self.epoch % cfg.training.sample_every) == 0:
@@ -371,7 +370,6 @@ class TrainingWorkspace(BaseWorkspace):
                 # log all
                 wandb_run.log(runner_log)
                 json_logger.log(runner_log)
-                
 @hydra.main(
     version_base=None,
     config_path=str(pathlib.Path(__file__).parent.parent.joinpath("config")),

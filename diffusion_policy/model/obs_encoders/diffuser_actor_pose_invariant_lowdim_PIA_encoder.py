@@ -8,8 +8,6 @@ from diffusion_policy.model.common.module_attr_mixin import ModuleAttrMixin
 
 from diffusion_policy.model.common.position_encodings import RotaryPositionEncoding3D
 from diffusion_policy.model.common.geometry_invariant_transformer import GeometryInvariantTransformer
-from diffusion_policy.model.invariant_tranformers.invariant_point_transformer import InvariantPointTransformer
-from diffusion_policy.model.invariant_tranformers.geometry_invariant_attention import InvariantPointAttention
 from diffusion_policy.common.rotation_utils import normalise_quat
 from pytorch3d.transforms import quaternion_to_matrix, matrix_to_quaternion
 
