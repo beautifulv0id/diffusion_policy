@@ -24,7 +24,7 @@ policy:
   use_instruction: false
   fps_subsampling_factor: 5
   scaling_factor: 3.0
-  gripper_loc_bounds: ${task.gripper_loc_bounds}
+  # gripper_loc_bounds: ${task.gripper_loc_bounds}
   rotation_parametrization: '6D'
   quaternion_format: 'xyzw' 
   diffusion_timesteps: 100

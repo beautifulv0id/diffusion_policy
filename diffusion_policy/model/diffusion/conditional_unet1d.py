@@ -212,13 +212,18 @@ class ConditionalUnet1D(nn.Module):
         
         x = sample
         h = []
+        skip_up = []
         for idx, (resnet, resnet2, downsample) in enumerate(self.down_modules):
             x = resnet(x, global_feature)
             if idx == 0 and len(h_local) > 0:
                 x = x + h_local[0]
             x = resnet2(x, global_feature)
             h.append(x)
-            x = downsample(x)
+            if x.size(-1) > 1:
+                skip_up.append(False)
+                x = downsample(x)
+            else:
+                skip_up.append(True)
 
         for mid_module in self.mid_modules:
             x = mid_module(x, global_feature)
@@ -233,7 +238,8 @@ class ConditionalUnet1D(nn.Module):
             if idx == len(self.up_modules) and len(h_local) > 0:
                 x = x + h_local[1]
             x = resnet2(x, global_feature)
-            x = upsample(x)
+            if not skip_up.pop():
+                x = upsample(x)
 
         x = self.final_conv(x)
 
