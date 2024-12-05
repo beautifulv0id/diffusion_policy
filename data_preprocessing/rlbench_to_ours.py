@@ -7,12 +7,11 @@ from diffusion_policy.env.rlbench.rlbench_env import RLBenchEnv
 from diffusion_policy.common.rlbench_util import CAMERAS, create_obs_config
 from rlbench.utils import get_stored_demos
 from diffusion_policy.common.rlbench_util import _keypoint_discovery
-import numcodecs
 from tqdm import tqdm
-from PIL import Image
-import json
+import pickle
 from diffusion_policy.model.vision.clip_wrapper import load_clip
 import torch
+from rlbench.backend.const import LOW_DIM_PICKLE
 
 FLAGS = flags.FLAGS
 
@@ -32,13 +31,21 @@ flags.DEFINE_string('num_objects_path',
                     os.environ['DIFFUSION_POLICY_ROOT'] + '/diffusion_policy/tasks/peract_tasks_num_lowdim_pcd.json', 
                     'Path to the number of objects in each task.')
 
-def save_extrinsics_intrinsics_to_json(path, extrinsics, intrinsics):
-    data = { 
-        "extrinsics": extrinsics.tolist(),
-        "intrinsics": intrinsics.tolist()
-    }
-    with open(path, 'w') as f:
-        json.dump(data, f, indent=4)
+def add_groups_to_demo(demo_group, feature_map_pyramid):
+        camera_group = demo_group.create_group('cameras')
+        for camera in CAMERAS:
+            camera_group.create_group(camera)
+            camera_group[camera].create_dataset(f'rgb', shape=(0, 3, FLAGS.image_size[0], FLAGS.image_size[1]), dtype=np.uint8, chunks=(1, 3, FLAGS.image_size[0], FLAGS.image_size[1]))
+            feature_group = camera_group[camera].create_group('clip_features')
+            for pyramid_lvl in feature_map_pyramid:
+                feature_group.create_dataset(pyramid_lvl['res'], shape=(0, pyramid_lvl['size'], FLAGS.image_size[0]//pyramid_lvl['dsf'], FLAGS.image_size[1]//pyramid_lvl['dsf']), dtype=np.uint8, chunks=(1, 256, FLAGS.image_size[0]//pyramid_lvl['dsf'], FLAGS.image_size[1]//pyramid_lvl['dsf']))
+            camera_group[camera].create_dataset(f'mask', shape=(0, 1, FLAGS.image_size[0], FLAGS.image_size[1]), dtype=np.uint8, chunks=(1, FLAGS.image_size[0], FLAGS.image_size[1]))
+            camera_group[camera].create_dataset(f'pcd', shape=(0, 3, FLAGS.image_size[0], FLAGS.image_size[1]), dtype=np.float32, chunks=(1, 3, FLAGS.image_size[0], FLAGS.image_size[1]))
+
+        state_action_group = demo_group.create_group('state_action')
+        state_action_group.create_dataset('proprioception', shape=(0, 7 + 1 + 1), dtype=np.float32, chunks=(1, 9))
+        # describe the layout of the state_action_group with type and shape
+        state_action_group.attrs['layout'] = 'gripper_pose : quat (7,), gripper_open : int (1,), ignore_collisions : int (1,)'
 
 def write_rlbench_dataset():
 
@@ -48,7 +55,6 @@ def write_rlbench_dataset():
     feature_map_pyramid = [{'dsf': 2, 'res': 'res1', 'size': 64}, 
                             {'dsf': 4, 'res': 'res2', 'size': 256},]
     dataset = zarr.open(FLAGS.save_path, mode='w')
-
     model, normalize = load_clip()
     model.eval()
     model = model.to('cuda')
@@ -72,28 +78,6 @@ def write_rlbench_dataset():
 
                 # Create a new dataset
                 task_group = split_group.create_group(task)
-
-                # create arrays for the observations
-                camera_group = task_group.create_group('cameras')
-                for camera in CAMERAS:
-                    camera_group.create_group(camera)
-                    camera_group[camera].create_dataset(f'rgb', shape=(0, 3, FLAGS.image_size[0], FLAGS.image_size[1]), dtype=np.uint8, chunks=(1, 3, FLAGS.image_size[0], FLAGS.image_size[1]))
-                    feature_group = camera_group[camera].create_group('features')
-                    for pyramid_lvl in feature_map_pyramid:
-                        feature_group.create_dataset(pyramid_lvl['res'], shape=(0, pyramid_lvl['size'], FLAGS.image_size[0]//pyramid_lvl['dsf'], FLAGS.image_size[1]//pyramid_lvl['dsf']), dtype=np.uint8, chunks=(1, 256, FLAGS.image_size[0]//pyramid_lvl['dsf'], FLAGS.image_size[1]//pyramid_lvl['dsf']))
-                    camera_group[camera].create_dataset(f'mask', shape=(0, 1, FLAGS.image_size[0], FLAGS.image_size[1]), dtype=np.uint8, chunks=(1, FLAGS.image_size[0], FLAGS.image_size[1]))
-                    camera_group[camera].create_dataset(f'pcd', shape=(0, 3, FLAGS.image_size[0], FLAGS.image_size[1]), dtype=np.float32, chunks=(1, 3, FLAGS.image_size[0], FLAGS.image_size[1]))
-
-                state_action_group = task_group.create_group('state_action')
-                state_action_group.create_dataset('proprioception', shape=(0, 7 + 1 + 1), dtype=np.float32, chunks=(1, 9))
-                # describe the layout of the state_action_group with type and shape
-                state_action_group.attrs['layout'] = 'gripper_pose : quat (7,), gripper_open : int (1,), ignore_collisions : int (1,)'
-
-                # Create the meta group
-                meta_group = task_group.create_group('meta')
-                meta_group.create_dataset('demos', shape=(num_demos,), dtype=object, object_codec=numcodecs.pickles.Pickle())
-                meta_group.create_dataset('keypoint_ends', shape=(0,), dtype=np.int32, chunks=(1,))
-
                 os.makedirs(os.path.join(save_path, task), exist_ok=True)
 
                 # create arrays for the observations
@@ -108,9 +92,11 @@ def write_rlbench_dataset():
                         if 0 not in keypoints:
                             keypoints = [0] + keypoints
                         demo = get_stored_demos(amount = 1, variation_number=0, task_name=task, from_episode_number=demo_idx, image_paths=False, dataset_root=data_path, random_selection=False, obs_config=obs_config, obs_idxs=keypoints)[0]
-                        keypoint_end = keypoint_end + len(keypoints)
-                        meta_group['keypoint_ends'].append(np.array([keypoint_end], dtype=np.int32))
                         
+                        demo_group = task_group.create_group(f'demo_{demo_idx}')
+                        add_groups_to_demo(demo_group, feature_map_pyramid)
+                        camera_group = demo_group['cameras']
+                        state_action_group = demo_group['state_action']
                         for kp in keypoints:
                             obs = demo[kp]
                             for camera in CAMERAS:
@@ -131,7 +117,8 @@ def write_rlbench_dataset():
                             proprioception = np.concatenate([obs.gripper_pose, [obs.gripper_open], [obs.ignore_collisions]])
                             state_action_group['proprioception'].append(proprioception[None,...])
                         demo._observations = []
-                        meta_group['demos'][demo_idx] = demo
+                        with open(os.path.join(save_root, demo_group.path, LOW_DIM_PICKLE), 'wb') as f:
+                            pickle.dump(demo, f)
 
 def main(argv):
   write_rlbench_dataset()
