@@ -75,16 +75,20 @@ pip install -r requirements.txt
 python setup.py develop
 ```
 
-## Download Dataset
+## Dataset
+### Download Pre-generated Peract
 Peract provides [pre-generated RLBench demonstrations](https://drive.google.com/drive/folders/0B2LlLwoO3nfZfkFqMEhXWkxBdjJNNndGYl9uUDQwS1pfNkNHSzFDNGwzd1NnTmlpZXR1bVE?resourcekey=0-jRw5RaXEYRLe2W6aNrNFEQ&usp=share_link) on google drive.
 
 Download is recommended through `rclone` with Google API Console enabled. A detailed description how to setup the remote access is provided [here](https://rclone.org/drive/). 
 
 Note: You need to share the files with your drive.
 
-Use `scripts/download_peract.sh` to download tasks from the drive.
+Use `scripts/download_peract.sh` to download tasks from the drive to `<data_path>/peract`.
 
+### Process Dataset
 Bring dataset in our format:
 ```bash
 cd data_preprocessing
-python rearrange_rlbench_demos.py
+python rearrange_rlbench_demos.py --root_dir <data_path>/peract
+python rlbench_to_zarr.py --data_path <data_path>/peract --save_path <data_path>/peract.zarr 
+```

@@ -28,9 +28,6 @@ flags.DEFINE_integer('n_demos', -1, 'Number of demos to use.')
 flags.DEFINE_list('tasks', ['open_drawer', 'sweep_to_dustpan_of_size'], 'Tasks to use.')
 flags.DEFINE_list('image_size', [128, 128],
                   'The size of the images tp save.')
-flags.DEFINE_string('num_objects_path', 
-                    os.environ['DIFFUSION_POLICY_ROOT'] + '/diffusion_policy/tasks/peract_tasks_num_lowdim_pcd.json', 
-                    'Path to the number of objects in each task.')
 
 def add_groups_to_demo(demo_group, feature_map_pyramid):
         camera_group = demo_group.create_group('cameras')
