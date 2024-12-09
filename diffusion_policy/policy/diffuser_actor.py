@@ -25,8 +25,8 @@ from diffusion_policy.common.rotation_utils import (
 
 from diffusion_policy.common.rlbench_util import create_robomimic_from_rlbench_action
 from pytorch3d.transforms import matrix_to_quaternion, quaternion_to_matrix, quaternion_invert, quaternion_multiply, quaternion_apply
-from diffusion_policy.model.common.so3_util import log_map, se3_inverse
-from diffusion_policy.model.common.se3_util import se3_from_rot_pos
+from diffusion_policy.common.so3_util import log_map, se3_inverse
+from diffusion_policy.common.se3_util import se3_from_rot_pos
 from diffusion_policy.policy.base_image_policy import BaseImagePolicy
 from typing import Dict
 

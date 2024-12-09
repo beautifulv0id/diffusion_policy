@@ -8,8 +8,8 @@ channels:
 dependencies:
   - python
   - pip
-  - pytorch
-  - torchvision
+  - pytorch=2.5.1
+  - torchvision=0.20.1
   - torchaudio
   - pytorch3d
   - pytorch-cuda=12.1

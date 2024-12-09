@@ -10,7 +10,7 @@ from diffusion_policy.policy.base_lowdim_policy import BaseLowdimPolicy
 from diffusion_policy.model.diffusion.conditional_unet1d import ConditionalUnet1D
 
 from pytorch3d.transforms import quaternion_to_matrix, matrix_to_quaternion
-from diffusion_policy.model.common.so3_util import log_map
+from diffusion_policy.common.so3_util import log_map
 
 from diffusion_policy.common.rotation_utils import (
     get_ortho6d_from_rotation_matrix,

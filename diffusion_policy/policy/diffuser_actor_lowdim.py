@@ -9,7 +9,7 @@ from diffusion_policy.model.common.layers import (
     FFWRelativeCrossAttentionModule,
     FFWRelativeSelfCrossAttentionModule
 )
-from diffusion_policy.model.obs_encoders.diffuser_actor_lowdim_encoder import DiffuserActorEncoder
+from diffusion_policy.model.obs_encoders.diffuser_actor_encoder_lowdim import DiffuserActorEncoder
 
 from diffusion_policy.model.common.layers import ParallelAttention
 from diffusion_policy.model.common.position_encodings import (
@@ -25,15 +25,15 @@ from diffusion_policy.common.rotation_utils import (
 
 from diffusion_policy.common.rlbench_util import create_robomimic_from_rlbench_action
 from pytorch3d.transforms import matrix_to_quaternion, quaternion_to_matrix
-from diffusion_policy.model.common.so3_util import log_map
+from diffusion_policy.common.so3_util import log_map
 from diffusion_policy.policy.base_image_policy import BaseImagePolicy
 from typing import Dict
-from diffusion_policy.model.common.so3_util import log_map, se3_inverse
-from diffusion_policy.model.common.se3_util import se3_from_rot_pos
+from diffusion_policy.common.so3_util import log_map, se3_inverse
+from diffusion_policy.common.se3_util import se3_from_rot_pos
 from torch import einsum
 
 
-class DiffuserActor(BaseImagePolicy):
+class DiffuserActorLowdim(BaseImagePolicy):
 
     def __init__(self,
                  embedding_dim=60,
@@ -748,7 +748,7 @@ def test():
     nhist = 3
     image_size = (256, 256)
 
-    model = DiffuserActor(
+    model = DiffuserActorLowdim(
         backbone="clip",
         image_size=(256, 256),
         embedding_dim=192,

@@ -10,14 +10,12 @@ gripper_loc_bounds:
 cameras: ['left_shoulder', 'right_shoulder', 'wrist', 'front']
 
 dataset:
-  _target_: diffusion_policy.dataset.rlbench_dataset.RLBenchNextBestPoseDataset
-  dataset_path: ${oc.env:DIFFUSION_POLICY_ROOT}/data/image_keypoints_v3.zarr
+  _target_: diffusion_policy.dataset.rlbench_dataset.RLBenchDataset
+  dataset_path: ${oc.env:DIFFUSION_POLICY_ROOT}/data/peract.zarr
   n_episodes: ${num_episodes}
   task_name: ${task.task_name}
   cameras: ${task.cameras}
   n_obs_steps: ${n_obs_steps}
-  val_ratio: 0.2
-  use_low_dim_state: False
   use_mask: False
   cache_size: 2000
   image_rescale: [1., 1.]

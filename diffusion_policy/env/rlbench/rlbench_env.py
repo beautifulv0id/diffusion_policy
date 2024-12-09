@@ -30,7 +30,7 @@ from diffusion_policy.env.rlbench.rlbench_utils import CircleCameraMotion
 from diffusion_policy.common.rlbench_util import extract_obs, create_obs_config, _keypoint_discovery, create_obs_state_plot, CAMERAS
 from diffusion_policy.common.pytorch_util import print_dict
 from diffusion_policy.common.visualization_se3 import visualize_frames, visualize_poses_and_actions
-from diffusion_policy.model.common.so3_util import quaternion_to_matrix
+from diffusion_policy.common.so3_util import quaternion_to_matrix
 
 
 def visualize(obs, action=None):

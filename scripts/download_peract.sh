@@ -19,7 +19,7 @@
 # turn_tap
 
 
-tasks=open_drawer,put_item_in_drawer,stack_blocks,turn_tab,sweep_to_dustpan_of_size,reach_and_drag,close_jar
+tasks=sweep_to_dustpan_of_size
 
 save_path=${DIFFUSION_POLICY_ROOT}/data/peract
 
@@ -31,7 +31,7 @@ mkdir -p $save_path/test
 echo 'Starting download of training tasks'
 for task in $(echo $tasks | tr ',' '\n'); do
     echo 'Downloading task: ' $task
-    rclone copy gdrive,shared_with_me:rlbench/train/${task}.zip ${save_path}/train/
+    rclone copy remote,shared_with_me:rlbench/train/${task}.zip ${save_path}/train/
     unzip ${save_path}/train/${task}.zip -d ${save_path}/train/
     rm ${save_path}/train/${task}.zip
 done
@@ -39,7 +39,7 @@ done
 echo 'Starting download of validation tasks'
 for task in $(echo $tasks | tr ',' '\n'); do
     echo 'Downloading task: ' $task
-    rclone copy gdrive,shared_with_me:rlbench/val/${task}.zip ${save_path}/val/
+    rclone copy remote,shared_with_me:rlbench/val/${task}.zip ${save_path}/val/
     unzip ${save_path}/val/${task}.zip -d ${save_path}/val/
     rm ${save_path}/val/${task}.zip
 done
@@ -47,7 +47,7 @@ done
 echo 'Starting download of test tasks'
 for task in $(echo $tasks | tr ',' '\n'); do
     echo 'Downloading task: ' $task
-    rclone copy gdrive,shared_with_me:rlbench/test/${task}.zip ${save_path}/test/
+    rclone copy remote,shared_with_me:rlbench/test/${task}.zip ${save_path}/test/
     unzip ${save_path}/test/${task}.zip -d ${save_path}/test/
     rm ${save_path}/test/${task}.zip
 done

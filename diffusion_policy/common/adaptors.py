@@ -3,9 +3,9 @@ import torch.nn as nn
 from torch import einsum
 
 from diffusion_policy.model.common.module_attr_mixin import ModuleAttrMixin
-from diffusion_policy.model.common.so3_util import log_map, exp_map, se3_inverse, apply_transform
+from diffusion_policy.common.so3_util import log_map, exp_map, se3_inverse, apply_transform
 from pytorch3d.transforms import quaternion_to_matrix, matrix_to_quaternion, standardize_quaternion
-from diffusion_policy.model.common.se3_util import se3_from_rot_pos, rot_pos_from_se3
+from diffusion_policy.common.se3_util import se3_from_rot_pos, rot_pos_from_se3
 
 class SequenceAdaptor(ModuleAttrMixin):
     def __init__(self, *args, **kwargs):
@@ -304,7 +304,7 @@ class WorldPoses2EEFPosition(ModuleAttrMixin):
     
 def test():
     from diffusion_policy.common.pytorch_util import print_dict, compare_dicts
-    from diffusion_policy.model.common.so3_util import random_so3
+    from diffusion_policy.common.so3_util import random_so3
     batch_size = 1
     num_obs_steps = 1
     batch = {

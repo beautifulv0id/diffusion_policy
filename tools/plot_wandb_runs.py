@@ -7,10 +7,10 @@ import numpy as np
 
 target_to_method_name_dict = {
     'diffusion_policy.policy.diffuser_actor.DiffuserActor': 'baseline',
-    'diffusion_policy.policy.diffuser_actor_pose_invariant_v2.DiffuserActor': 'ours',
+    'diffusion_policy.policy.action_flow.DiffuserActor': 'ours',
     'diffusion_policy.policy.diffuser_actor_lowdim.DiffuserActor': 'baseline',
     'diffusion_policy.policy.diffuser_actor_pose_invariant_lowdim.DiffuserActor': 'PIA',
-    'diffusion_policy.policy.diffuser_actor_pose_invariant_lowdim_v2.DiffuserActor': 'IPA',
+    'diffusion_policy.policy.action_flow_lowdim.DiffuserActor': 'IPA',
 }
 
 metric_to_title_dict = {

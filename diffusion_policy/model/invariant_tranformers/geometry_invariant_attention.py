@@ -376,7 +376,7 @@ class InvariantPointAttention(nn.Module):
 
         attn = attn_logits.softmax(dim = - 1)
 
-        with disable_tf32(), autocast(enabled = False):
+        with disable_tf32(), torch.amp.autocast("cuda", enabled=False):
             # disable TF32 for precision
 
             # aggregate values

@@ -1,5 +1,5 @@
 import torch
-from diffusion_policy.model.common.so3_util import normal_so3
+from diffusion_policy.common.so3_util import normal_so3
 
 class AugmentGripperHistory():
     def __init__(self, rot_scale, pos_scale):

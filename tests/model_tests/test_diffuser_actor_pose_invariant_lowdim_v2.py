@@ -1,4 +1,4 @@
-from diffusion_policy.policy.diffuser_actor_pose_invariant_lowdim_v2 import DiffuserActor
+from diffusion_policy.policy.action_flow_lowdim import ActionFlowLowdim
 from diffusion_policy.dataset.rlbench_dataset import RLBenchLowDimNextBestPoseDataset
 from diffusion_policy.common.pytorch_util import print_dict
 import os
@@ -38,7 +38,7 @@ def main(argv):
     npcd = get_task_num_low_dim_pcd(FLAGS.num_objects_path, task)
     gripper_loc_bounds = get_gripper_loc_bounds(FLAGS.tasks_location_bounds_path, task=task)
 
-    actor = DiffuserActor(
+    actor = ActionFlowLowdim(
         embedding_dim=216,
         gripper_loc_bounds=gripper_loc_bounds,
         nkeypoints=npcd,

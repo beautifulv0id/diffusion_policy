@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from diffusion_policy.model.common.so3_util import log_map,exp_map,random_so3
+from diffusion_policy.common.so3_util import log_map,exp_map,random_so3
 
 class EuclideanFlow(nn.Module):
 

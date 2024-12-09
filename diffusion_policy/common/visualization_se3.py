@@ -5,7 +5,7 @@ import os
 import torch
 import plotly.graph_objs as go
 from diffusion_policy.common.pytorch_util import dict_apply
-from diffusion_policy.model.common.so3_util import log_map
+from diffusion_policy.common.so3_util import log_map
 
 def create_surface_plane():
     obj = go.Mesh3d(

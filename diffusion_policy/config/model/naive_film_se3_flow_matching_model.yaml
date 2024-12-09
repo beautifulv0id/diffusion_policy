@@ -1,6 +1,0 @@
-_target_: diffusion_policy.model.decoder.naive_film.NaiveFilmFlowMatchingModel
-in_channels: ${eval:'${n_action_steps}*12'}
-out_channels: ${eval:'${n_action_steps}*6'}
-embed_dim: ${embedding_dim}
-mid_dim: 128
-num_blocks: 1
