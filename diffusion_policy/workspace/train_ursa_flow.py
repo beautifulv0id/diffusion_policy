@@ -27,7 +27,7 @@ from diffusion_policy.common.checkpoint_util import TopKCheckpointManager
 from diffusion_policy.common.json_logger import JsonLogger
 from diffusion_policy.common.pytorch_util import dict_apply, optimizer_to
 from diffusion_policy.model.common.lr_scheduler import get_scheduler
-from diffusion_policy.policy.diffusion_unet_image_policy import DiffusionUnetImagePolicy
+from diffusion_policy.policy.ursa_flow import URSAFlow
 from diffusion_policy.common.rlbench_util import create_obs_state_plot
 from torchvision.utils import make_grid
 
@@ -46,8 +46,7 @@ class TrainingWorkspace(BaseWorkspace):
         random.seed(seed)
 
         # configure model
-        self.model : DiffusionUnetImagePolicy = hydra.utils.instantiate(cfg.policy)
-
+        self.model : URSAFlow = hydra.utils.instantiate(cfg.policy)
 
         # configure training state
         self.optimizer = hydra.utils.instantiate(
@@ -273,10 +272,9 @@ class TrainingWorkspace(BaseWorkspace):
 
                     ## Run Experiment related Validation ## #TODO: as far as I see, this currently has no effect!
                     if (self.epoch % cfg.training.model_evaluation_every) == 0:
-                        if val_sampling_batch is not None:
-                            evaluation_log = self.model.evaluate(val_sampling_batch, validation=True)
-                            # log all
-                            step_log.update(evaluation_log)
+                        evaluation_log = self.model.evaluate(val_sampling_batch, validation=True)
+                        # log all
+                        step_log.update(evaluation_log)
 
                     # sample on a training batch
                     if (self.epoch % cfg.training.sample_every) == 0:
@@ -296,7 +294,7 @@ class TrainingWorkspace(BaseWorkspace):
                             obs = train_sampling_batch['obs']
                             gt_action = train_sampling_batch['action']['gt_trajectory']
                             pred_action = pred['rlbench_action'].cpu().detach()
-                            imgs = create_obs_state_plot(obs=obs, gt_action=gt_action, pred_action=pred_action, quaternion_format='xyzw' , lowdim=cfg.task.type == 'lowdim')
+                            imgs = create_obs_state_plot(obs=obs, gt_action=gt_action, pred_action=pred_action, quaternion_format=policy._quaternion_format, lowdim=cfg.task.type == 'lowdim')
                             img = make_grid(torch.from_numpy(imgs).float() / 255)
                             image = wandb.Image(img, caption="Prediction vs Ground Truth")
                             wandb_run.log({"prediction_vs_gt": image}, step=self.global_step)
@@ -332,7 +330,6 @@ class TrainingWorkspace(BaseWorkspace):
                     self.global_step += 1
                     self.epoch += 1
                     gepoch.set_postfix(train_loss=train_loss, refresh=False)
-                    
 
     def rollout(self):
         cfg = copy.deepcopy(self.cfg)

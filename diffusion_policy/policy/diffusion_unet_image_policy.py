@@ -20,7 +20,7 @@ from diffusion_policy.common.rotation_utils import (
 
 from diffusion_policy.model.obs_encoders.diffusion_policy_image_encoder import MultiImageObsEncoder
 
-class DiffusionUnetLowdimPolicy(BaseLowdimPolicy):
+class DiffusionUnetImagePolicy(BaseLowdimPolicy):
     def __init__(self, 
             model: ConditionalUnet1D,
             obs_encoder : MultiImageObsEncoder,

@@ -27,7 +27,7 @@ from diffusion_policy.common.checkpoint_util import TopKCheckpointManager
 from diffusion_policy.common.json_logger import JsonLogger
 from diffusion_policy.common.pytorch_util import dict_apply, optimizer_to
 from diffusion_policy.model.common.lr_scheduler import get_scheduler
-from diffusion_policy.policy.diffuser_actor import DiffuserActor
+from diffusion_policy.policy.action_flow_lowdim import ActionFlowLowdim
 from diffusion_policy.common.rlbench_util import create_obs_state_plot
 from torchvision.utils import make_grid
 
@@ -46,7 +46,7 @@ class TrainingWorkspace(BaseWorkspace):
         random.seed(seed)
 
         # configure model
-        self.model : DiffuserActor = hydra.utils.instantiate(cfg.policy)
+        self.model : ActionFlowLowdim = hydra.utils.instantiate(cfg.policy)
 
 
         # configure training state
