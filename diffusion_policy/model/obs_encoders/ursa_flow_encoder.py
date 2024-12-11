@@ -67,6 +67,8 @@ class URSAFlowEncoder(ModuleAttrMixin):
 
         self.to_out = nn.Conv2d(backbone_out_dim, embedding_dim, 1)
 
+        # TODO: refactor this
+        self.precomputed_to_out = nn.Linear(64, embedding_dim)
 
         # Current gripper learnable features
         self.curr_gripper_embed = nn.Embedding(nhist, embedding_dim)
@@ -181,6 +183,10 @@ class URSAFlowEncoder(ModuleAttrMixin):
         pcd = pcd[idx].reshape(B, n_sample, -1)
         
         return rgb_features, pcd, idx
+    
+    def encode_features(self, rgb_features):
+        features = self.precomputed_to_out(rgb_features)
+        return features
 
     def encode_images(self, rgb, pcd):
         """

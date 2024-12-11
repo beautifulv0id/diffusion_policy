@@ -14,6 +14,7 @@ from diffusion_policy.model.invariant_tranformers.geometry_invariant_attention i
 from diffusion_policy.model.obs_encoders.ursa_flow_encoder import URSAFlowEncoder
 from geo3dattn.model.ursa_transformer.ursa_transformer import URSATransformer
 
+
 from diffusion_policy.model.common.position_encodings import SinusoidalPosEmb
 from torch import einsum
 
@@ -44,6 +45,7 @@ class URSAFlow(BaseImagePolicy):
                  causal_attn=True,
                  gripper_loc_bounds=None,
                  pcd_self_attn=False,
+                 use_precomputed_features=False,
                  ):
         super().__init__()
         assert rotation_parametrization == 'so3', "Only SO3 is supported"        
@@ -76,24 +78,29 @@ class URSAFlow(BaseImagePolicy):
         self.use_mask = use_mask
         self.pcd_self_attn = pcd_self_attn
         self.gripper_loc_bounds = torch.tensor(gripper_loc_bounds) if gripper_loc_bounds is not None else None
-
-    def encode_inputs(self, visible_rgb, visible_pcd,
+        self._use_precomputed_features = use_precomputed_features
+    def encode_inputs(self, visible_rgb, visible_pcd, rgb_features,
                       curr_gripper, mask=None):
         
-        rgb_feats, pcd = self.encoder.encode_images(
-            visible_rgb, visible_pcd
-        )
-
-
-        if self.use_mask:
-            context_feats, context, mask_idx = self.encoder.mask_out_features_pcd(mask, rgb_feats, pcd, n_min=0, n_max=1024)
-        else:
-            # Keep only low-res scale
-            context_feats = einops.rearrange(
-                rgb_feats,
-                "b ncam c h w -> b (ncam h w) c"
+        if not self._use_precomputed_features:
+            rgb_feats, pcd = self.encoder.encode_images(
+                visible_rgb, visible_pcd
             )
-            context = pcd
+
+
+            if self.use_mask:
+                context_feats, context, mask_idx = self.encoder.mask_out_features_pcd(mask, rgb_feats, pcd, n_min=0, n_max=1024)
+            else:
+                # Keep only low-res scale
+                context_feats = einops.rearrange(
+                    rgb_feats,
+                    "b ncam c h w -> b (ncam h w) c"
+                )
+                context = pcd
+        else:
+            assert rgb_features is not None, "context_feats must be provided"
+            context = visible_pcd
+            context_feats = self.encoder.encode_features(rgb_features)
 
         if self.pcd_self_attn:
             context_feats = self.encoder.encode_pcd(pcd, context_feats)
@@ -175,7 +182,8 @@ class URSAFlow(BaseImagePolicy):
         rgb_obs,
         pcd_obs,
         curr_gripper,
-        mask_obs=None
+        mask_obs=None,
+        feature_obs=None
     ):
         
         # Convert rotation parametrization
@@ -188,7 +196,7 @@ class URSAFlow(BaseImagePolicy):
 
         # Prepare inputs
         fixed_inputs = self.encode_inputs(
-            rgb_obs, pcd_obs, curr_gripper, mask_obs
+            rgb_obs, pcd_obs, curr_gripper, mask_obs, feature_obs
         )
 
         # Condition on start-end pose
@@ -274,7 +282,10 @@ class URSAFlow(BaseImagePolicy):
 
         bs = trans.shape[0]       
         pcd = pcd.clone() 
-        pcd = einsum('bmn,bvnhw->bvmhw', rot, pcd) + trans.view(bs, 1, 3, 1, 1)
+        if self._use_precomputed_features:
+            pcd = einsum('bmn,bln->bln', rot, pcd) + trans.view(bs, 1, 3)
+        else:
+            pcd = einsum('bmn,bvnhw->bvmhw', rot, pcd) + trans.view(bs, 1, 3, 1, 1)
         curr_gripper = curr_gripper.clone()
         curr_gripper = einsum('bmn,bhnk->bhmk', inv_pose, curr_gripper)
         if trajectory is not None:
@@ -299,6 +310,7 @@ class URSAFlow(BaseImagePolicy):
         trajectory_mask,
         rgb_obs,
         pcd_obs,
+        feature_obs,
         curr_gripper,
         run_inference=False,
         mask_obs=None,
@@ -324,9 +336,12 @@ class URSAFlow(BaseImagePolicy):
             gt_trajectory[:, :, :3] = self.normalize_pos(gt_trajectory[:, :, :3])
         pcd_obs = pcd_obs.clone()
         curr_gripper = curr_gripper.clone()
-        pcd_obs = torch.permute(self.normalize_pos(
-            torch.permute(pcd_obs, [0, 1, 3, 4, 2])
-        ), [0, 1, 4, 2, 3])
+        if self._use_precomputed_features:
+            pcd_obs = self.normalize_pos(pcd_obs)
+        else:
+            pcd_obs = torch.permute(self.normalize_pos(
+                torch.permute(pcd_obs, [0, 1, 3, 4, 2])
+            ), [0, 1, 4, 2, 3])
         curr_gripper[..., :3] = self.normalize_pos(curr_gripper[..., :3])
 
         if gt_trajectory is not None:
@@ -340,6 +355,7 @@ class URSAFlow(BaseImagePolicy):
                 trajectory_mask,
                 rgb_obs,
                 pcd_obs,
+                feature_obs,
                 curr_gripper,
                 mask_obs
             )
@@ -352,7 +368,7 @@ class URSAFlow(BaseImagePolicy):
 
         # Prepare inputs
         fixed_inputs = self.encode_inputs(
-            rgb_obs, pcd_obs, curr_gripper, mask_obs
+            rgb_obs, pcd_obs, curr_gripper, mask_obs, feature_obs
         )
 
         p1 = gt_trajectory[:, :, :3, 3]
@@ -389,15 +405,16 @@ class URSAFlow(BaseImagePolicy):
         return total_loss
     
     def predict_action(self, obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        trajectory_mask = torch.zeros(1, self.nhorizon, device=obs_dict['rgb'].device)
+        trajectory_mask = torch.zeros(1, self.nhorizon, device=obs_dict['pcd'].device)
         output = self.forward(
             gt_trajectory=None,
             trajectory_mask=trajectory_mask,
-            rgb_obs=obs_dict['rgb'],
+            rgb_obs=obs_dict.get('rgb', None),
             pcd_obs=obs_dict['pcd'],
             curr_gripper=obs_dict['curr_gripper'],
             run_inference=True,
-            mask_obs=obs_dict.get('mask', None)
+            mask_obs=obs_dict.get('mask', None),
+            feature_obs=obs_dict.get('clip_features', None)
         )
         rlbench_action = output['trajectory'].clone()
 
@@ -416,11 +433,12 @@ class URSAFlow(BaseImagePolicy):
         return self.forward(
             gt_trajectory=batch['action']['gt_trajectory'],
             trajectory_mask=None,
-            rgb_obs=batch['obs']['rgb'],
+            rgb_obs=batch['obs'].get('rgb', None),
             pcd_obs=batch['obs']['pcd'],
             curr_gripper=batch['obs']['curr_gripper'],
             run_inference=False,
-            mask_obs=batch['obs'].get('mask', None)
+            mask_obs=batch['obs'].get('mask', None),
+            feature_obs=batch['obs'].get('clip_features', None)
         )
 
 
@@ -494,11 +512,11 @@ class DiffusionHead(nn.Module):
 
         # Estimate attends to context (no subsampling)
         self.cross_attn = URSATransformer(
-            d_model=embedding_dim, nhead=num_attn_heads, num_layers=3
+            d_model=embedding_dim, nhead=num_attn_heads, num_layers=2
         )
 
         self.self_attn = URSATransformer(
-            d_model=embedding_dim, nhead=num_attn_heads, num_layers=4
+            d_model=embedding_dim, nhead=num_attn_heads, num_layers=2
         )
 
         # Specific (non-shared) Output layers:
@@ -604,7 +622,6 @@ class DiffusionHead(nn.Module):
             geometric_args={'query': query, 'key': key}
         )
 
-
         # Self-attention curr_gripper, trajectory, fps_pcd
         query_features = torch.cat([curr_gripper_features, trajectory_features, fps_feats], 1)
         centers = torch.cat([curr_gripper_pose[:, :, :3, 3], trajectory_pose[:, :, :3, 3], fps_pcd], 1)
@@ -670,8 +687,6 @@ class DiffusionHead(nn.Module):
 with torch.no_grad():
     def test():
         from diffusion_policy.common.pytorch_util import dict_apply
-        from diffusion_policy.common.se3_util import random_se3
-        from diffusion_policy.common.rlbench_util import se3_to_gripper
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         horizon = 1

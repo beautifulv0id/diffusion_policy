@@ -280,16 +280,16 @@ class TrainingWorkspace(BaseWorkspace):
                     if (self.epoch % cfg.training.sample_every) == 0:
                         with torch.no_grad():
                             # sample trajectory from training set, and evaluate difference
-                            batch = dict_apply(train_sampling_batch, lambda x: x.to(device, non_blocking=True))
+                            batch = dict_apply(train_sampling_batch, lambda x: x.to(device, dtype, non_blocking=True))
 
                             eval_log = policy.evaluate(batch)
                             # log all
                             step_log.update(eval_log)
 
-                    if (self.epoch % cfg.training.visualize_every) == 0:
+                    if (self.epoch % cfg.training.visualize_every) == 0 and not cfg.task.dataset.use_precomputed_features:       
                         with torch.no_grad():
                             train_sampling_batch = dict_apply(train_sampling_batch, lambda x: x[:cfg.training.visualize_batch_size])
-                            batch = dict_apply(train_sampling_batch, lambda x: x.to(device, non_blocking=True))
+                            batch = dict_apply(train_sampling_batch, lambda x: x.to(device, dtype, non_blocking=True))
                             pred = policy.predict_action(batch['obs'])
                             obs = train_sampling_batch['obs']
                             gt_action = train_sampling_batch['action']['gt_trajectory']
@@ -298,7 +298,6 @@ class TrainingWorkspace(BaseWorkspace):
                             img = make_grid(torch.from_numpy(imgs).float() / 255)
                             image = wandb.Image(img, caption="Prediction vs Ground Truth")
                             wandb_run.log({"prediction_vs_gt": image}, step=self.global_step)
-
 
                     # checkpoint
                     if (self.epoch % cfg.training.checkpoint_every) == 0:

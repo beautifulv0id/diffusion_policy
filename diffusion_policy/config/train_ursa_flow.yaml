@@ -32,6 +32,7 @@ policy:
   relative: True
   causal_attn: True
   use_mask: ${task.dataset.use_mask}
+  use_precomputed_features: ${task.dataset.use_precomputed_features}
 
 dataloader:
   batch_size: 2

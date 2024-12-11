@@ -74,6 +74,13 @@ def get_gripper_loc_bounds(path: str, buffer: float = 0.0, task: Optional[str] =
         gripper_loc_bounds = np.stack([gripper_loc_bounds_min, gripper_loc_bounds_max])
     return gripper_loc_bounds
 
+def get_workspace_bounds(path: str, buffer: float = 0.0):
+    workspace_bounds = json.load(open(path, "r"))["bounds"]
+    workspace_bounds_min = np.array(workspace_bounds[0]) - buffer
+    workspace_bounds_max = np.array(workspace_bounds[1]) + buffer
+    workspace_bounds = np.stack([workspace_bounds_min, workspace_bounds_max])
+    return workspace_bounds
+
 def get_task_num_objects(path: str, task: str):
     num_objects = json.load(open(path, "r"))
     return num_objects[task]

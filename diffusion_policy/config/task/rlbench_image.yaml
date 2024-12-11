@@ -21,6 +21,7 @@ dataset:
   image_rescale: [1., 1.]
   rot_noise_scale: 0.0
   pos_noise_scale: 0.0
+  use_precomputed_features: True
 
 env_runner:
   _target_: diffusion_policy.env_runner.rlbench_runner.RLBenchRunner

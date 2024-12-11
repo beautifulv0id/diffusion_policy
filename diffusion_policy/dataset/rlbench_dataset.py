@@ -96,6 +96,27 @@ def collate_samples(datum, use_pc, use_rgb, use_mask, apply_cameras, use_feature
 
     sample['action']['gt_trajectory'] = state_action['proprioception'][next_keypoint_idx].reshape(1, -1)
     return sample
+
+def collate_samples_fused(datum):
+    sample = {
+        'obs': dict(),
+        'action': dict()
+    }
+    obs_idxs = datum['obs_idxs']
+    next_keypoint_idx = datum['action_idx']
+    fused_cameras = datum['demo']['fused_cameras']
+    state_action = datum['demo']['state_action']
+
+    sample['obs']['pcd'] = fused_cameras['pcd'][obs_idxs[-1]]
+    sample['obs']['clip_features'] = {}
+    sample['obs']['clip_features'] = fused_cameras['clip_features'][obs_idxs[-1]]
+
+    curr_gripper = state_action['proprioception'][obs_idxs]
+    sample['obs']['curr_gripper'] = curr_gripper
+    sample['obs']['low_dim_state'] = curr_gripper[:,7:8]
+
+    sample['action']['gt_trajectory'] = state_action['proprioception'][next_keypoint_idx].reshape(1, -1)
+    return sample
     
 def add_noise_to_gripper_pose(gripper_pose, rot_noise_scale, pos_noise_scale):
     if rot_noise_scale == 0 and pos_noise_scale == 0:
@@ -144,6 +165,7 @@ class RLBenchDataset(torch.utils.data.Dataset):
                  image_rescale=(1.0, 1.0),
                  cache_size=0,
                  split='train',
+                 use_precomputed_features=False,
                  ):
         
         self._training = True
@@ -180,6 +202,7 @@ class RLBenchDataset(torch.utils.data.Dataset):
         self.n_episodes = n_episodes
         self.image_rescale = image_rescale
         self.cache_size = cache_size
+        self.use_precomputed_features = use_precomputed_features
 
         print(f"Loaded {len(self)} {split} samples")
 
@@ -191,14 +214,18 @@ class RLBenchDataset(torch.utils.data.Dataset):
             sample = self._cache[idx]
         else:
             index = self.indices[idx]
-            sample = collate_samples(
-                index,
-                use_pc=self.use_pcd,
-                use_rgb=self.use_rgb,
-                use_mask=self.use_mask,
-                apply_cameras=self.cameras,
-                use_features=self.use_features
-            )
+            if self.use_precomputed_features:
+                sample = collate_samples_fused(index)
+            else:
+                sample = collate_samples(
+                    index,
+                    use_pc=self.use_pcd,
+                    use_rgb=self.use_rgb,
+                    use_mask=self.use_mask,
+                    apply_cameras=self.cameras,
+                    use_features=self.use_features
+                )
+
             sample = dict_apply(sample, lambda x: torch.from_numpy(x))
 
             if len(self._cache) == self._cache_size and self._cache_size > 0:
@@ -209,7 +236,8 @@ class RLBenchDataset(torch.utils.data.Dataset):
                 self._cache[idx] = sample
 
         if self._training:
-            sample['obs'].update(self._resize(rgb=sample['obs']['rgb'], pcd=sample['obs']['pcd'], mask=sample['obs'].get('mask', None)))
+            if not self.use_precomputed_features:
+                sample['obs'].update(self._resize(rgb=sample['obs']['rgb'], pcd=sample['obs']['pcd'], mask=sample['obs'].get('mask', None)))
             sample['obs']['curr_gripper'] = add_noise_to_gripper_pose(sample['obs']['curr_gripper'], self.rot_noise_scale, self.pos_noise_scale)
 
         return sample
@@ -226,7 +254,8 @@ class RLBenchDataset(torch.utils.data.Dataset):
             n_episodes=self.n_episodes,
             image_rescale=self.image_rescale,
             cache_size=self.cache_size,
-            split='val'
+            split='val',
+            use_precomputed_features=self.use_precomputed_features
         )
         val_set._training = False
         return val_set
@@ -251,12 +280,64 @@ class RLBenchDataset(torch.utils.data.Dataset):
                     imgs.append(torch.from_numpy(img[:3,:,:])) 
         imgs = torch.stack(imgs) / 255.0
         return imgs
+    
+def crop_workspace(pcd, rgb, workspace_bounds):
+    """
+    Returns the indices of points within the specified workspace bounds, ensuring each batch has an equal number of points.
+
+    Parameters:
+    - pcd: A tensor of shape (B, N, 3) representing the point cloud.
+    - rgb: A tensor of shape (B, N, 3) representing the RGB values.
+    - workspace_bounds: A list or tensor of shape (2, 3) specifying the min and max bounds for x, y, z.
+
+    Returns:
+    - trimmed_indices: A list of tensors, where each tensor contains the indices of selected points for a batch.
+    - trimmed_pcd: A list of tensors, where each tensor contains the selected points for a batch.
+    - trimmed_rgb: A list of tensors, where each tensor contains the RGB values corresponding to the selected points for a batch.
+    """
+    batch_size = pcd.shape[0]
+    batch_indices = []
+
+    for b in range(batch_size):
+        mask = torch.ones(pcd[b].shape[0], dtype=torch.bool)
+        for i in range(3):
+            mask = torch.logical_and(mask, pcd[b, :, i] > workspace_bounds[0][i])
+            mask = torch.logical_and(mask, pcd[b, :, i] < workspace_bounds[1][i])
+
+        indices = torch.nonzero(mask, as_tuple=False).squeeze(1)  # Get the indices where mask is True
+        batch_indices.append(indices)
+
+    # Find the minimum number of selected points across the batch
+    min_points = min(len(indices) for indices in batch_indices)
+
+    # Extract the corresponding points and RGB values
+    trimmed_pcd = [pcd[b, indices[:min_points], :] for b, indices in enumerate(batch_indices)]
+    trimmed_rgb = [rgb[b, indices[:min_points], :] for b, indices in enumerate(batch_indices)]
+
+    trimmed_pcd = torch.stack(trimmed_pcd)
+    trimmed_rgb = torch.stack(trimmed_rgb)
+
+    return trimmed_pcd, trimmed_rgb     
+
+def get_min_cropped_pcd(data_loader, workspace_bounds):
+    min_pcd = torch.inf
+    for batch in data_loader:
+        pcd, rgb = extract_rgb_pcd(batch)
+        pcd, rgb = crop_workspace(pcd, rgb, workspace_bounds)
+        min_pcd = min(min_pcd, pcd.shape[1])
+    return min_pcd
 
 if __name__ == "__main__":
     import os
     from diffusion_policy.common.pytorch_util import print_dict
     from torch.utils.data import DataLoader
     import matplotlib.pyplot as plt
+    import einops
+    from diffusion_policy.common.rlbench_util import get_workspace_bounds
+    import dgl.geometry as dgl_geo
+
+    plt.switch_backend('tkagg')
+
     dataset = RLBenchDataset(
         dataset_path=os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data/peract.zarr'),
         cameras=['left_shoulder', 'right_shoulder', 'wrist', 'front'],
@@ -264,15 +345,131 @@ if __name__ == "__main__":
         use_rgb=True,
         use_pcd=True,
         use_mask=False,
-        use_features=True,
+        use_features=False,
         n_obs_steps=3,
-        n_episodes=1,
+        n_episodes=-1,
         image_rescale=(1.0, 1.0),
-        cache_size=0
+        cache_size=0,
+        use_precomputed_features=True
     )
 
-    sample = dataset[0]
+    tasks_location_bounds_path = os.environ['DIFFUSION_POLICY_ROOT'] + '/diffusion_policy/tasks/peract_workspace_bounds.json'
+    buffer=0.1
+    workspace_bounds = get_workspace_bounds(tasks_location_bounds_path, buffer=buffer)
 
-    data_loader = DataLoader(dataset, batch_size=2, shuffle=True)
+    data_loader = DataLoader(dataset, batch_size=2, shuffle=False)
     batch = next(iter(data_loader))
-    print_dict(batch)
+    for batch in data_loader:
+        print_dict(batch)
+
+    exit()
+
+    def extract_rgb_pcd(batch):
+        pcd = batch['obs']['pcd']
+        pcd = einops.rearrange(pcd, 'n v c h w -> n (v h w) c')
+        rgb = batch['obs']['rgb']
+        rgb = einops.rearrange(rgb, 'n v c h w -> n (v h w) c')
+        return pcd, rgb
+    
+    def plot(pcd, rgb, batch_idx=0):
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+        ax.scatter(pcd[batch_idx,:,0], pcd[batch_idx,:,1], pcd[batch_idx,:,2], c=rgb[batch_idx])
+        plt.show()
+
+    def crop_workspace(pcd, rgb, workspace_bounds):
+        """
+        Returns the indices of points within the specified workspace bounds, ensuring each batch has an equal number of points.
+
+        Parameters:
+        - pcd: A tensor of shape (B, N, 3) representing the point cloud.
+        - rgb: A tensor of shape (B, N, 3) representing the RGB values.
+        - workspace_bounds: A list or tensor of shape (2, 3) specifying the min and max bounds for x, y, z.
+
+        Returns:
+        - trimmed_indices: A list of tensors, where each tensor contains the indices of selected points for a batch.
+        - trimmed_pcd: A list of tensors, where each tensor contains the selected points for a batch.
+        - trimmed_rgb: A list of tensors, where each tensor contains the RGB values corresponding to the selected points for a batch.
+        """
+        batch_size = pcd.shape[0]
+        batch_indices = []
+
+        for b in range(batch_size):
+            mask = torch.ones(pcd[b].shape[0], dtype=torch.bool)
+            for i in range(3):
+                mask = torch.logical_and(mask, pcd[b, :, i] > workspace_bounds[0][i])
+                mask = torch.logical_and(mask, pcd[b, :, i] < workspace_bounds[1][i])
+
+            indices = torch.nonzero(mask, as_tuple=False).squeeze(1)  # Get the indices where mask is True
+            batch_indices.append(indices)
+
+        # Find the minimum number of selected points across the batch
+        min_points = min(len(indices) for indices in batch_indices)
+
+        # Trim indices to ensure each batch has the same number of points
+        trimmed_indices = [indices[:min_points] for indices in batch_indices]
+
+        # Extract the corresponding points and RGB values
+        trimmed_pcd = [pcd[b, indices[:min_points], :] for b, indices in enumerate(batch_indices)]
+        trimmed_rgb = [rgb[b, indices[:min_points], :] for b, indices in enumerate(batch_indices)]
+
+        trimmed_pcd = torch.stack(trimmed_pcd)
+        trimmed_rgb = torch.stack(trimmed_rgb)
+
+        return trimmed_pcd, trimmed_rgb     
+
+    min_pcd = torch.inf
+    for batch in data_loader:
+        pcd, rgb = extract_rgb_pcd(batch)
+        pcd, rgb = crop_workspace(pcd, rgb, workspace_bounds)
+        min_pcd = min(min_pcd, pcd.shape[1])
+        print("Minimum number of points: ", min_pcd)
+
+
+    pcd, rgb = extract_rgb_pcd(batch)
+
+    npts = pcd.shape[1]
+    print("Number of points: ", npts)
+    # # plot(pcd, rgb)
+
+    # cropped_pcd, cropped_rgb = crop_workspace(pcd, rgb, workspace_bounds)
+
+    # print("Number of points: ", cropped_pcd.shape[1])
+    # print("Factor of reduction: ", cropped_pcd.shape[1] / pcd.shape[1])
+    # plot(cropped_pcd, cropped_rgb)
+
+    # npts = pcd.shape[0]
+
+    # # Farthest point sampling
+    # fps_subsampling_factor = 5
+    # ch = pcd.shape[1]
+    # pcd = torch.from_numpy(pcd[None, ...]).to(torch.float64)
+    # sampled_inds = dgl_geo.farthest_point_sampler(
+    #         pcd,
+    #     max(npts // fps_subsampling_factor, 1), 0
+    # ).long()
+
+    # # Sample features
+    # expanded_sampled_inds = sampled_inds.unsqueeze(-1).expand(-1, -1, ch)
+    # pcd = torch.gather(
+    #     pcd,
+    #     1,
+    #     expanded_sampled_inds
+    # ).numpy()
+    
+    # rgb = torch.gather(
+    #     torch.from_numpy(rgb[None, ...]),
+    #     1,
+    #     expanded_sampled_inds
+    # ).numpy()   
+
+    # pcd = pcd[0]
+    # rgb = rgb[0]
+
+    # print("FPS PCD shape: ", pcd.shape)
+    # print("Factor of reduction: ", npts / pcd.shape[0])
+    # fig = plt.figure()
+    # ax = fig.add_subplot(111, projection='3d')
+    # ax.scatter(pcd[:,0], pcd[:,1], pcd[:,2], c=rgb)
+    # plt.show()
+
