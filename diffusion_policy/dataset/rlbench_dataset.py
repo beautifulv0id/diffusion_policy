@@ -158,6 +158,8 @@ class RLBenchDataset(torch.utils.data.Dataset):
         dataset_root = zarr.open(dataset_path, 'r')
         task_group = dataset_root[split][task_name]
         demos = load_demos(os.path.join(dataset_path, split, task_name))
+        if n_episodes == -1:
+            n_episodes = len(demos)
         indices = create_sample_indices(task_group, n_episodes, n_obs_steps)
 
         self.indices = indices

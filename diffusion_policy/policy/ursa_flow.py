@@ -54,7 +54,7 @@ class URSAFlow(BaseImagePolicy):
             embedding_dim=embedding_dim,
             nhist=nhist,
             fps_subsampling_factor=fps_subsampling_factor,
-            point_cloud_downsampling_factor=8,
+            point_cloud_downsampling_factor=4,
         )
         self.prediction_head = DiffusionHead(
             embedding_dim=embedding_dim,
