@@ -79,8 +79,8 @@ class URSAFlow(BaseImagePolicy):
         self.pcd_self_attn = pcd_self_attn
         self.gripper_loc_bounds = torch.tensor(gripper_loc_bounds) if gripper_loc_bounds is not None else None
         self._use_precomputed_features = use_precomputed_features
-    def encode_inputs(self, visible_rgb, visible_pcd, rgb_features,
-                      curr_gripper, mask=None):
+    def encode_inputs(self, visible_rgb, visible_pcd,
+                      curr_gripper, mask=None, rgb_features=None):
         
         if not self._use_precomputed_features:
             rgb_feats, pcd = self.encoder.encode_images(
@@ -310,10 +310,10 @@ class URSAFlow(BaseImagePolicy):
         trajectory_mask,
         rgb_obs,
         pcd_obs,
-        feature_obs,
         curr_gripper,
         run_inference=False,
         mask_obs=None,
+        feature_obs=None
     ):
         """
         Arguments:
@@ -355,9 +355,9 @@ class URSAFlow(BaseImagePolicy):
                 trajectory_mask,
                 rgb_obs,
                 pcd_obs,
-                feature_obs,
                 curr_gripper,
-                mask_obs
+                mask_obs,
+                feature_obs
             )
         # Convert rotation parametrization
         gt_trajectory, _ = self.convert_rot(gt_trajectory)

@@ -239,8 +239,8 @@ def read_zarr_dataset():
     print(dataset.tree())
 
 def main(argv):
+    write_rlbench_dataset()
     add_fused_camera_data()
-#   write_rlbench_dataset()
     read_zarr_dataset()
   
    
