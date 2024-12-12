@@ -81,6 +81,10 @@ def get_workspace_bounds(path: str, buffer: float = 0.0):
     workspace_bounds = np.stack([workspace_bounds_min, workspace_bounds_max])
     return workspace_bounds
 
+def get_task_cropped_pcd_min_size(path: str, task: str, res: str):
+    num_objects = json.load(open(path, "r"))
+    return num_objects[task][res]
+
 def get_task_num_objects(path: str, task: str):
     num_objects = json.load(open(path, "r"))
     return num_objects[task]
@@ -89,11 +93,8 @@ def get_task_num_low_dim_pcd(path: str, task: str):
     num_objects = json.load(open(path, "r"))
     return num_objects[task]
 
-
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-
 
 def action_from_trajectory_gripper_open_ignore_collision(trajectory : torch.Tensor, gripper_open : torch.Tensor, ignore_collision : torch.Tensor):
     B, T, _, _ = trajectory.shape

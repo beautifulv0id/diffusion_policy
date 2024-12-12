@@ -31,43 +31,6 @@ def create_sample_indices(task_group : zarr.hierarchy.Group, n_episodes, n_obs):
             })
     return indices
 
-class PeractDemoConfig:
-    def __init__(self,
-                use_pcd=True,
-                use_rgb=True,
-                use_mask=False,
-                low_dim_state=True,
-                clip_features=True,
-                dino_features=False,
-                cameras=['left_shoulder', 'right_shoulder', 'wrist', 'front', 'overhead']):
-        self.use_pcd = use_pcd
-        self.use_rgb = use_rgb
-        self.use_mask = use_mask
-        self.low_dim_state = low_dim_state
-        self.clip_features = clip_features
-        self.dino_features = dino_features
-        self.cameras = cameras
-
-def extract_demo_data(demo, idxs, config : PeractDemoConfig):
-    data = {}
-    for camera in config.cameras:
-        data[camera] = {}
-        if config.use_pcd:
-            data[camera]['pcd'] = demo['cameras'][camera]['pcd'][idxs]
-        if config.use_rgb:
-            data[camera]['rgb'] = demo['cameras'][camera]['rgb'][idxs]
-        if config.use_mask:
-            data[camera]['mask'] = demo['cameras'][camera]['mask'][idxs]
-        if config.clip_features:
-            data[camera]['clip_features']['res1'] = demo['cameras'][camera]['clip_features']['res1'][idxs]
-            data[camera]['clip_features']['res2'] = demo['cameras'][camera]['clip_features']['res2'][idxs]
-        if config.dino_features:
-            data[camera]['dino_features'] = demo['cameras'][camera]['features']['dino_features'][idxs]
-    if config.low_dim_state:
-        data['low_dim_state'] = demo['state_action']['proprioception'][idxs]
-    return data
-
-
 def collate_samples(datum, use_pc, use_rgb, use_mask, apply_cameras, use_features):
     sample = {
         'obs': dict(),
@@ -97,19 +60,18 @@ def collate_samples(datum, use_pc, use_rgb, use_mask, apply_cameras, use_feature
     sample['action']['gt_trajectory'] = state_action['proprioception'][next_keypoint_idx].reshape(1, -1)
     return sample
 
-def collate_samples_fused(datum):
+def collate_samples_fused(datum, feature_res):
     sample = {
         'obs': dict(),
         'action': dict()
     }
     obs_idxs = datum['obs_idxs']
     next_keypoint_idx = datum['action_idx']
-    fused_cameras = datum['demo']['fused_cameras']
+    obs_group = datum['demo']['fused_cameras'][feature_res]
     state_action = datum['demo']['state_action']
 
-    sample['obs']['pcd'] = fused_cameras['pcd'][obs_idxs[-1]]
-    sample['obs']['clip_features'] = {}
-    sample['obs']['clip_features'] = fused_cameras['clip_features'][obs_idxs[-1]]
+    sample['obs']['pcd'] = obs_group['pcd'][obs_idxs[-1]]
+    sample['obs']['clip_features'] = obs_group['clip_features'][obs_idxs[-1]]
 
     curr_gripper = state_action['proprioception'][obs_idxs]
     sample['obs']['curr_gripper'] = curr_gripper
@@ -166,6 +128,7 @@ class RLBenchDataset(torch.utils.data.Dataset):
                  cache_size=0,
                  split='train',
                  use_precomputed_features=False,
+                 feature_res=None
                  ):
         
         self._training = True
@@ -203,6 +166,7 @@ class RLBenchDataset(torch.utils.data.Dataset):
         self.image_rescale = image_rescale
         self.cache_size = cache_size
         self.use_precomputed_features = use_precomputed_features
+        self.feature_res = feature_res
 
         print(f"Loaded {len(self)} {split} samples")
 
@@ -215,7 +179,7 @@ class RLBenchDataset(torch.utils.data.Dataset):
         else:
             index = self.indices[idx]
             if self.use_precomputed_features:
-                sample = collate_samples_fused(index)
+                sample = collate_samples_fused(index, self.feature_res)
             else:
                 sample = collate_samples(
                     index,
@@ -255,7 +219,8 @@ class RLBenchDataset(torch.utils.data.Dataset):
             image_rescale=self.image_rescale,
             cache_size=self.cache_size,
             split='val',
-            use_precomputed_features=self.use_precomputed_features
+            use_precomputed_features=self.use_precomputed_features,
+            feature_res=self.feature_res
         )
         val_set._training = False
         return val_set
@@ -279,8 +244,24 @@ class RLBenchDataset(torch.utils.data.Dataset):
                     img = create_obs_state_plot(data['obs'], gt_action=data['action']['gt_trajectory'], use_mask=True, quaternion_format = 'xyzw')[0]
                     imgs.append(torch.from_numpy(img[:3,:,:])) 
         imgs = torch.stack(imgs) / 255.0
-        return imgs
-    
+        return imgs    
+
+# TEST CODE
+def plot(pcd, rgb=None, batch_idx=0):
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+        if rgb is None:
+            ax.scatter(pcd[batch_idx,:,0], pcd[batch_idx,:,1], pcd[batch_idx,:,2])
+        else:
+            ax.scatter(pcd[batch_idx,:,0], pcd[batch_idx,:,1], pcd[batch_idx,:,2], c=rgb[batch_idx])
+
+def extract_rgb_pcd(batch):
+    pcd = batch['obs']['pcd']
+    pcd = einops.rearrange(pcd, 'n v c h w -> n (v h w) c')
+    rgb = batch['obs']['rgb']
+    rgb = einops.rearrange(rgb, 'n v c h w -> n (v h w) c')
+    return pcd, rgb
+
 def crop_workspace(pcd, rgb, workspace_bounds):
     """
     Returns the indices of points within the specified workspace bounds, ensuring each batch has an equal number of points.
@@ -310,6 +291,9 @@ def crop_workspace(pcd, rgb, workspace_bounds):
     # Find the minimum number of selected points across the batch
     min_points = min(len(indices) for indices in batch_indices)
 
+    # Trim indices to ensure each batch has the same number of points
+    trimmed_indices = [indices[:min_points] for indices in batch_indices]
+
     # Extract the corresponding points and RGB values
     trimmed_pcd = [pcd[b, indices[:min_points], :] for b, indices in enumerate(batch_indices)]
     trimmed_rgb = [rgb[b, indices[:min_points], :] for b, indices in enumerate(batch_indices)]
@@ -317,26 +301,10 @@ def crop_workspace(pcd, rgb, workspace_bounds):
     trimmed_pcd = torch.stack(trimmed_pcd)
     trimmed_rgb = torch.stack(trimmed_rgb)
 
-    return trimmed_pcd, trimmed_rgb     
+    return trimmed_pcd, trimmed_rgb   
 
-def get_min_cropped_pcd(data_loader, workspace_bounds):
-    min_pcd = torch.inf
-    for batch in data_loader:
-        pcd, rgb = extract_rgb_pcd(batch)
-        pcd, rgb = crop_workspace(pcd, rgb, workspace_bounds)
-        min_pcd = min(min_pcd, pcd.shape[1])
-    return min_pcd
-
-if __name__ == "__main__":
-    import os
-    from diffusion_policy.common.pytorch_util import print_dict
-    from torch.utils.data import DataLoader
-    import matplotlib.pyplot as plt
-    import einops
-    from diffusion_policy.common.rlbench_util import get_workspace_bounds
-    import dgl.geometry as dgl_geo
-
-    plt.switch_backend('tkagg')
+def test_dataset():
+    from torch.nn import functional as F
 
     dataset = RLBenchDataset(
         dataset_path=os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data/peract.zarr'),
@@ -350,97 +318,52 @@ if __name__ == "__main__":
         n_episodes=-1,
         image_rescale=(1.0, 1.0),
         cache_size=0,
-        use_precomputed_features=True
+        use_precomputed_features=False
     )
 
     tasks_location_bounds_path = os.environ['DIFFUSION_POLICY_ROOT'] + '/diffusion_policy/tasks/peract_workspace_bounds.json'
-    buffer=0.1
-    workspace_bounds = get_workspace_bounds(tasks_location_bounds_path, buffer=buffer)
+    buffer=0.0
+    workspace_bounds = get_workspace_bounds(tasks_location_bounds_path, buffer)
 
     data_loader = DataLoader(dataset, batch_size=2, shuffle=False)
-    batch = next(iter(data_loader))
-    for batch in data_loader:
-        print_dict(batch)
-
-    exit()
-
-    def extract_rgb_pcd(batch):
-        pcd = batch['obs']['pcd']
-        pcd = einops.rearrange(pcd, 'n v c h w -> n (v h w) c')
-        rgb = batch['obs']['rgb']
-        rgb = einops.rearrange(rgb, 'n v c h w -> n (v h w) c')
-        return pcd, rgb
     
-    def plot(pcd, rgb, batch_idx=0):
-        fig = plt.figure()
-        ax = fig.add_subplot(111, projection='3d')
-        ax.scatter(pcd[batch_idx,:,0], pcd[batch_idx,:,1], pcd[batch_idx,:,2], c=rgb[batch_idx])
-        plt.show()
+    batch = next(iter(data_loader))
+    pcd, rgb = extract_rgb_pcd(batch)
+    plot(pcd, rgb)
 
-    def crop_workspace(pcd, rgb, workspace_bounds):
-        """
-        Returns the indices of points within the specified workspace bounds, ensuring each batch has an equal number of points.
+    batch = next(iter(data_loader))
+    pcd = batch['obs']['pcd']
+    rgb = batch['obs']['rgb']
 
-        Parameters:
-        - pcd: A tensor of shape (B, N, 3) representing the point cloud.
-        - rgb: A tensor of shape (B, N, 3) representing the RGB values.
-        - workspace_bounds: A list or tensor of shape (2, 3) specifying the min and max bounds for x, y, z.
+    b, v, c, h, w = rgb.shape
+    pcd = pcd.reshape(b*v, c, h, w)
+    rgb = rgb.reshape(b*v, c, h, w)
 
-        Returns:
-        - trimmed_indices: A list of tensors, where each tensor contains the indices of selected points for a batch.
-        - trimmed_pcd: A list of tensors, where each tensor contains the selected points for a batch.
-        - trimmed_rgb: A list of tensors, where each tensor contains the RGB values corresponding to the selected points for a batch.
-        """
-        batch_size = pcd.shape[0]
-        batch_indices = []
+    rgb = F.interpolate(rgb, (64, 64), mode='bilinear', align_corners=False)
+    pcd = F.interpolate(pcd, (64, 64), mode='nearest')
 
-        for b in range(batch_size):
-            mask = torch.ones(pcd[b].shape[0], dtype=torch.bool)
-            for i in range(3):
-                mask = torch.logical_and(mask, pcd[b, :, i] > workspace_bounds[0][i])
-                mask = torch.logical_and(mask, pcd[b, :, i] < workspace_bounds[1][i])
-
-            indices = torch.nonzero(mask, as_tuple=False).squeeze(1)  # Get the indices where mask is True
-            batch_indices.append(indices)
-
-        # Find the minimum number of selected points across the batch
-        min_points = min(len(indices) for indices in batch_indices)
-
-        # Trim indices to ensure each batch has the same number of points
-        trimmed_indices = [indices[:min_points] for indices in batch_indices]
-
-        # Extract the corresponding points and RGB values
-        trimmed_pcd = [pcd[b, indices[:min_points], :] for b, indices in enumerate(batch_indices)]
-        trimmed_rgb = [rgb[b, indices[:min_points], :] for b, indices in enumerate(batch_indices)]
-
-        trimmed_pcd = torch.stack(trimmed_pcd)
-        trimmed_rgb = torch.stack(trimmed_rgb)
-
-        return trimmed_pcd, trimmed_rgb     
-
-    min_pcd = torch.inf
-    for batch in data_loader:
-        pcd, rgb = extract_rgb_pcd(batch)
-        pcd, rgb = crop_workspace(pcd, rgb, workspace_bounds)
-        min_pcd = min(min_pcd, pcd.shape[1])
-        print("Minimum number of points: ", min_pcd)
-
+    batch['obs']['rgb'] = rgb.reshape(b, v, c, 64, 64)
+    batch['obs']['pcd'] = pcd.reshape(b, v, c, 64, 64)
 
     pcd, rgb = extract_rgb_pcd(batch)
+    plot(pcd, rgb)
+
 
     npts = pcd.shape[1]
     print("Number of points: ", npts)
-    # # plot(pcd, rgb)
 
-    # cropped_pcd, cropped_rgb = crop_workspace(pcd, rgb, workspace_bounds)
+    cropped_pcd, cropped_rgb = crop_workspace(pcd, rgb, workspace_bounds)
 
-    # print("Number of points: ", cropped_pcd.shape[1])
-    # print("Factor of reduction: ", cropped_pcd.shape[1] / pcd.shape[1])
-    # plot(cropped_pcd, cropped_rgb)
+    print("Number of points: ", cropped_pcd.shape[1])
+    print("Factor of reduction: ", cropped_pcd.shape[1] / pcd.shape[1])
+    plot(cropped_pcd, cropped_rgb)
 
-    # npts = pcd.shape[0]
 
-    # # Farthest point sampling
+    npts = pcd.shape[0]
+    plt.show()
+
+
+    # Farthest point sampling
     # fps_subsampling_factor = 5
     # ch = pcd.shape[1]
     # pcd = torch.from_numpy(pcd[None, ...]).to(torch.float64)
@@ -472,4 +395,41 @@ if __name__ == "__main__":
     # ax = fig.add_subplot(111, projection='3d')
     # ax.scatter(pcd[:,0], pcd[:,1], pcd[:,2], c=rgb)
     # plt.show()
+
+
+def test_precomputed():
+    dataset = RLBenchDataset(
+        dataset_path=os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data/peract.zarr'),
+        cameras=['left_shoulder', 'right_shoulder', 'wrist', 'front'],
+        task_name='open_drawer',
+        use_rgb=True,
+        use_pcd=True,
+        use_mask=False,
+        use_features=False,
+        n_obs_steps=3,
+        n_episodes=-1,
+        image_rescale=(1.0, 1.0),
+        cache_size=0,
+        use_precomputed_features=True
+    )
+
+    data_loader = DataLoader(dataset, batch_size=2, shuffle=False)
+    batch = next(iter(data_loader))
+    
+    plot(batch['obs']['pcd'])
+    plt.show()
+
+if __name__ == "__main__":
+    import os
+    from diffusion_policy.common.pytorch_util import print_dict
+    from torch.utils.data import DataLoader
+    import matplotlib.pyplot as plt
+    import einops
+    from diffusion_policy.common.rlbench_util import get_workspace_bounds
+    import dgl.geometry as dgl_geo
+
+    plt.switch_backend('tkagg')
+
+    test_precomputed()
+    # test_dataset()
 

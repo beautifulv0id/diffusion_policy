@@ -3,26 +3,34 @@ defaults:
   - _self_
   - task: open_drawer_image
 
-name: train_action_flow
+name: train_ursa_flow
 _target_: diffusion_policy.workspace.train_ursa_flow.TrainingWorkspace
 
-exp_name: "train_action_flow"
+exp_name: "train_ursa_flow"
 n_obs_steps: &n_obs_steps 3
 use_keyframe_actions: True
 horizon: ${eval:'1 if ${use_keyframe_actions} else 16'}
 n_action_steps: ${eval:'1 if ${use_keyframe_actions} else 8'}
 embedding_dim: 192
-num_episodes: 1
+num_episodes: -1
 mode: train
+
+max_pcd_points: 
+  _target_: diffusion_policy.common.rlbench_util.get_task_cropped_pcd_min_size
+  path: "${oc.env:DIFFUSION_POLICY_ROOT}/diffusion_policy/tasks/peract_cropped_pcd_min_sizes.json"
+  task: ${task.task_name}
+  res: ${policy.feature_res}
 
 policy:
   _target_: diffusion_policy.policy.ursa_flow.URSAFlow
   embedding_dim: ${embedding_dim}
   backbone: "clip"
-  image_size: ${task.image_size}
-  fps_subsampling_factor: 5
+  fps_subsampling_factor: 10
+  feature_res: "res2"
   scaling_factor: 3.0
   gripper_loc_bounds: ${task.gripper_loc_bounds}
+  workspace_bounds: ${task.workspace_bounds}
+  max_pcd_points: ${max_pcd_points}
   rotation_parametrization: 'so3'
   quaternion_format: 'xyzw' 
   diffusion_timesteps: 100
@@ -70,13 +78,13 @@ training:
   use_ema: False
   # training loop control
   # in epochs
-  model_evaluation_every: 50
+  model_evaluation_every: 100
   rollout_every: 5000
   checkpoint_every: 10
   visualize_every: 1000
   visualize_batch_size: 8
-  val_every: 50
-  sample_every: 50
+  val_every: 100
+  sample_every: 100
   # steps per epoch
   max_train_steps: null
   max_val_steps: null

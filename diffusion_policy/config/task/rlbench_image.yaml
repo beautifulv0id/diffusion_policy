@@ -7,6 +7,11 @@ gripper_loc_bounds:
   buffer: 0.0
   task: ${task.task_name}
 
+workspace_bounds:
+  _target_: diffusion_policy.common.rlbench_util.get_workspace_bounds
+  path: "${oc.env:DIFFUSION_POLICY_ROOT}/diffusion_policy/tasks/peract_workspace_bounds.json"
+  buffer: 0.0
+
 cameras: ['left_shoulder', 'right_shoulder', 'wrist', 'front']
 
 dataset:
@@ -22,6 +27,7 @@ dataset:
   rot_noise_scale: 0.0
   pos_noise_scale: 0.0
   use_precomputed_features: True
+  feature_res: ${policy.feature_res}
 
 env_runner:
   _target_: diffusion_policy.env_runner.rlbench_runner.RLBenchRunner

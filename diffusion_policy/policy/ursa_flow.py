@@ -5,11 +5,7 @@ import einops
 from diffusion_policy.common.so3_util import log_map, se3_inverse
 from diffusion_policy.common.se3_util import se3_from_rot_pos
 from diffusion_policy.common.rotation_utils import normalise_quat
-from diffusion_policy.model.flow_matching.flow_matching_models import SE3LinearAttractorFlow, RectifiedLinearFlow
-
-
-from diffusion_policy.model.invariant_tranformers.invariant_point_transformer import InvariantPointTransformer
-from diffusion_policy.model.invariant_tranformers.geometry_invariant_attention import InvariantPointAttention
+from diffusion_policy.model.flow_matching.flow_matching_models import SE3LinearAttractorFlow
 
 from diffusion_policy.model.obs_encoders.ursa_flow_encoder import URSAFlowEncoder
 from geo3dattn.model.ursa_transformer.ursa_transformer import URSATransformer
@@ -17,7 +13,6 @@ from geo3dattn.model.ursa_transformer.ursa_transformer import URSATransformer
 
 from diffusion_policy.model.common.position_encodings import SinusoidalPosEmb
 from torch import einsum
-
 
 from diffusion_policy.common.rlbench_util import create_robomimic_from_rlbench_action
 from pytorch3d.transforms import matrix_to_quaternion, quaternion_to_matrix
@@ -30,7 +25,6 @@ class URSAFlow(BaseImagePolicy):
 
     def __init__(self,
                  backbone="clip",
-                 image_size=(256, 256),
                  embedding_dim=60,
                  fps_subsampling_factor=5,
                  scaling_factor=3.0,
@@ -44,6 +38,9 @@ class URSAFlow(BaseImagePolicy):
                  relative=False,
                  causal_attn=True,
                  gripper_loc_bounds=None,
+                 workspace_bounds=None,
+                 max_pcd_points=None,
+                 feature_res="res2",
                  pcd_self_attn=False,
                  use_precomputed_features=False,
                  ):
@@ -56,7 +53,7 @@ class URSAFlow(BaseImagePolicy):
             embedding_dim=embedding_dim,
             nhist=nhist,
             fps_subsampling_factor=fps_subsampling_factor,
-            point_cloud_downsampling_factor=4,
+            feature_res=feature_res,
         )
         self.prediction_head = DiffusionHead(
             embedding_dim=embedding_dim,
@@ -77,30 +74,81 @@ class URSAFlow(BaseImagePolicy):
         self._relative = relative
         self.use_mask = use_mask
         self.pcd_self_attn = pcd_self_attn
-        self.gripper_loc_bounds = torch.tensor(gripper_loc_bounds) if gripper_loc_bounds is not None else None
         self._use_precomputed_features = use_precomputed_features
-    def encode_inputs(self, visible_rgb, visible_pcd,
-                      curr_gripper, mask=None, rgb_features=None):
-        
-        if not self._use_precomputed_features:
-            rgb_feats, pcd = self.encoder.encode_images(
-                visible_rgb, visible_pcd
-            )
-
-
-            if self.use_mask:
-                context_feats, context, mask_idx = self.encoder.mask_out_features_pcd(mask, rgb_feats, pcd, n_min=0, n_max=1024)
-            else:
-                # Keep only low-res scale
-                context_feats = einops.rearrange(
-                    rgb_feats,
-                    "b ncam c h w -> b (ncam h w) c"
-                )
-                context = pcd
+        if gripper_loc_bounds is not None:
+            self.register_buffer("gripper_loc_bounds", torch.tensor(gripper_loc_bounds))
         else:
-            assert rgb_features is not None, "context_feats must be provided"
-            context = visible_pcd
-            context_feats = self.encoder.encode_features(rgb_features)
+            self.gripper_loc_bounds = None
+        if workspace_bounds is not None:
+            self.register_buffer("workspace_bounds", torch.tensor(workspace_bounds))
+        else:
+            self.workspace_bounds = None
+        self.max_pcd_points = max_pcd_points
+        self._use_precomputed_features = use_precomputed_features
+
+    def crop_to_workspace(self, pcd, feats, workspace_bounds):
+        """
+        Returns the indices of points within the specified workspace bounds, ensuring each batch has an equal number of points.
+
+        Parameters:
+        - pcd: A tensor of shape (B, N, 3) representing the point cloud.
+        - feats: A tensor of shape (B, N, F) representing the features.
+        - workspace_bounds: A list or tensor of shape (2, 3) specifying the min and max bounds for x, y, z.
+
+        Returns:
+        - trimmed_pcd: A list of tensors, where each tensor contains the selected points for a batch.
+        - trimmed_feats: A list of tensors, where each tensor contains the feature values corresponding to the selected points for a batch.
+        """
+        batch_size = pcd.shape[0]
+        batch_indices = []
+
+        for b in range(batch_size):
+            mask = torch.ones(pcd[b].shape[0], dtype=torch.bool, device=pcd.device)
+            for i in range(3):
+                mask = torch.logical_and(mask, pcd[b, :, i] > workspace_bounds[0][i])
+                mask = torch.logical_and(mask, pcd[b, :, i] < workspace_bounds[1][i])
+
+            indices = torch.nonzero(mask, as_tuple=False).squeeze(1)  # Get the indices where mask is True
+            # Randomly sample points if there are more than max_pcd_points
+            if len(indices) > self.max_pcd_points:
+                indices = indices[torch.randperm(len(indices))[:self.max_pcd_points]]
+            batch_indices.append(indices)
+
+        # Extract the corresponding points and RGB values
+        cropped_pcd = [pcd[b, indices, :] for b, indices in enumerate(batch_indices)]
+        cropped_feats = [feats[b, indices, :] for b, indices in enumerate(batch_indices)]
+
+        cropped_pcd = torch.stack(cropped_pcd)
+        cropped_feats = torch.stack(cropped_feats)
+
+        return cropped_pcd, cropped_feats 
+
+    def pre_norm_encode_inputs(self, pcd_obs, rgb_obs, feature_obs):
+        if not self._use_precomputed_features:
+            feature_obs, pcd_obs = self.encoder.encode_images(rgb_obs, pcd_obs)
+            if self.workspace_bounds is not None:
+                pcd_obs, feature_obs = self.crop_to_workspace(pcd_obs, feature_obs, self.workspace_bounds)       
+        else:
+            assert feature_obs is not None, "Precomputed features must be provided"         
+            feature_obs = self.encoder.encode_features(feature_obs)
+        
+        return pcd_obs, feature_obs
+
+    def normalize_inputs(self, gt_trajectory, pcd_obs, curr_gripper):
+        if gt_trajectory is not None:
+            gt_trajectory = gt_trajectory.clone()
+            gt_trajectory[:, :, :3] = self.normalize_pos(gt_trajectory[:, :, :3])
+        pcd_obs = pcd_obs.clone()
+        curr_gripper = curr_gripper.clone()
+        pcd_obs = self.normalize_pos(pcd_obs)
+        curr_gripper[..., :3] = self.normalize_pos(curr_gripper[..., :3])
+        return gt_trajectory, pcd_obs, curr_gripper
+
+
+    def encode_inputs(self, pcd, rgb_features,
+                      curr_gripper):
+        context = pcd
+        context_feats = rgb_features
 
         if self.pcd_self_attn:
             context_feats = self.encoder.encode_pcd(pcd, context_feats)
@@ -121,6 +169,7 @@ class URSAFlow(BaseImagePolicy):
             adaln_gripper_feats, curr_gripper, # gripper history features
             fps_feats, fps_pcd  # sampled visual features
         )
+
 
 
     def policy_forward_pass(self, trajectory, timestep, fixed_inputs):
@@ -179,11 +228,9 @@ class URSAFlow(BaseImagePolicy):
     def compute_trajectory(
         self,
         trajectory_mask,
-        rgb_obs,
         pcd_obs,
-        curr_gripper,
-        mask_obs=None,
-        feature_obs=None
+        feature_obs,
+        curr_gripper
     ):
         
         # Convert rotation parametrization
@@ -196,7 +243,7 @@ class URSAFlow(BaseImagePolicy):
 
         # Prepare inputs
         fixed_inputs = self.encode_inputs(
-            rgb_obs, pcd_obs, curr_gripper, mask_obs, feature_obs
+            pcd_obs, feature_obs, curr_gripper
         )
 
         # Condition on start-end pose
@@ -282,10 +329,7 @@ class URSAFlow(BaseImagePolicy):
 
         bs = trans.shape[0]       
         pcd = pcd.clone() 
-        if self._use_precomputed_features:
-            pcd = einsum('bmn,bln->bln', rot, pcd) + trans.view(bs, 1, 3)
-        else:
-            pcd = einsum('bmn,bvnhw->bvmhw', rot, pcd) + trans.view(bs, 1, 3, 1, 1)
+        pcd = einsum('bmn,bln->bln', rot, pcd) + trans.view(bs, 1, 3)
         curr_gripper = curr_gripper.clone()
         curr_gripper = einsum('bmn,bhnk->bhmk', inv_pose, curr_gripper)
         if trajectory is not None:
@@ -312,7 +356,6 @@ class URSAFlow(BaseImagePolicy):
         pcd_obs,
         curr_gripper,
         run_inference=False,
-        mask_obs=None,
         feature_obs=None
     ):
         """
@@ -330,19 +373,9 @@ class URSAFlow(BaseImagePolicy):
             is ALWAYS expressed as a quaternion form.
             The model converts it to 6D internally if needed.
         """
-        # Normalize all pos
-        if gt_trajectory is not None:
-            gt_trajectory = gt_trajectory.clone()
-            gt_trajectory[:, :, :3] = self.normalize_pos(gt_trajectory[:, :, :3])
-        pcd_obs = pcd_obs.clone()
-        curr_gripper = curr_gripper.clone()
-        if self._use_precomputed_features:
-            pcd_obs = self.normalize_pos(pcd_obs)
-        else:
-            pcd_obs = torch.permute(self.normalize_pos(
-                torch.permute(pcd_obs, [0, 1, 3, 4, 2])
-            ), [0, 1, 4, 2, 3])
-        curr_gripper[..., :3] = self.normalize_pos(curr_gripper[..., :3])
+        pcd_obs, feature_obs = self.pre_norm_encode_inputs(pcd_obs, rgb_obs, feature_obs)
+
+        gt_trajectory, pcd_obs, curr_gripper = self.normalize_inputs(gt_trajectory, pcd_obs, curr_gripper)
 
         if gt_trajectory is not None:
             gt_openess = gt_trajectory[..., 7:8]
@@ -353,12 +386,12 @@ class URSAFlow(BaseImagePolicy):
         if run_inference:
             return self.compute_trajectory(
                 trajectory_mask,
-                rgb_obs,
                 pcd_obs,
-                curr_gripper,
-                mask_obs,
-                feature_obs
-            )
+                feature_obs,
+                curr_gripper
+                )
+
+            
         # Convert rotation parametrization
         gt_trajectory, _ = self.convert_rot(gt_trajectory)
         curr_gripper, _ = self.convert_rot(curr_gripper)
@@ -368,7 +401,7 @@ class URSAFlow(BaseImagePolicy):
 
         # Prepare inputs
         fixed_inputs = self.encode_inputs(
-            rgb_obs, pcd_obs, curr_gripper, mask_obs, feature_obs
+            pcd_obs, feature_obs, curr_gripper
         )
 
         p1 = gt_trajectory[:, :, :3, 3]
@@ -413,7 +446,6 @@ class URSAFlow(BaseImagePolicy):
             pcd_obs=obs_dict['pcd'],
             curr_gripper=obs_dict['curr_gripper'],
             run_inference=True,
-            mask_obs=obs_dict.get('mask', None),
             feature_obs=obs_dict.get('clip_features', None)
         )
         rlbench_action = output['trajectory'].clone()
@@ -437,7 +469,6 @@ class URSAFlow(BaseImagePolicy):
             pcd_obs=batch['obs']['pcd'],
             curr_gripper=batch['obs']['curr_gripper'],
             run_inference=False,
-            mask_obs=batch['obs'].get('mask', None),
             feature_obs=batch['obs'].get('clip_features', None)
         )
 

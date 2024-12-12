@@ -19,7 +19,6 @@ def load_clip():
     normalize = clip_transforms.transforms[-1]
     return backbone, normalize
 
-
 class ModifiedResNetFeatures(ModifiedResNet):
     def __init__(self, layers, output_dim, heads, input_resolution=224, width=64):
         super().__init__(layers, output_dim, heads, input_resolution, width)
@@ -41,4 +40,12 @@ class ModifiedResNetFeatures(ModifiedResNet):
             "res3": x2,
             "res4": x3,
             "res5": x4,
+        }
+
+CLIP_RES_TO_DIM = {
+            "res1": 64,
+            "res2": 256,
+            "res3": 512,
+            "res4": 1024,
+            "res5": 2048,   
         }
