@@ -8,7 +8,7 @@ from diffusion_policy.model.common.module_attr_mixin import ModuleAttrMixin
 from diffusion_policy.model.invariant_tranformers.invariant_point_transformer import InvariantPointTransformer
 from diffusion_policy.model.invariant_tranformers.geometry_invariant_attention import InvariantPointAttention
 from diffusion_policy.model.vision.resnet_wrapper import load_resnet50, load_resnet18
-from diffusion_policy.model.vision.clip_wrapper import load_clip
+from diffusion_policy.model.vision.clip_wrapper import load_clip, CLIP_RES_TO_DIM
 
 from geo3dattn.model.ursa_transformer.ursa_transformer import URSATransformerEncoder, URSATransformer
 
@@ -22,15 +22,14 @@ class URSAFlowEncoder(ModuleAttrMixin):
                  embedding_dim=60,
                  nhist=3,
                  num_attn_heads=8,
-                 point_cloud_downsampling_factor=4,
+                 feature_res="res2",
                  fps_subsampling_factor=5,
                  quaternion_format='xyzw'):
         super().__init__()
 
-        assert point_cloud_downsampling_factor in [2, 4, 8, 16]
+        assert feature_res in ["res1", "res2"]
 
         self.fps_subsampling_factor = fps_subsampling_factor
-        self.point_cloud_downsampling_factor = point_cloud_downsampling_factor
 
 
         # 3D relative positional embeddings
@@ -44,31 +43,21 @@ class URSAFlowEncoder(ModuleAttrMixin):
         for p in self.backbone.parameters():
             p.requires_grad = False
 
-        if point_cloud_downsampling_factor == 2:
-            self.res = "res1"
-            backbone_out_dim = 64
-        elif point_cloud_downsampling_factor == 4:
-            self.res = "res2"
-            backbone_out_dim = 256
-        elif point_cloud_downsampling_factor == 8:
-            self.res = "res3"
-            backbone_out_dim = 512
-        elif point_cloud_downsampling_factor == 16:
-            self.res = "res4"
-            backbone_out_dim = 1024
+        self.feature_res = feature_res
+        backbone_out_dim = CLIP_RES_TO_DIM[self.feature_res]
 
         self.pcd_encoder = URSATransformerEncoder(
-            d_model=embedding_dim, nhead=4, num_layers=2, args={'feature_type': 'fourier_and_distance'}
+            d_model=embedding_dim, nhead=num_attn_heads, num_layers=2, args={'feature_type': 'fourier_and_distance'}
             )
         
         self.gripper_encoder = URSATransformer(
-            d_model=embedding_dim, nhead=4, num_layers=2
+            d_model=embedding_dim, nhead=num_attn_heads, num_layers=2
         )
 
         self.to_out = nn.Conv2d(backbone_out_dim, embedding_dim, 1)
 
         # TODO: refactor this
-        self.precomputed_to_out = nn.Linear(64, embedding_dim)
+        self.precomputed_to_out = nn.Linear(backbone_out_dim, embedding_dim)
 
         # Current gripper learnable features
         self.curr_gripper_embed = nn.Embedding(nhist, embedding_dim)
@@ -206,7 +195,7 @@ class URSAFlowEncoder(ModuleAttrMixin):
         rgb = einops.rearrange(rgb, "bt ncam c h w -> (bt ncam) c h w")
         rgb = self.normalize(rgb)
         rgb_features = self.backbone(rgb)
-        rgb_features = rgb_features[self.res]
+        rgb_features = rgb_features[self.feature_res]
         rgb_features = self.to_out(rgb_features)
 
         # Treat different cameras separately
@@ -227,7 +216,7 @@ class URSAFlowEncoder(ModuleAttrMixin):
         )
         rgb_features = einops.rearrange(
             rgb_features,
-            "(bt ncam) c h w -> bt ncam c h w", ncam=num_cameras
+            "(bt ncam) c h w -> bt (ncam h w) c", ncam=num_cameras
         )
 
         return rgb_features, pcd
