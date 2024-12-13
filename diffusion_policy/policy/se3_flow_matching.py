@@ -161,8 +161,7 @@ class SE3FlowMatching(BaseImagePolicy):
 
     def convert2rel(self, pcd, curr_gripper, trajectory=None):
         """Convert coordinate system relaative to current gripper."""
-        self.gripper_pose = se3_from_rot_pos(curr_gripper[:, -1, :3, :3], curr_gripper[:, -1, :3, 3])
-        trans, rot = se3_inverse(curr_gripper[:,-1, :3, 3], curr_gripper[:,-1, :3, :3])
+        trans, rot = se3_inverse(self.relative_frame[:, :3, 3], self.relative_frame[:, :3, :3])
         inv_pose = se3_from_rot_pos(rot, trans)
 
         bs = trans.shape[0]       
@@ -176,11 +175,10 @@ class SE3FlowMatching(BaseImagePolicy):
         return pcd, curr_gripper, trajectory
     
     def convert2abs(self, trajectory, pcd=None):
-        pose = self.gripper_pose
-        trajectory = einsum('bmn,blnk->blmk', pose, trajectory)
+        trajectory = einsum('bmn,blnk->blmk', self.relative_frame, trajectory)
         if pcd is not None:
             bs = pcd.shape[0]
-            pcd = einsum('bmn,bkn->bkm', pose[:, -1, :3, :3], pcd) + pose[:, -1, :3, 3].view(bs, 1, 3)
+            pcd = einsum('bmn,bkn->bkm', self.relative_frame[:, :3, :3], pcd) + self.relative_frame[:, :3, 3].view(bs, 1, 3)
             return trajectory, pcd
         return trajectory
 
@@ -272,6 +270,7 @@ class SE3FlowMatching(BaseImagePolicy):
             gt_trajectory, _ = self.convert_rot(gt_trajectory)
 
         if self._relative:
+            self.relative_frame = se3_from_rot_pos(curr_gripper[:, -1, :3, :3], curr_gripper[:, -1, :3, 3])
             pcd_obs, curr_gripper, gt_trajectory = self.convert2rel(pcd_obs, curr_gripper, gt_trajectory)
 
         obs = self.create_obs_dict(pcd_obs, curr_gripper, feature_obs)
@@ -343,7 +342,7 @@ class SE3FlowMatching(BaseImagePolicy):
         out = self.predict_action(batch['obs'])
         trajectory = out['trajectory']
         pred_act, pred_act_gr = self.convert_rot(trajectory)
-        pred_act_p = pred_act[..., :3]
+        pred_act_p = pred_act[..., :3, -1]
         pred_act_r = pred_act[..., :3, :3]
 
         pos_error = torch.nn.functional.mse_loss(pred_act_p, gt_act_p)
