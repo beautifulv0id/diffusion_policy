@@ -25,7 +25,7 @@ policy:
   _target_: diffusion_policy.policy.se3_flow_matching.SE3FlowMatching
   embedding_dim: ${embedding_dim}
   backbone: "clip"
-  n_points_out: 200
+  n_points_out: 500
   feature_res: "res2"
   scaling_factor: 3.0
   gripper_loc_bounds: ${task.gripper_loc_bounds}
@@ -40,7 +40,7 @@ policy:
   causal_attn: True
 
 dataloader:
-  batch_size: 2
+  batch_size: 8
   num_workers: 0
   shuffle: True
   pin_memory: False
@@ -75,13 +75,13 @@ training:
   use_ema: False
   # training loop control
   # in epochs
-  model_evaluation_every: 100
+  model_evaluation_every: 50
   rollout_every: 5000
   checkpoint_every: 10
   visualize_every: 1000
   visualize_batch_size: 8
-  val_every: 100
-  sample_every: 100
+  val_every: 50
+  sample_every: 50
   # steps per epoch
   max_train_steps: null
   max_val_steps: null

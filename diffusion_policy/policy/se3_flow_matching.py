@@ -49,13 +49,13 @@ class SE3FlowMatching(BaseImagePolicy):
         encoder = SE3GraspPointCloudSuperEncoder(
             dim_features=embedding_dim,
             depth=3,
-            nheads=4,
+            nheads=8,
             n_steps_inf=50,
             n_points_out=n_points_out,
             nhist=nhist,
             dim_pcd_features=self.feature_pcd_encoder.out_dim
         )
-        decoder = URSATransformer(d_model=embedding_dim, nhead=4, num_layers=2)
+        decoder = URSATransformer(d_model=embedding_dim, nhead=8, num_layers=4)
         self.model = SE3GraspVectorField(
             encoder=encoder, 
             decoder=decoder, 
@@ -159,32 +159,21 @@ class SE3FlowMatching(BaseImagePolicy):
             signal[..., 3:7] = signal[..., (4, 5, 6, 3)]
         return signal
 
-    def convert2rel(self, pcd, curr_gripper, trajectory=None):
+    def convert2rel(self, trajectory):
         """Convert coordinate system relaative to current gripper."""
         trans, rot = se3_inverse(self.relative_frame[:, :3, 3], self.relative_frame[:, :3, :3])
         inv_pose = se3_from_rot_pos(rot, trans)
-
-        bs = trans.shape[0]       
-        pcd = pcd.clone() 
-        pcd = einsum('bmn,bln->bln', rot, pcd) + trans.view(bs, 1, 3)
-        curr_gripper = curr_gripper.clone()
-        curr_gripper = einsum('bmn,bhnk->bhmk', inv_pose, curr_gripper)
-        if trajectory is not None:
-            trajectory = trajectory.clone()
-            trajectory = einsum('bmn,blnk->blmk', inv_pose, trajectory)
-        return pcd, curr_gripper, trajectory
+        trajectory = einsum('bmn,blnk->blmk', inv_pose, trajectory)
+        return trajectory
     
-    def convert2abs(self, trajectory, pcd=None):
+    def convert2abs(self, trajectory):
         trajectory = einsum('bmn,blnk->blmk', self.relative_frame, trajectory)
-        if pcd is not None:
-            bs = pcd.shape[0]
-            pcd = einsum('bmn,bkn->bkm', self.relative_frame[:, :3, :3], pcd) + self.relative_frame[:, :3, 3].view(bs, 1, 3)
-            return trajectory, pcd
         return trajectory
 
     def sample(self, fixed_inputs):
         B = fixed_inputs["obs"]["pcd"].shape[0]
         device = fixed_inputs["obs"]["pcd"].device
+        self.model.set_context(*self.model.encode_obs(fixed_inputs))
         # Iterative denoising
         with torch.no_grad():
             dt = 1.0 / self.n_steps
@@ -271,7 +260,8 @@ class SE3FlowMatching(BaseImagePolicy):
 
         if self._relative:
             self.relative_frame = se3_from_rot_pos(curr_gripper[:, -1, :3, :3], curr_gripper[:, -1, :3, 3])
-            pcd_obs, curr_gripper, gt_trajectory = self.convert2rel(pcd_obs, curr_gripper, gt_trajectory)
+            if gt_trajectory is not None:
+                gt_trajectory = self.convert2rel(gt_trajectory)
 
         obs = self.create_obs_dict(pcd_obs, curr_gripper, feature_obs)
 
