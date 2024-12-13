@@ -179,6 +179,7 @@ class RLBenchDataset(torch.utils.data.Dataset):
         else:
             index = self.indices[idx]
             if self.use_precomputed_features:
+                assert self.feature_res is not None
                 sample = collate_samples_fused(index, self.feature_res)
             else:
                 sample = collate_samples(
@@ -410,7 +411,8 @@ def test_precomputed():
         n_episodes=-1,
         image_rescale=(1.0, 1.0),
         cache_size=0,
-        use_precomputed_features=True
+        use_precomputed_features=True,
+        feature_res="res2"
     )
 
     data_loader = DataLoader(dataset, batch_size=2, shuffle=False)

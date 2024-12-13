@@ -176,7 +176,7 @@ def add_fused_camera_data():
     def interpolate_pcds(pcds, dsf):
         t, v, c, w, h = pcds.shape
         pcds_torch = torch.tensor(pcds).reshape(-1, c, w, h)
-        pcds_torch = F.interpolate(pcds_torch, size=(w//dsf, h//dsf), mode='nearest')
+        pcds_torch = F.interpolate(pcds_torch, size=(w//dsf, h//dsf), mode='bilinear')
         pcds = pcds_torch.numpy()
         pcds = pcds.reshape(t, v, c, -1).transpose(0, 1, 3, 2).reshape(t, -1, c)
         return pcds
