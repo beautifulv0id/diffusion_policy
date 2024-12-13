@@ -74,7 +74,6 @@ class URSAFlow(BaseImagePolicy):
         self._relative = relative
         self.use_mask = use_mask
         self.pcd_self_attn = pcd_self_attn
-        self._use_precomputed_features = use_precomputed_features
         if gripper_loc_bounds is not None:
             self.register_buffer("gripper_loc_bounds", torch.tensor(gripper_loc_bounds))
         else:
@@ -84,7 +83,6 @@ class URSAFlow(BaseImagePolicy):
         else:
             self.workspace_bounds = None
         self.max_pcd_points = max_pcd_points
-        self._use_precomputed_features = use_precomputed_features
 
     def crop_to_workspace(self, pcd, feats, workspace_bounds):
         """
@@ -124,7 +122,7 @@ class URSAFlow(BaseImagePolicy):
         return cropped_pcd, cropped_feats 
 
     def pre_norm_encode_inputs(self, pcd_obs, rgb_obs, feature_obs):
-        if not self._use_precomputed_features:
+        if feature_obs is None:
             feature_obs, pcd_obs = self.encoder.encode_images(rgb_obs, pcd_obs)
             if self.workspace_bounds is not None:
                 pcd_obs, feature_obs = self.crop_to_workspace(pcd_obs, feature_obs, self.workspace_bounds)       
@@ -718,6 +716,8 @@ class DiffusionHead(nn.Module):
 with torch.no_grad():
     def test():
         from diffusion_policy.common.pytorch_util import dict_apply
+        from diffusion_policy.dataset.rlbench_dataset import RLBenchDataset
+        import os
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         horizon = 1
@@ -736,19 +736,26 @@ with torch.no_grad():
 
         model.to(device)
 
-        batch = {
-            'action': {
-                'gt_trajectory': torch.cat([torch.randn(1, 1, 3), normalise_quat(torch.randn(1, 1, 4)), torch.randn(1, 1, 1)], -1),
-            },
-            'obs': {
-                'rgb': torch.randn(1, 4, 3, 128, 128),
-                'pcd': torch.randn(1, 4, 3, 128, 128),
-                'curr_gripper': torch.cat([torch.randn(1, nhist, 3), normalise_quat(torch.randn(1, nhist, 4)), torch.randn(1, nhist, 2)], -1)
-            }
-        }
+        dataset = RLBenchDataset(
+            dataset_path=os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data/peract.zarr'),
+            cameras=['left_shoulder', 'right_shoulder', 'wrist', 'front'],
+            task_name='open_drawer',
+            use_rgb=True,
+            use_pcd=True,
+            use_mask=False,
+            use_features=False,
+            n_obs_steps=3,
+            n_episodes=-1,
+            image_rescale=(1.0, 1.0),
+            cache_size=0,
+            use_precomputed_features=False
+        )
 
+
+        dataloader = torch.utils.data.DataLoader(
+            dataset, batch_size=1
+        )
         batch = dict_apply(batch, lambda x: x.to(device))
-
         loss = model.compute_loss(batch)
         print("Success")
 

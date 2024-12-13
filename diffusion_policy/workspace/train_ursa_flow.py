@@ -92,6 +92,32 @@ class TrainingWorkspace(BaseWorkspace):
             last_epoch=self.global_step - 1
         )
 
+        # configure logging
+        wandb_run = wandb.init(
+            dir=str(self.output_dir),
+            config=OmegaConf.to_container(cfg, resolve=True),
+            **cfg.logging
+        )
+        wandb.config.update(
+            {
+                "output_dir": self.output_dir,
+            }
+        )
+
+        if cfg.training.debug:
+            cfg.training.num_epochs = 2
+            cfg.training.max_train_steps = 3
+            cfg.training.max_val_steps = 3
+            cfg.training.rollout_every = 1
+            cfg.training.checkpoint_every = 1
+            cfg.training.val_every = 1
+            cfg.training.sample_every = 1
+            cfg.training.visualize_every = 1
+            cfg.task.env_runner.max_episodes = 1
+            cfg.task.env_runner.max_steps = 1
+            # image = wandb.Image(dataset.get_data_visualization(), caption="Dataset")
+            # wandb_run.log({"dataset": image}, step=self.global_step)
+
         # # configure ema
         # ema: EMAModel = None
         # if cfg.training.use_ema:
@@ -115,17 +141,6 @@ class TrainingWorkspace(BaseWorkspace):
         else:
             env_runner = None
 
-        # configure logging
-        wandb_run = wandb.init(
-            dir=str(self.output_dir),
-            config=OmegaConf.to_container(cfg, resolve=True),
-            **cfg.logging
-        )
-        wandb.config.update(
-            {
-                "output_dir": self.output_dir,
-            }
-        )
 
         # configure checkpoint
         topk_manager = TopKCheckpointManager(
@@ -147,17 +162,6 @@ class TrainingWorkspace(BaseWorkspace):
         train_sampling_batch = None
         val_sampling_batch = None
 
-        if cfg.training.debug:
-            cfg.training.num_epochs = 2
-            cfg.training.max_train_steps = 3
-            cfg.training.max_val_steps = 3
-            cfg.training.rollout_every = 1
-            cfg.training.checkpoint_every = 1
-            cfg.training.val_every = 1
-            cfg.training.sample_every = 1
-            cfg.training.visualize_every = 1
-            image = wandb.Image(dataset.get_data_visualization(), caption="Dataset")
-            wandb_run.log({"dataset": image}, step=self.global_step)
 
 
         # training loop
