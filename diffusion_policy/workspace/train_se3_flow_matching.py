@@ -78,6 +78,10 @@ class TrainingWorkspace(BaseWorkspace):
         # self.model.set_normalizer(normalizer)
         # if cfg.training.use_ema:
         #     self.ema_model.set_normalizer(normalizer)
+        self.model.set_mean_std(*dataset.get_mean_std(
+            relative_to_gripper=cfg.policy.relative, 
+            quaternion_format=cfg.policy.quaternion_format)
+            )
 
         # configure lr scheduler
         lr_scheduler = get_scheduler(

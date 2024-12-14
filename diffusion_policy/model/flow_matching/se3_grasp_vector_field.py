@@ -37,8 +37,8 @@ class SE3GraspVectorField(ModuleAttrMixin):
         self.obs_f = obs_f
 
     def forward_act(self, x):
-        act_x, act_f = self.encoder.encode_act(x)
-        time_emb = self.encoder.encode_time(x)
+        act_x, act_f = self.encoder.encode_act(x['act'])
+        time_emb = self.encoder.encode_time(x['time'])
         act_x['time'] = time_emb
 
         obs_f, act_f = self.encoder.combine_time(self.obs_f, act_f, time_emb)

@@ -246,6 +246,46 @@ class RLBenchDataset(torch.utils.data.Dataset):
                     imgs.append(torch.from_numpy(img[:3,:,:])) 
         imgs = torch.stack(imgs) / 255.0
         return imgs    
+    
+    def get_stats(self, relative_to_gripper=False, quaternion_format='xyzw'):
+        from pytorch3d.transforms import matrix_to_quaternion, quaternion_to_matrix, quaternion_multiply
+        act_stats = []
+        for idx in range(len(self)):
+            index = self.indices[idx]
+            sample = collate_samples(
+                index,
+                use_pc=False,
+                use_rgb=False,
+                use_mask=False,
+                apply_cameras=False,
+                use_features=False
+            )
+
+            act_p = torch.from_numpy(sample['action']['gt_trajectory'][..., :3])
+            if relative_to_gripper:
+                rel_to = torch.from_numpy(sample['obs']['curr_gripper'][-1])
+                # The following code expects wxyz quaternion format!
+                if quaternion_format == 'xyzw':
+                    rel_to[..., 3:7] = rel_to[..., (6, 3, 4, 5)]
+                    H_rel_to = quaternion_to_matrix(rel_to[..., 3:7])
+                    H_rel_to_inv = H_rel_to.inverse()
+                    act_p = torch.einsum('ij,nj->ni', H_rel_to_inv, act_p - rel_to[..., :3])
+            act_stats.append(act_p)
+
+        act_stats = torch.cat(act_stats, dim=0)
+        return act_stats
+
+    def get_mean_std(self, relative_to_gripper=False, quaternion_format='xyzw'):
+        act_stats = self.get_stats(relative_to_gripper, quaternion_format)
+        act_p_mean = act_stats.mean(dim=0, keepdim=True)
+        act_p_std = act_stats.std(dim=0, keepdim=True)
+
+        act_r_mean = torch.zeros_like(act_p_mean)
+        act_r_std = torch.ones_like(act_p_std) * torch.pi
+
+        act_mean = torch.cat([act_p_mean, act_r_mean], dim=-1)
+        act_std = torch.cat([act_p_std, act_r_std], dim=-1)
+        return act_mean, act_std
 
 # TEST CODE
 def plot(pcd, rgb=None, batch_idx=0):

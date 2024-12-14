@@ -43,21 +43,20 @@ class SE3GraspPointCloudSuperEncoder(ModuleAttrMixin):
             )
 
     def forward(self, x):
-        obs_points, obs_features = self.encode_obs(x)
-        act_points, act_features = self.encode_act(x)
-        time_emb = self.encode_time(x)
+        obs_points, obs_features = self.encode_obs(x['obs'])
+        act_points, act_features = self.encode_act(x['act'])
+        time_emb = self.encode_time(x['time'])
         obs_f, act_f = self.combine_time(obs_features, act_features, time_emb)
         return obs_points, obs_f, act_points, act_f
 
-    def encode_time(self, x):
-        time = x['time']
+    def encode_time(self, time):
         time_emb = self.time_encoder(time)
         return time_emb[:,None,:]
 
-    def encode_obs(self, x):
-        pcd = x['obs']['pcd']
-        pcd_features = x['obs']['pcd_features']
-        current_gripper = x['obs']['current_gripper']
+    def encode_obs(self, obs):
+        pcd = obs['pcd']
+        pcd_features = obs['pcd_features']
+        current_gripper = obs['current_gripper']
 
         batch = pcd.shape[0]
         device = pcd.device
@@ -82,9 +81,9 @@ class SE3GraspPointCloudSuperEncoder(ModuleAttrMixin):
 
         return obs_points, obs_features
 
-    def encode_act(self, x):
-        act_points = {'centers': x['act'][..., :3, -1], 'vectors': x['act'][..., :3, :3]}
-        act_features = self.action_features[None,...].repeat(x['act'].shape[0], 1, 1)
+    def encode_act(self, act):
+        act_points = {'centers': act[..., :3, -1], 'vectors': act[..., :3, :3]}
+        act_features = self.action_features[None,...].repeat(act.shape[0], 1, 1)
 
         return act_points, act_features
 

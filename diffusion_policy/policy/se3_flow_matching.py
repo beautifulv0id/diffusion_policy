@@ -4,21 +4,22 @@ import torch.nn.functional as F
 from diffusion_policy.common.so3_util import log_map, se3_inverse
 from diffusion_policy.common.se3_util import se3_from_rot_pos
 from diffusion_policy.common.rotation_utils import normalise_quat
-from diffusion_policy.model.flow_matching.flow_matching_models import SE3LinearAttractorFlow
+from geo3dattn.policy.se3_flowmatching.common.se3_flowmatching import RectifiedLinearFlow
 
 from geo3dattn.model.ursa_transformer.ursa_transformer import URSATransformer
 
 from diffusion_policy.model.obs_encoders.se3_grasp_pcd_encoder import SE3GraspPointCloudSuperEncoder
 from diffusion_policy.model.obs_encoders.feature_pcd_encoder import FeaturePCDEncoder
 from diffusion_policy.model.flow_matching.se3_grasp_vector_field import SE3GraspVectorField
+from diffusion_policy.model.common.workspace_cropping import crop_to_workspace
 
+from einops import reduce
 from torch import einsum
 
 from pytorch3d.transforms import matrix_to_quaternion, quaternion_to_matrix
 from diffusion_policy.common.so3_util import log_map
 from diffusion_policy.policy.base_image_policy import BaseImagePolicy
 from typing import Dict
-
 
 class SE3FlowMatching(BaseImagePolicy):
 
@@ -31,7 +32,6 @@ class SE3FlowMatching(BaseImagePolicy):
                  diffusion_timesteps=100,
                  nhist=3,
                  nhorizon=16,
-                 t_switch=0.75,
                  relative=False,
                  causal_attn=True,
                  gripper_loc_bounds=None,
@@ -61,13 +61,11 @@ class SE3FlowMatching(BaseImagePolicy):
             decoder=decoder, 
             latent_dim=embedding_dim)
 
-        self.n_steps = diffusion_timesteps
         self.nhorizon = nhorizon
         
         ## Flow Model ##
-        self.t_switch = t_switch
         self.scaling_factor = torch.tensor(scaling_factor)
-        self.flow = SE3LinearAttractorFlow(t_switch=self.t_switch)
+        self.flow = RectifiedLinearFlow(n_action_steps=1, num_steps=diffusion_timesteps)
 
         self._relative = relative
         self.pcd_self_attn = pcd_self_attn
@@ -81,44 +79,20 @@ class SE3FlowMatching(BaseImagePolicy):
             self.workspace_bounds = None
         self.max_pcd_points = max_pcd_points
 
-    def crop_to_workspace(self, pcd, feats, workspace_bounds):
-        """
-        Returns the indices of points within the specified workspace bounds, ensuring each batch has an equal number of points.
 
-        Parameters:
-        - pcd: A tensor of shape (B, N, 3) representing the point cloud.
-        - feats: A tensor of shape (B, N, F) representing the features.
-        - workspace_bounds: A list or tensor of shape (2, 3) specifying the min and max bounds for x, y, z.
+    # ========= utils  ============
+    def vec_to_pose(self, vec):
+        p, r = self.flow._vector_to_pose(vec)
+        H = torch.eye(4)[None, None, ...].repeat(vec.shape[0], vec.shape[1], 1, 1).to(vec.device)
+        H[:, :, :3, -1] = p
+        H[:, :, :3, :3] = r
+        return H
 
-        Returns:
-        - trimmed_pcd: A list of tensors, where each tensor contains the selected points for a batch.
-        - trimmed_feats: A list of tensors, where each tensor contains the feature values corresponding to the selected points for a batch.
-        """
-        batch_size = pcd.shape[0]
-        batch_indices = []
+    def pose_to_vec(self, H):
+        p, r = H[:, :, :3, -1], H[:, :, :3, :3]
+        vec = self.flow._pose_to_vector(p, r)
+        return vec
 
-        for b in range(batch_size):
-            mask = torch.ones(pcd[b].shape[0], dtype=torch.bool, device=pcd.device)
-            for i in range(3):
-                mask = torch.logical_and(mask, pcd[b, :, i] > workspace_bounds[0][i])
-                mask = torch.logical_and(mask, pcd[b, :, i] < workspace_bounds[1][i])
-
-            indices = torch.nonzero(mask, as_tuple=False).squeeze(1)  # Get the indices where mask is True
-            # Randomly sample points if there are more than max_pcd_points
-            if len(indices) > self.max_pcd_points:
-                indices = indices[torch.randperm(len(indices))[:self.max_pcd_points]]
-            batch_indices.append(indices)
-
-        # Extract the corresponding points and RGB values
-        cropped_pcd = [pcd[b, indices, :] for b, indices in enumerate(batch_indices)]
-        cropped_feats = [feats[b, indices, :] for b, indices in enumerate(batch_indices)]
-
-        cropped_pcd = torch.stack(cropped_pcd)
-        cropped_feats = torch.stack(cropped_feats)
-
-        return cropped_pcd, cropped_feats 
-
-        
     def normalize_pos(self, x):
         x = x.clone()
         if self.gripper_loc_bounds is None:
@@ -169,44 +143,29 @@ class SE3FlowMatching(BaseImagePolicy):
     def convert2abs(self, trajectory):
         trajectory = einsum('bmn,blnk->blmk', self.relative_frame, trajectory)
         return trajectory
+    
+    def set_mean_std(self, mean, std):
+        mean = self.normalize_pos(mean)
+        std = self.normalize_pos(std)
+        self.flow.set_mean_std(mean, std)
 
-    def sample(self, fixed_inputs):
-        B = fixed_inputs["obs"]["pcd"].shape[0]
-        device = fixed_inputs["obs"]["pcd"].device
-        self.model.set_context(*self.model.encode_obs(fixed_inputs))
+    def sample(self, obs):
+        B = obs["pcd"].shape[0]
+        self.model.set_context(*self.model.encode_obs(obs))
         # Iterative denoising
         with torch.no_grad():
-            dt = 1.0 / self.n_steps
-            r0, p0 = self.flow.generate_random_initial_pose(batch=B, trj_steps=1)
-            r0, p0 = r0.to(device), p0.to(device)
-            rt, pt = r0, p0
-            for s in range(0, self.n_steps):
-                time = s*dt*torch.ones_like(pt[:, 0, 0], device=device)
-                xt = se3_from_rot_pos(rt, pt)
-                out, gr = self.model.forward_act({
-                    'act': xt,
-                    'time': time
-                })
-                dp, dr = out[...,:3], out[...,3:6]   
-                rt, pt = self.flow.step(rt, pt, dr, dp, dt, time=s*dt)
+            at = self.flow.generate_random_initial_pose(B)
+            for s in range(0, self.flow.num_steps):
+                step = s * torch.ones_like(at[:, 0, 0])
+                at_H = self.vec_to_pose(at)
+                d_act, gripper_open = self.model.forward_act({
+                    'act': at_H,
+                    'time':step})
+                at = self.flow.step(at, d_act, s)
 
+        trajectory = self.vec_to_pose(at)
 
-        trajectory = se3_from_rot_pos(rt, pt)
-
-        if self._relative:
-            trajectory = self.convert2abs(trajectory)
-        # Back to quaternion
-        trajectory = self.unconvert_rot(trajectory, res=gr > 0.5)
-        # unnormalize position
-        trajectory = self.unnormalize_pos(trajectory)
-
-        output = dict()
-        output['trajectory'] = trajectory
-        output['gripper_openess'] = gr
-
-        return output
-    
-
+        return trajectory, gripper_open
     
     def create_obs_dict(self, pcd, curr_gripper, feature_obs):
         obs = dict()
@@ -241,7 +200,7 @@ class SE3FlowMatching(BaseImagePolicy):
         if feature_obs is None:
             feature_obs, pcd_obs = self.feature_pcd_encoder(rgb_obs, pcd_obs)
             if self.workspace_bounds is not None:
-                pcd_obs, feature_obs = self.crop_to_workspace(pcd_obs, feature_obs, self.workspace_bounds)       
+                pcd_obs, feature_obs = crop_to_workspace(pcd_obs, feature_obs, self.workspace_bounds, self.max_pcd_points)       
 
         if gt_trajectory is not None:
             gt_trajectory = self.normalize_pos(gt_trajectory)
@@ -266,36 +225,39 @@ class SE3FlowMatching(BaseImagePolicy):
         obs = self.create_obs_dict(pcd_obs, curr_gripper, feature_obs)
 
         if run_inference:
-            return self.sample({'obs': obs})
+            return self.sample(obs)
             
         # Prepare inputs
-        p1 = gt_trajectory[:, :, :3, 3]
-        r1 = gt_trajectory[:, :, :3, :3]
+        batch_size = pcd_obs.shape[0]
+        device, dtype = pcd_obs.device, pcd_obs.dtype
+        act_vector = self.flow._pose_to_vector(gt_trajectory[...,:3, -1], gt_trajectory[...,:3, :3])
 
-        # Add noise to the clean trajectories
-        r0, p0 = self.flow.generate_random_initial_pose(batch=gt_trajectory.shape[0], trj_steps=gt_trajectory.shape[1])
-        r0, p0 = r0.to(gt_trajectory.device), p0.to(gt_trajectory.device)
-        timesteps = torch.rand(gt_trajectory.shape[0], device=gt_trajectory.device)
-        rt, pt = self.flow.flow_at_t(r0, p0, r1, p1, timesteps)
-        dr, dp = self.flow.vector_field_at_t(r1,p1,rt,pt,timesteps)
-        
-        # Predict the noise residual
-        trajectory_t = se3_from_rot_pos(rt, pt)
+        # 2. Compute Flow Matching Variables
+        a1 = act_vector
+        a0 = self.flow.generate_random_initial_pose(batch_size)
+        time = torch.randint(0, self.flow.num_steps, (batch_size,)).to(device=device, dtype=dtype)
 
-        obs_x, obs_f = self.model.encode_obs({'obs': obs})
-        self.model.set_context(obs_x, obs_f)
+        at = self.flow.flow_at_t(a0, a1, time)
+        target = self.flow.vector_field_at_t(a0, a1, at, time)
+
+        ## 3. Set Context
+        self.model.set_context(*self.model.encode_obs(obs))
+
         # Predict the noise residual
-        input_data = {'obs': obs, 'act': trajectory_t, 'time': timesteps}
+        at_pose = self.vec_to_pose(at)
+        input_data = {'obs': obs, 'act': at_pose, 'time': time}
         d_act, openess = self.model.forward_act(input_data)
 
         # Compute loss
-        loss = 30 * F.mse_loss(dp, d_act[..., :3], reduction='mean') + 10 * F.mse_loss(dr, d_act[..., 3:6], reduction='mean')
+        loss = F.mse_loss(d_act, target, reduction='none')
+        loss = reduce(loss, 'b ... -> b (...)', 'mean')
+        loss = loss.mean()
         if torch.numel(gt_openess) > 0:
             loss += F.binary_cross_entropy(openess, gt_openess)
         return loss
     
     def predict_action(self, obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        return self.forward(
+        trajectory, gripper_open = self.forward(
             gt_trajectory=None,
             rgb_obs=obs_dict.get('rgb', None),
             pcd_obs=obs_dict['pcd'],
@@ -303,6 +265,20 @@ class SE3FlowMatching(BaseImagePolicy):
             run_inference=True,
             feature_obs=obs_dict.get('clip_features', None)
         )
+    
+        if self._relative:
+            trajectory = self.convert2abs(trajectory)
+        # Back to quaternion
+        trajectory = self.unconvert_rot(trajectory, res=gripper_open > 0.5)
+        # unnormalize position
+        trajectory = self.unnormalize_pos(trajectory)
+
+        output = dict()
+        output['trajectory'] = trajectory
+        output['gripper_openess'] = gripper_open
+
+        return output
+
     
     def compute_loss(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
         return self.forward(
