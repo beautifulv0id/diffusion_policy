@@ -29,6 +29,10 @@ class TopKCheckpointManager:
         else:
             self.path_value_map = dict()
 
+    def get_ckpt_name(self, data: Dict[str, float]) -> str:
+        return self.format_str.format(**data)
+
+
     def get_ckpt_path(self, data: Dict[str, float]) -> Optional[str]:
         if self.k == 0:
             return None
@@ -36,7 +40,7 @@ class TopKCheckpointManager:
             return None
 
         value = data[self.monitor_key]
-        ckpt_name = self.format_str.format(**data)
+        ckpt_name = self.get_ckpt_name(data)
         ckpt_path = os.path.join(
             self.save_dir, ckpt_name)
         

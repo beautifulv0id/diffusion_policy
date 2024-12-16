@@ -307,6 +307,15 @@ class TrainingWorkspace(BaseWorkspace):
                             wandb_run.log({"prediction_vs_gt": image}, step=self.global_step)
 
                     # checkpoint
+                    # sanitize metric names
+                    metric_dict = dict()
+                    for key, value in step_log.items():
+                        new_key = key.replace('/', '_')
+                        metric_dict[new_key] = value
+
+                    if (self.epoch % cfg.training.save_milestone_every) == 0:
+                        self.save_checkpoint(tag=topk_manager.get_ckpt_name(metric_dict)[-5:])
+
                     if (self.epoch % cfg.training.checkpoint_every) == 0:
                         # checkpointing
                         if cfg.checkpoint.save_last_ckpt:
@@ -314,11 +323,6 @@ class TrainingWorkspace(BaseWorkspace):
                         if cfg.checkpoint.save_last_snapshot:
                             self.save_snapshot()
 
-                        # sanitize metric names
-                        metric_dict = dict()
-                        for key, value in step_log.items():
-                            new_key = key.replace('/', '_')
-                            metric_dict[new_key] = value
                         # We can't copy the last checkpoint here
                         # since save_checkpoint uses threads.
                         # therefore at this point the file might have been empty!
@@ -355,7 +359,7 @@ class TrainingWorkspace(BaseWorkspace):
                     cfg.task.env_runner,
                     output_dir=self.output_dir)
         dataset = hydra.utils.instantiate(cfg.task.dataset)
-        val_dataset = dataset.get_validation_dataset()
+        val_dataset = dataset.get_test_dataset()
         self.model.set_mean_std(*dataset.get_mean_std(
             relative_to_gripper=cfg.policy.relative,
             quaternion_format=cfg.policy.quaternion_format)
@@ -387,6 +391,7 @@ def main(cfg):
     workspace = TrainingWorkspace(cfg)
     if cfg.mode == 'train':
         workspace.run()
+        workspace.rollout()
     elif cfg.mode == 'rollout':
         print("Rollout")
         workspace.rollout()
