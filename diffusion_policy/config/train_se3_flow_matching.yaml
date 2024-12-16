@@ -26,7 +26,7 @@ policy:
   embedding_dim: ${embedding_dim}
   backbone: "clip"
   n_points_out: 1000
-  feature_res: "res2"
+  feature_res: ${task.dataset.feature_res}
   scaling_factor: 3.0
   gripper_loc_bounds: ${task.gripper_loc_bounds}
   workspace_bounds: ${task.workspace_bounds}
@@ -35,7 +35,7 @@ policy:
   diffusion_timesteps: 50
   nhist: ${n_obs_steps}
   nhorizon: ${horizon}
-  relative: True
+  relative: False
   causal_attn: True
 
 dataloader:
