@@ -206,9 +206,9 @@ class RLBenchDataset(torch.utils.data.Dataset):
             sample['obs']['curr_gripper'] = add_noise_to_gripper_pose(sample['obs']['curr_gripper'], self.rot_noise_scale, self.pos_noise_scale)
 
         return sample
-
-    def get_validation_dataset(self):
-        val_set = RLBenchDataset(
+    
+    def get_dataset(self, split):
+        dataset = RLBenchDataset(
             dataset_path=self.dataset_path,
             cameras=self.cameras,
             task_name=self.task_name,
@@ -219,12 +219,21 @@ class RLBenchDataset(torch.utils.data.Dataset):
             n_episodes=self.n_episodes,
             image_rescale=self.image_rescale,
             cache_size=self.cache_size,
-            split='val',
+            split=split,
             use_precomputed_features=self.use_precomputed_features,
             feature_res=self.feature_res
         )
-        val_set._training = False
-        return val_set
+        return dataset
+
+    def get_test_dataset(self):
+        dataset = self.get_dataset('test')
+        dataset._training = False
+        return dataset
+
+    def get_validation_dataset(self):
+        dataset = self.get_dataset('val')
+        dataset._training = False
+        return dataset
     
     def empty_cache(self):
         for k, v in self._cache.items():
@@ -286,7 +295,7 @@ class RLBenchDataset(torch.utils.data.Dataset):
         act_mean = torch.cat([act_p_mean, act_r_mean], dim=-1)
         act_std = torch.cat([act_p_std, act_r_std], dim=-1)
         return act_mean, act_std
-
+    
 # TEST CODE
 def plot(pcd, rgb=None, batch_idx=0):
         fig = plt.figure()
@@ -303,49 +312,9 @@ def extract_rgb_pcd(batch):
     rgb = einops.rearrange(rgb, 'n v c h w -> n (v h w) c')
     return pcd, rgb
 
-def crop_workspace(pcd, rgb, workspace_bounds):
-    """
-    Returns the indices of points within the specified workspace bounds, ensuring each batch has an equal number of points.
-
-    Parameters:
-    - pcd: A tensor of shape (B, N, 3) representing the point cloud.
-    - rgb: A tensor of shape (B, N, 3) representing the RGB values.
-    - workspace_bounds: A list or tensor of shape (2, 3) specifying the min and max bounds for x, y, z.
-
-    Returns:
-    - trimmed_indices: A list of tensors, where each tensor contains the indices of selected points for a batch.
-    - trimmed_pcd: A list of tensors, where each tensor contains the selected points for a batch.
-    - trimmed_rgb: A list of tensors, where each tensor contains the RGB values corresponding to the selected points for a batch.
-    """
-    batch_size = pcd.shape[0]
-    batch_indices = []
-
-    for b in range(batch_size):
-        mask = torch.ones(pcd[b].shape[0], dtype=torch.bool)
-        for i in range(3):
-            mask = torch.logical_and(mask, pcd[b, :, i] > workspace_bounds[0][i])
-            mask = torch.logical_and(mask, pcd[b, :, i] < workspace_bounds[1][i])
-
-        indices = torch.nonzero(mask, as_tuple=False).squeeze(1)  # Get the indices where mask is True
-        batch_indices.append(indices)
-
-    # Find the minimum number of selected points across the batch
-    min_points = min(len(indices) for indices in batch_indices)
-
-    # Trim indices to ensure each batch has the same number of points
-    trimmed_indices = [indices[:min_points] for indices in batch_indices]
-
-    # Extract the corresponding points and RGB values
-    trimmed_pcd = [pcd[b, indices[:min_points], :] for b, indices in enumerate(batch_indices)]
-    trimmed_rgb = [rgb[b, indices[:min_points], :] for b, indices in enumerate(batch_indices)]
-
-    trimmed_pcd = torch.stack(trimmed_pcd)
-    trimmed_rgb = torch.stack(trimmed_rgb)
-
-    return trimmed_pcd, trimmed_rgb   
-
 def test_dataset():
     from torch.nn import functional as F
+    from diffusion_policy.model.common.workspace_cropping import crop_to_workspace
 
     dataset = RLBenchDataset(
         dataset_path=os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data/peract.zarr'),
@@ -362,6 +331,10 @@ def test_dataset():
         use_precomputed_features=False
     )
 
+    mean, std = dataset.get_mean_std(relative_to_gripper=True)
+    print("Mean: ", mean)
+    print("Std: ", std)
+
     tasks_location_bounds_path = os.environ['DIFFUSION_POLICY_ROOT'] + '/diffusion_policy/tasks/peract_workspace_bounds.json'
     buffer=0.0
     workspace_bounds = get_workspace_bounds(tasks_location_bounds_path, buffer)
@@ -370,7 +343,7 @@ def test_dataset():
     
     batch = next(iter(data_loader))
     pcd, rgb = extract_rgb_pcd(batch)
-    plot(pcd, rgb)
+    # plot(pcd, rgb)
 
     batch = next(iter(data_loader))
     pcd = batch['obs']['pcd']
@@ -393,7 +366,7 @@ def test_dataset():
     npts = pcd.shape[1]
     print("Number of points: ", npts)
 
-    cropped_pcd, cropped_rgb = crop_workspace(pcd, rgb, workspace_bounds)
+    cropped_pcd, cropped_rgb = crop_to_workspace(pcd, rgb, workspace_bounds)
 
     print("Number of points: ", cropped_pcd.shape[1])
     print("Factor of reduction: ", cropped_pcd.shape[1] / pcd.shape[1])
@@ -401,31 +374,32 @@ def test_dataset():
 
 
     npts = pcd.shape[0]
-    plt.show()
 
 
     # Farthest point sampling
-    # fps_subsampling_factor = 5
-    # ch = pcd.shape[1]
-    # pcd = torch.from_numpy(pcd[None, ...]).to(torch.float64)
-    # sampled_inds = dgl_geo.farthest_point_sampler(
-    #         pcd,
-    #     max(npts // fps_subsampling_factor, 1), 0
-    # ).long()
+    tgt_pts = 1000
+    ch = pcd.shape[-1]
+    sampled_inds = dgl_geo.farthest_point_sampler(
+            cropped_pcd,
+        tgt_pts, 0
+    ).long()
 
-    # # Sample features
-    # expanded_sampled_inds = sampled_inds.unsqueeze(-1).expand(-1, -1, ch)
-    # pcd = torch.gather(
-    #     pcd,
-    #     1,
-    #     expanded_sampled_inds
-    # ).numpy()
+    # Sample features
+    expanded_sampled_inds = sampled_inds.unsqueeze(-1).expand(-1, -1, ch)
+    cropped_pcd = torch.gather(
+        cropped_pcd,
+        1,
+        expanded_sampled_inds
+    ).numpy()
     
-    # rgb = torch.gather(
-    #     torch.from_numpy(rgb[None, ...]),
-    #     1,
-    #     expanded_sampled_inds
-    # ).numpy()   
+    cropped_rgb = torch.gather(
+        cropped_rgb,
+        1,
+        expanded_sampled_inds
+    ).numpy()   
+
+    plot(cropped_pcd, cropped_rgb)
+    plt.show()
 
     # pcd = pcd[0]
     # rgb = rgb[0]
@@ -472,6 +446,6 @@ if __name__ == "__main__":
 
     plt.switch_backend('tkagg')
 
-    test_precomputed()
-    # test_dataset()
+    # test_precomputed()
+    test_dataset()
 

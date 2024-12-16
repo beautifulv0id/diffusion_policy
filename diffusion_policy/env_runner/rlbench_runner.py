@@ -79,8 +79,7 @@ class RLBenchRunner(BaseImageRunner):
         self.max_episodes = max_episodes
         self.n_procs_max = n_procs_max
 
-    def run(self, policy: BaseLowdimPolicy, demos: List[Demo], mode: str = "train") -> Dict:
-        actioner = Actioner(policy=policy, action_dim=self.action_dim)
+    def run(self, policy: BaseLowdimPolicy, policy_cfg, demos: List[Demo], mode: str = "train") -> Dict:
 
         if mode == "train":
             n_vis = self.n_train_vis
@@ -89,12 +88,16 @@ class RLBenchRunner(BaseImageRunner):
 
         if len(demos) == 0:
             return {}
+
+        state_dict = {k: v.detach().clone() for k, v in policy.state_dict().items()}
         
         log_data = _evaluate_task_on_demos(env_args=self.env_args,
                                 task_str=self.task_str,
                                 demos=demos[:self.max_episodes],
                                 max_steps=self.max_steps,
-                                actioner=actioner,
+                                state_dict=state_dict,
+                                policy_cfg=policy_cfg,
+                                action_dim=self.action_dim,
                                 max_rrt_tries=self.max_rrt_tries,
                                 demo_tries=self.demo_tries,
                                 n_visualize=n_vis,

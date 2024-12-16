@@ -185,23 +185,9 @@ class Actioner:
             action: torch.Tensor
         """
         # self._task_id = self._task_id.to(self.device)
-        pred_dict = self._policy.predict_action(obs)
-    
-        if "rlbench_action" in pred_dict:
-            return {
-                "rlbench_action": pred_dict["rlbench_action"][0].detach().cpu().numpy(),
-            }
-        rot = pred_dict['action']['act_r']
-        pos = pred_dict['action']['act_p']
-        gripper_open = pred_dict['action'].get('act_gr', None)
-        ignore_collision = pred_dict['action'].get('act_ic', None)
-        rlbench_action = create_rlbench_action(rot, pos, gripper_open, ignore_collision)
-        rlbench_action = rlbench_action[0]
-        out = {
-            "rlbench_action": rlbench_action.detach().cpu().numpy(),
-            # "action": pred_dict['action'],
-        }
-        return out
+        trajectory = self._policy.predict_action(obs)["trajectory"]
+        rlbench_action = trajectory[0].detach().cpu().numpy()
+        return { "rlbench_action": rlbench_action}
 
     @property
     def device(self):

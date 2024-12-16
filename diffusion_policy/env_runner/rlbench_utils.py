@@ -12,14 +12,16 @@ import torch.nn.functional as F
 from rlbench.backend.exceptions import InvalidActionError
 from pyrep.errors import IKError, ConfigurationPathError
 import torch.multiprocessing as mp
-
+import hydra
 
 @torch.no_grad()
 def _evaluate_task_on_demos(env_args : dict, 
                             task_str: str,
                             demos: List[Demo],  
                             max_steps: int,
-                            actioner: Actioner,
+                            state_dict,
+                            policy_cfg,
+                            action_dim: int = 7,
                             n_procs_max : int = 1, 
                             max_rrt_tries: int = 1,
                             demo_tries: int = 1,
@@ -35,7 +37,7 @@ def _evaluate_task_on_demos(env_args : dict,
     events = [mp.Event() for _ in range(n_procs)]  
     processes = [mp.Process(target=_evaluate_task_on_demos_multiproc, 
                                     args=(demo_idx, lock, queue, events[i], env_args, 
-                                        task_str, demos, max_steps, actioner, 
+                                        task_str, demos, max_steps, state_dict, policy_cfg, action_dim,
                                         max_rrt_tries, demo_tries, n_visualize, 
                                         verbose, plot_gt_action,return_model_obs)
                         ) for i in range(n_procs)]
@@ -73,7 +75,9 @@ def _evaluate_task_on_demos_multiproc(demo_idx : mp.Value,
                             task_str: str,
                             demos: List[Demo],  
                             max_steps: int,
-                            actioner: Actioner,
+                            state_dict,
+                            policy_cfg,
+                            action_dim: int = 7,
                             max_rrt_tries: int = 1,
                             demo_tries: int = 1,
                             n_visualize: int = 0,
@@ -81,9 +85,8 @@ def _evaluate_task_on_demos_multiproc(demo_idx : mp.Value,
                             plot_gt_action: bool = False,
                             return_model_obs: bool = False):
     
-    # del actioner
-    # event.set()
-    # return None
+    policy = create_policy(policy_cfg, state_dict)  
+    actioner = Actioner(policy, action_dim=action_dim)
     env = RLBenchEnv(**env_args)
     env.launch()
     device = actioner.device
@@ -295,3 +298,7 @@ def _evaluate_task_on_demos_multiproc(demo_idx : mp.Value,
 
     event.set()
 
+def create_policy(cfg, state_dict):
+    policy = hydra.utils.instantiate(cfg)
+    policy.load_state_dict(state_dict)
+    return policy

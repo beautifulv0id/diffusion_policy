@@ -27,7 +27,7 @@ from diffusion_policy.common.checkpoint_util import TopKCheckpointManager
 from diffusion_policy.common.json_logger import JsonLogger
 from diffusion_policy.common.pytorch_util import dict_apply, optimizer_to
 from diffusion_policy.model.common.lr_scheduler import get_scheduler
-from diffusion_policy.policy.ursa_flow import URSAFlow
+from diffusion_policy.policy.se3_flow_matching import SE3FlowMatching
 from diffusion_policy.common.rlbench_util import create_obs_state_plot
 from torchvision.utils import make_grid
 
@@ -46,8 +46,10 @@ class TrainingWorkspace(BaseWorkspace):
         random.seed(seed)
 
         # configure model
-        self.model : URSAFlow = hydra.utils.instantiate(cfg.policy)
-
+        self.model : SE3FlowMatching = hydra.utils.instantiate(cfg.policy)
+        self.ema_model: SE3FlowMatching = None
+        if cfg.training.use_ema:
+            self.ema_model = copy.deepcopy(self.model)
         # configure training state
         self.optimizer = hydra.utils.instantiate(
             cfg.optimizer, params=self.model.parameters())
@@ -123,11 +125,11 @@ class TrainingWorkspace(BaseWorkspace):
             # wandb_run.log({"dataset": image}, step=self.global_step)
 
         # # configure ema
-        # ema: EMAModel = None
-        # if cfg.training.use_ema:
-        #     ema = hydra.utils.instantiate(
-        #         cfg.ema,
-        #         model=self.ema_model)
+        ema: SE3FlowMatching = None
+        if cfg.training.use_ema:
+            ema = hydra.utils.instantiate(
+                cfg.ema,
+                model=self.ema_model)
 
         # configure env
         # env_runner: BaseImageRunner
@@ -156,8 +158,9 @@ class TrainingWorkspace(BaseWorkspace):
         device = torch.device(cfg.training.device)
         self.model.to(device)
         dtype = self.model.dtype
-        # if self.ema_model is not None:
-        #     self.ema_model.to(device)
+
+        if self.ema_model is not None:
+            self.ema_model.to(device)
         optimizer_to(self.optimizer, device)
         # if normalizer is not None:
         #     normalizer_to(normalizer, device, dtype)
@@ -177,10 +180,6 @@ class TrainingWorkspace(BaseWorkspace):
                 for local_epoch_idx in gepoch:
                     step_log = dict()
                     # ========= train for this epoch ==========
-                    # if cfg.training.freeze_encoder:
-                    #     self.model.obs_encoder.eval()
-                    #     self.model.obs_encoder.requires_grad_(False)
-
                     train_losses = list()
                     with tqdm.tqdm(train_dataloader, desc=f"Training epoch {self.epoch}",
                                 leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
@@ -205,8 +204,8 @@ class TrainingWorkspace(BaseWorkspace):
                                 lr_scheduler.step()
 
                             # update ema
-                            # if cfg.training.use_ema:
-                            #     ema.step(self.model)
+                            if cfg.training.use_ema:
+                                ema.step(self.model)
 
                             # logging
                             raw_loss_cpu = raw_loss.item()
@@ -248,9 +247,9 @@ class TrainingWorkspace(BaseWorkspace):
                             and self.epoch > 0:
                         dataset.empty_cache() # empty cache before running
                         val_dataset.empty_cache()
-                        runner_log = env_runner.run(policy, dataset.demos, mode="train")
+                        runner_log = env_runner.run(policy, cfg.policy, dataset.demos, mode="train")
                         runner_log.update(
-                            env_runner.run(policy, val_dataset.demos, mode="eval")
+                            env_runner.run(policy, cfg.policy, val_dataset.demos, mode="eval")
                         )
                         # log all
                         step_log.update(runner_log)
@@ -357,6 +356,10 @@ class TrainingWorkspace(BaseWorkspace):
                     output_dir=self.output_dir)
         dataset = hydra.utils.instantiate(cfg.task.dataset)
         val_dataset = dataset.get_validation_dataset()
+        self.model.set_mean_std(*dataset.get_mean_std(
+            relative_to_gripper=cfg.policy.relative,
+            quaternion_format=cfg.policy.quaternion_format)
+        )        
 
         wandb_run = wandb.init(
             dir=str(self.output_dir),
@@ -368,9 +371,9 @@ class TrainingWorkspace(BaseWorkspace):
         with JsonLogger(log_path) as json_logger:
             with torch.no_grad():
                 env_runner.max_rrt_tries = 10
-                runner_log = env_runner.run(policy, dataset.demos, mode="train")
+                runner_log = env_runner.run(policy, cfg.policy, dataset.demos, mode="train")
                 runner_log.update(
-                    env_runner.run(policy, val_dataset.demos, mode="eval")
+                    env_runner.run(policy, cfg.policy, val_dataset.demos, mode="eval")
                 )
                 runner_log['epoch'] = self.epoch
                 # log all

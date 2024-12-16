@@ -16,7 +16,7 @@ cameras: ['left_shoulder', 'right_shoulder', 'wrist', 'front']
 
 dataset:
   _target_: diffusion_policy.dataset.rlbench_dataset.RLBenchDataset
-  dataset_path: ${oc.env:DIFFUSION_POLICY_ROOT}/data/peract.zarr
+  dataset_path: ${oc.env:DIFFUSION_POLICY_ROOT}/data/rlbench.zarr
   n_episodes: ${num_episodes}
   task_name: ${task.task_name}
   cameras: ${task.cameras}

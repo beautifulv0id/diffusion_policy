@@ -64,17 +64,17 @@ class SE3FlowMatching(BaseImagePolicy):
         self.nhorizon = nhorizon
         
         ## Flow Model ##
-        self.scaling_factor = torch.tensor(scaling_factor)
+        self.scaling_factor = torch.tensor(scaling_factor, requires_grad=False)
         self.flow = RectifiedLinearFlow(n_action_steps=1, num_steps=diffusion_timesteps)
 
         self._relative = relative
         self.pcd_self_attn = pcd_self_attn
         if gripper_loc_bounds is not None:
-            self.register_buffer("gripper_loc_bounds", torch.tensor(gripper_loc_bounds))
+            self.register_buffer("gripper_loc_bounds", torch.tensor(gripper_loc_bounds, requires_grad=False))
         else:
             self.gripper_loc_bounds = None
         if workspace_bounds is not None:
-            self.register_buffer("workspace_bounds", torch.tensor(workspace_bounds))
+            self.register_buffer("workspace_bounds", torch.tensor(workspace_bounds, requires_grad=False))
         else:
             self.workspace_bounds = None
         self.max_pcd_points = max_pcd_points
@@ -166,14 +166,7 @@ class SE3FlowMatching(BaseImagePolicy):
         trajectory = self.vec_to_pose(at)
 
         return trajectory, gripper_open
-    
-    def create_obs_dict(self, pcd, curr_gripper, feature_obs):
-        obs = dict()
-        obs['pcd'] = pcd
-        obs['current_gripper'] = curr_gripper
-        obs['pcd_features'] = feature_obs
-        return obs
-   
+       
     def forward(
         self,
         gt_trajectory,
@@ -197,32 +190,37 @@ class SE3FlowMatching(BaseImagePolicy):
             is ALWAYS expressed as a quaternion form.
             The model converts it to 6D internally if needed.
         """
+        # Compute rgb features
         if feature_obs is None:
             feature_obs, pcd_obs = self.feature_pcd_encoder(rgb_obs, pcd_obs)
             if self.workspace_bounds is not None:
                 pcd_obs, feature_obs = crop_to_workspace(pcd_obs, feature_obs, self.workspace_bounds, self.max_pcd_points)       
 
+        # Normalize position
         if gt_trajectory is not None:
             gt_trajectory = self.normalize_pos(gt_trajectory)
         pcd_obs = self.normalize_pos(pcd_obs)
         curr_gripper = self.normalize_pos(curr_gripper)
-
-        if gt_trajectory is not None:
-            gt_openess = gt_trajectory[..., 7:8]
-            gt_trajectory = gt_trajectory[..., :7]
         curr_gripper = curr_gripper[..., :7]
 
         # Convert rotation parametrization
         curr_gripper, _ = self.convert_rot(curr_gripper)
         if gt_trajectory is not None:
+            gt_openess = gt_trajectory[..., 7:8]
             gt_trajectory, _ = self.convert_rot(gt_trajectory)
 
+        # Convert to relative frame of gripper
         if self._relative:
-            self.relative_frame = se3_from_rot_pos(curr_gripper[:, -1, :3, :3], curr_gripper[:, -1, :3, 3])
+            self.relative_frame = se3_from_rot_pos(curr_gripper[:, -1, :3, :3], curr_gripper[:, -1, :3, 3]).detach()
             if gt_trajectory is not None:
                 gt_trajectory = self.convert2rel(gt_trajectory)
 
-        obs = self.create_obs_dict(pcd_obs, curr_gripper, feature_obs)
+        # Create observation dictionary
+        obs = {
+            'pcd': pcd_obs,
+            'current_gripper': curr_gripper,
+            'pcd_features': feature_obs
+        }
 
         if run_inference:
             return self.sample(obs)

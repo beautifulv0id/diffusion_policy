@@ -42,7 +42,6 @@ flags.DEFINE_bool('high_dim', False,
                     'Include high dimensional data in the dataset')
 
 
-
 def check_and_make(dir):
     if not os.path.exists(dir):
         os.makedirs(dir)
@@ -249,10 +248,10 @@ def run(i, lock, task_index, task_demo_indices, task_variation_count, results, f
                 task_variation_count.value = my_variation_count = 0
                 task_index.value += 1
 
-            task_demo_indices[task_index.value] += 1
             if task_index.value >= num_tasks:
                 print('Process', i, 'finished')
                 break
+            task_demo_indices[task_index.value] += 1
             t = tasks[task_index.value]
 
         task_env = rlbench_env.get_task(t)
