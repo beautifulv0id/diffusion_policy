@@ -35,14 +35,14 @@ policy:
   use_mask: ${task.dataset.use_mask}
 
 dataloader:
-  batch_size: 8
+  batch_size: 1
   num_workers: 0
   shuffle: True
   pin_memory: False
   persistent_workers: False
 
 val_dataloader:
-  batch_size: 8
+  batch_size: 1
   num_workers: 0
   shuffle: False
   pin_memory: False
@@ -73,6 +73,7 @@ training:
   model_evaluation_every: 50
   rollout_every: 5000
   checkpoint_every: 10
+  save_milestone_every: 1000
   visualize_every: 1000
   visualize_batch_size: 8
   val_every: 50

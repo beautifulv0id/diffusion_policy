@@ -31,7 +31,7 @@ CAMERAS = ['left_shoulder', 'right_shoulder', 'wrist', 'overhead', 'front']
 
 Instructions = Dict[str, Dict[int, torch.Tensor]]
 
-def gripper_to_se3(signal, quaternion_format='xyzw'):
+def rlbench_action_to_se3(signal, quaternion_format='xyzw'):
     shape = signal.shape
     signal = signal.reshape(-1, signal.shape[-1])
     ret = signal[..., 7:]
@@ -43,16 +43,15 @@ def gripper_to_se3(signal, quaternion_format='xyzw'):
     pose = pose.reshape(shape[:-1] + (4, 4))
     return pose, ret
 
-def se3_to_gripper(pose, res=None, quaternion_format='xyzw'):
+def se3_to_rlbench_action(pose, res=None, quaternion_format='xyzw'):
     quat = matrix_to_quaternion(pose[..., :3, :3])
     if quaternion_format == 'xyzw':
         quat = quat[..., [1, 2, 3, 0]]
     signal = torch.cat([pose[..., :3, 3], quat], dim=-1)
     if res is not None:
+        res = res > 0.5
         signal = torch.cat([signal, res], -1)
     return signal
-
-
 
 
 def normalise_quat(x: torch.Tensor):

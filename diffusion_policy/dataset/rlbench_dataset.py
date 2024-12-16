@@ -5,7 +5,7 @@ import copy
 import os
 import pickle
 from time import time
-from diffusion_policy.common.rlbench_util import create_obs_state_plot, gripper_to_se3, se3_to_gripper
+from diffusion_policy.common.rlbench_util import create_obs_state_plot, rlbench_action_to_se3, se3_to_rlbench_action
 from diffusion_policy.common.pytorch_util import dict_apply
 from diffusion_policy.common.so3_util import normal_so3
 from diffusion_policy.dataset.rlbench_utils import Resize
@@ -85,7 +85,7 @@ def add_noise_to_gripper_pose(gripper_pose, rot_noise_scale, pos_noise_scale):
         return gripper_pose
     
     t, _ = gripper_pose.shape
-    gripper_pose, ret = gripper_to_se3(gripper_pose)
+    gripper_pose, ret = rlbench_action_to_se3(gripper_pose)
 
     # add noise to rotation
     if rot_noise_scale > 0:
@@ -97,7 +97,7 @@ def add_noise_to_gripper_pose(gripper_pose, rot_noise_scale, pos_noise_scale):
         dpos = torch.normal(0, pos_noise_scale, (t, 3)).to(gripper_pose.device)
         gripper_pose[:, :3, 3] += dpos
 
-    gripper_pose = se3_to_gripper(gripper_pose, ret)
+    gripper_pose = se3_to_rlbench_action(gripper_pose, ret)
     return gripper_pose
 
 def load_demos(task_path):

@@ -30,6 +30,8 @@ from diffusion_policy.common.se3_util import se3_from_rot_pos
 from diffusion_policy.policy.base_image_policy import BaseImagePolicy
 from typing import Dict
 
+from diffusion_policy.common.rlbench_util import rlbench_action_to_se3, se3_to_rlbench_action
+
 from torch import einsum
 
 def pos_quat_apply(pq1, pq2):
@@ -217,13 +219,7 @@ class DiffuserActor(BaseImagePolicy):
 
         trajectory = torch.cat((trajectory, model_out[..., 9:]), -1)
 
-        sample_output = {}
-        sample_output['trajectory'] = trajectory
-        if need_attn_weights:
-            sample_output['attn_weights'] = polic_output['attn_weights']
-            sample_output['attn_pcd'] = polic_output['attn_pcd']
-
-        return sample_output
+        return trajectory
 
     def compute_trajectory(
         self,
@@ -258,37 +254,12 @@ class DiffuserActor(BaseImagePolicy):
         cond_mask = cond_mask.bool()
 
         # Sample
-        output = self.conditional_sample(
+        return self.conditional_sample(
             cond_data,
             cond_mask,
             fixed_inputs,
             need_attn_weights=need_attn_weights
         )
-
-        trajectory = output['trajectory']            
-
-        # Normalize quaternion
-        if self._rotation_parametrization != '6D':
-            trajectory[:, :, 3:7] = normalise_quat(trajectory[:, :, 3:7])
-        
-        # Back to quaternion
-        trajectory = self.unconvert_rot(trajectory)
-
-        if self._relative:
-            trajectory = self.convert2abs(trajectory, curr_gripper_abs)
-
-        # unnormalize position
-        trajectory[:, :, :3] = self.unnormalize_pos(trajectory[:, :, :3])
-        # Convert gripper status to probaility
-        if trajectory.shape[-1] > 7:
-            trajectory[..., 7] = trajectory[..., 7].sigmoid()
-
-        output['trajectory'] = trajectory
-
-        if need_attn_weights:
-            output['mask_idx'] = mask_idx
-
-        return output
 
     def normalize_pos(self, pos):
         if self.gripper_loc_bounds is None:
@@ -490,7 +461,7 @@ class DiffuserActor(BaseImagePolicy):
     
     def predict_action(self, obs_dict: Dict[str, torch.Tensor], need_attn_weights=False) -> Dict[str, torch.Tensor]:
         trajectory_mask = torch.zeros(1, self.nhorizon, device=obs_dict['rgb'].device)
-        output = self.forward(
+        trajectory = self.forward(
             gt_trajectory=None,
             trajectory_mask=trajectory_mask,
             rgb_obs=obs_dict['rgb'],
@@ -501,26 +472,28 @@ class DiffuserActor(BaseImagePolicy):
             mask_obs=obs_dict.get('mask', None),
             need_attn_weights=need_attn_weights
         )
-        rlbench_action = output['trajectory'].clone()
 
-        if rlbench_action.shape[-1] > 7:
-            rlbench_action[..., 7] = rlbench_action[..., 7] > 0.5
-            
-        action = create_robomimic_from_rlbench_action(rlbench_action, quaternion_format = self._quaternion_format)
-        result = {
-            'rlbench_action' : rlbench_action,
-            'action': action,
-            'obs': obs_dict,
-            'extra': {
-                'act_gr_pred': output['trajectory'][..., 7],
-            }
-        }
+        # Normalize quaternion
+        if self._rotation_parametrization != '6D':
+            trajectory[:, :, 3:7] = normalise_quat(trajectory[:, :, 3:7])
+        
+        # Back to quaternion
+        trajectory = self.unconvert_rot(trajectory)
 
-        if need_attn_weights:
-            result['attn_weights'] = output['attn_weights']
-            result['attn_pcd'] = output['attn_pcd']
-            result['mask_idx'] = output['mask_idx']
-        return result
+        if self._relative:
+            trajectory = self.convert2abs(trajectory, obs_dict['curr_gripper'])
+
+        # unnormalize position
+        trajectory[:, :, :3] = self.unnormalize_pos(trajectory[:, :, :3])
+        # Convert gripper status to probaility
+        if trajectory.shape[-1] > 7:
+            trajectory[..., 7] = trajectory[..., 7].sigmoid()
+
+        output = dict()
+        output['trajectory'] = trajectory
+
+        return output
+    
     
     def compute_loss(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
         return self.forward(
@@ -547,13 +520,13 @@ class DiffuserActor(BaseImagePolicy):
             gt_act_r = gt_act_r[..., (3, 0, 1, 2)]
         gt_act_r = normalise_quat(gt_act_r)
         gt_act_r = quaternion_to_matrix(gt_act_r)
-        gt_act_gr = gt_trajectory[..., 7]
+        gt_act_gr = gt_trajectory[..., 7:8]
 
         out = self.predict_action(batch['obs'])
-        action = out['action']
-        pred_act_p = action['act_p']
-        pred_act_r = action['act_r']
-        pred_act_gr = action['act_gr']
+        trajectory = out['trajectory']
+        pred_act, pred_act_gr = rlbench_action_to_se3(trajectory)
+        pred_act_p = pred_act[..., :3, -1]
+        pred_act_r = pred_act[..., :3, :3]
 
         pos_error = torch.nn.functional.mse_loss(pred_act_p, gt_act_p)
 
@@ -569,6 +542,8 @@ class DiffuserActor(BaseImagePolicy):
         log_dict[prefix + 'rotation_mse_error'] = rot_error.item()
 
         return log_dict
+    
+    
 class DiffusionHead(nn.Module):
 
     def __init__(self,

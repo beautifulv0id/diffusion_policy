@@ -47,8 +47,9 @@ class TrainingWorkspace(BaseWorkspace):
 
         # configure model
         self.model : DiffuserActor = hydra.utils.instantiate(cfg.policy)
-
-
+        self.ema_model: DiffuserActor = None
+        if cfg.training.use_ema:
+            self.ema_model = copy.deepcopy(self.model)
         # configure training state
         self.optimizer = hydra.utils.instantiate(
             cfg.optimizer, params=self.model.parameters())
@@ -93,12 +94,38 @@ class TrainingWorkspace(BaseWorkspace):
             last_epoch=self.global_step - 1
         )
 
+        # configure logging
+        wandb_run = wandb.init(
+            dir=str(self.output_dir),
+            config=OmegaConf.to_container(cfg, resolve=True),
+            **cfg.logging
+        )
+        wandb.config.update(
+            {
+                "output_dir": self.output_dir,
+            }
+        )
+
+        if cfg.training.debug:
+            cfg.training.num_epochs = 2
+            cfg.training.max_train_steps = 3
+            cfg.training.max_val_steps = 3
+            cfg.training.rollout_every = 1
+            cfg.training.checkpoint_every = 1
+            cfg.training.val_every = 1
+            cfg.training.sample_every = 1
+            cfg.training.visualize_every = 1
+            cfg.task.env_runner.max_episodes = 1
+            cfg.task.env_runner.max_steps = 1
+            image = wandb.Image(dataset.get_data_visualization(), caption="Dataset")
+            wandb_run.log({"dataset": image}, step=self.global_step)
+
         # # configure ema
-        # ema: EMAModel = None
-        # if cfg.training.use_ema:
-        #     ema = hydra.utils.instantiate(
-        #         cfg.ema,
-        #         model=self.ema_model)
+        ema: DiffuserActor = None
+        if cfg.training.use_ema:
+            ema = hydra.utils.instantiate(
+                cfg.ema,
+                model=self.ema_model)
 
         # configure env
         # env_runner: BaseImageRunner
@@ -116,18 +143,6 @@ class TrainingWorkspace(BaseWorkspace):
         else:
             env_runner = None
 
-        # configure logging
-        wandb_run = wandb.init(
-            dir=str(self.output_dir),
-            config=OmegaConf.to_container(cfg, resolve=True),
-            **cfg.logging
-        )
-        wandb.config.update(
-            {
-                "output_dir": self.output_dir,
-            }
-        )
-
         # configure checkpoint
         topk_manager = TopKCheckpointManager(
             save_dir=os.path.join(self.output_dir, 'checkpoints'),
@@ -138,8 +153,8 @@ class TrainingWorkspace(BaseWorkspace):
         device = torch.device(cfg.training.device)
         self.model.to(device)
         dtype = self.model.dtype
-        # if self.ema_model is not None:
-        #     self.ema_model.to(device)
+        if self.ema_model is not None:
+            self.ema_model.to(device)
         optimizer_to(self.optimizer, device)
         # if normalizer is not None:
         #     normalizer_to(normalizer, device, dtype)
@@ -148,17 +163,6 @@ class TrainingWorkspace(BaseWorkspace):
         train_sampling_batch = None
         val_sampling_batch = None
 
-        if cfg.training.debug:
-            cfg.training.num_epochs = 2
-            cfg.training.max_train_steps = 3
-            cfg.training.max_val_steps = 3
-            cfg.training.rollout_every = 1
-            cfg.training.checkpoint_every = 1
-            cfg.training.val_every = 1
-            cfg.training.sample_every = 1
-            cfg.training.visualize_every = 1
-            image = wandb.Image(dataset.get_data_visualization(), caption="Dataset")
-            wandb_run.log({"dataset": image}, step=self.global_step)
 
 
         # training loop
@@ -170,10 +174,6 @@ class TrainingWorkspace(BaseWorkspace):
                 for local_epoch_idx in gepoch:
                     step_log = dict()
                     # ========= train for this epoch ==========
-                    # if cfg.training.freeze_encoder:
-                    #     self.model.obs_encoder.eval()
-                    #     self.model.obs_encoder.requires_grad_(False)
-
                     train_losses = list()
                     with tqdm.tqdm(train_dataloader, desc=f"Training epoch {self.epoch}",
                                 leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
@@ -198,8 +198,8 @@ class TrainingWorkspace(BaseWorkspace):
                                 lr_scheduler.step()
 
                             # update ema
-                            # if cfg.training.use_ema:
-                            #     ema.step(self.model)
+                            if cfg.training.use_ema:
+                                ema.step(self.model)
 
                             # logging
                             raw_loss_cpu = raw_loss.item()
@@ -241,9 +241,9 @@ class TrainingWorkspace(BaseWorkspace):
                             and self.epoch > 0:
                         dataset.empty_cache() # empty cache before running
                         val_dataset.empty_cache()
-                        runner_log = env_runner.run(policy, dataset.demos, mode="train")
+                        runner_log = env_runner.run(policy, cfg.policy, dataset.demos, mode="train")
                         runner_log.update(
-                            env_runner.run(policy, val_dataset.demos, mode="eval")
+                            env_runner.run(policy, cfg.policy, val_dataset.demos, mode="eval")
                         )
                         # log all
                         step_log.update(runner_log)
@@ -273,36 +273,43 @@ class TrainingWorkspace(BaseWorkspace):
 
                     ## Run Experiment related Validation ## #TODO: as far as I see, this currently has no effect!
                     if (self.epoch % cfg.training.model_evaluation_every) == 0:
-                        if val_sampling_batch is not None:
-                            evaluation_log = self.model.evaluate(val_sampling_batch, validation=True)
-                            # log all
-                            step_log.update(evaluation_log)
+                        evaluation_log = self.model.evaluate(val_sampling_batch, validation=True)
+                        # log all
+                        step_log.update(evaluation_log)
 
                     # sample on a training batch
                     if (self.epoch % cfg.training.sample_every) == 0:
                         with torch.no_grad():
                             # sample trajectory from training set, and evaluate difference
-                            batch = dict_apply(train_sampling_batch, lambda x: x.to(device, non_blocking=True))
+                            batch = dict_apply(train_sampling_batch, lambda x: x.to(device, dtype, non_blocking=True))
 
                             eval_log = policy.evaluate(batch)
                             # log all
                             step_log.update(eval_log)
 
-                    if (self.epoch % cfg.training.visualize_every) == 0:
+                    if (self.epoch % cfg.training.visualize_every) == 0 and not cfg.task.dataset.use_precomputed_features:       
                         with torch.no_grad():
                             train_sampling_batch = dict_apply(train_sampling_batch, lambda x: x[:cfg.training.visualize_batch_size])
-                            batch = dict_apply(train_sampling_batch, lambda x: x.to(device, non_blocking=True))
+                            batch = dict_apply(train_sampling_batch, lambda x: x.to(device, dtype, non_blocking=True))
                             pred = policy.predict_action(batch['obs'])
                             obs = train_sampling_batch['obs']
                             gt_action = train_sampling_batch['action']['gt_trajectory']
-                            pred_action = pred['rlbench_action'].cpu().detach()
+                            pred_action = pred['trajectory'].cpu().detach()
                             imgs = create_obs_state_plot(obs=obs, gt_action=gt_action, pred_action=pred_action, quaternion_format=policy._quaternion_format, lowdim=cfg.task.type == 'lowdim')
                             img = make_grid(torch.from_numpy(imgs).float() / 255)
                             image = wandb.Image(img, caption="Prediction vs Ground Truth")
                             wandb_run.log({"prediction_vs_gt": image}, step=self.global_step)
 
-
                     # checkpoint
+                    # sanitize metric names
+                    metric_dict = dict()
+                    for key, value in step_log.items():
+                        new_key = key.replace('/', '_')
+                        metric_dict[new_key] = value
+
+                    if (self.epoch % cfg.training.save_milestone_every) == 0:
+                        self.save_checkpoint(tag=topk_manager.get_ckpt_name(metric_dict)[-5:])
+
                     if (self.epoch % cfg.training.checkpoint_every) == 0:
                         # checkpointing
                         if cfg.checkpoint.save_last_ckpt:
@@ -310,11 +317,6 @@ class TrainingWorkspace(BaseWorkspace):
                         if cfg.checkpoint.save_last_snapshot:
                             self.save_snapshot()
 
-                        # sanitize metric names
-                        metric_dict = dict()
-                        for key, value in step_log.items():
-                            new_key = key.replace('/', '_')
-                            metric_dict[new_key] = value
                         # We can't copy the last checkpoint here
                         # since save_checkpoint uses threads.
                         # therefore at this point the file might have been empty!
@@ -363,15 +365,14 @@ class TrainingWorkspace(BaseWorkspace):
         with JsonLogger(log_path) as json_logger:
             with torch.no_grad():
                 env_runner.max_rrt_tries = 10
-                runner_log = env_runner.run(policy, dataset.demos, mode="train")
+                runner_log = env_runner.run(policy, cfg.policy, dataset.demos, mode="train")
                 runner_log.update(
-                    env_runner.run(policy, val_dataset.demos, mode="eval")
+                    env_runner.run(policy, cfg.policy, val_dataset.demos, mode="eval")
                 )
                 runner_log['epoch'] = self.epoch
                 # log all
                 wandb_run.log(runner_log)
                 json_logger.log(runner_log)
-                
 @hydra.main(
     version_base=None,
     config_path=str(pathlib.Path(__file__).parent.parent.joinpath("config")),
@@ -380,6 +381,7 @@ def main(cfg):
     workspace = TrainingWorkspace(cfg)
     if cfg.mode == 'train':
         workspace.run()
+        workspace.rollout()
     elif cfg.mode == 'rollout':
         print("Rollout")
         workspace.rollout()
