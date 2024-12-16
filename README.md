@@ -75,6 +75,16 @@ pip install -r requirements.txt
 python setup.py develop
 ```
 
+#### Pointattention
+```bash
+cd <install_dir>
+git clone -b git@github.com:robotgradient/pointattention.git
+cd pointattention
+pip install -r requirements.txt
+pip install -e .
+```
+
+
 ## Dataset
 ### Download Pre-generated Peract
 Peract provides [pre-generated RLBench demonstrations](https://drive.google.com/drive/folders/0B2LlLwoO3nfZfkFqMEhXWkxBdjJNNndGYl9uUDQwS1pfNkNHSzFDNGwzd1NnTmlpZXR1bVE?resourcekey=0-jRw5RaXEYRLe2W6aNrNFEQ&usp=share_link) on google drive.
