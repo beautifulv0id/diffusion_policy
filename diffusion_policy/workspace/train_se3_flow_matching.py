@@ -1,3 +1,5 @@
+import time
+
 if __name__ == "__main__":
     import multiprocessing
     import matplotlib
@@ -38,6 +40,10 @@ class TrainingWorkspace(BaseWorkspace):
 
     def __init__(self, cfg: OmegaConf, output_dir=None):
         super().__init__(cfg, output_dir=output_dir)
+
+        # dump current config to yaml file:
+        with open(self.output_dir + "/config_raw.yaml", "w") as f:
+            OmegaConf.save(cfg, f)
 
         # set seed
         seed = cfg.training.seed
@@ -314,7 +320,8 @@ class TrainingWorkspace(BaseWorkspace):
                         metric_dict[new_key] = value
 
                     if (self.epoch % cfg.training.save_milestone_every) == 0:
-                        self.save_checkpoint(tag=topk_manager.get_ckpt_name(metric_dict)[-5:])
+                        # self.save_checkpoint(tag=topk_manager.get_ckpt_name(metric_dict)[-5:])
+                        self.save_checkpoint(tag="epoch="+str(self.epoch).zfill(4))
 
                     if (self.epoch % cfg.training.checkpoint_every) == 0:
                         # checkpointing
@@ -341,48 +348,88 @@ class TrainingWorkspace(BaseWorkspace):
                     self.epoch += 1
                     gepoch.set_postfix(train_loss=train_loss, refresh=False)
 
-    def rollout(self):
+        print ("training finished, now do the evaluation!")
+        # add sleep here to ensure that all of the models are really saved
+        time.sleep(10)
+        self.rollout(wandb_run=wandb_run)
+
+    def rollout(self, wandb_run=None):
         cfg = copy.deepcopy(self.cfg)
 
-        # resume training
-        best_ckpt_path = self.get_best_checkpoint_path()
-        if best_ckpt_path.is_file():
-            print(f"Best checkpoint path {best_ckpt_path}")
-            self.load_checkpoint(path=best_ckpt_path)
-        
-        device = torch.device(cfg.training.device)
-        self.model.to(device)
-        policy = self.model
-        policy.eval()
+        # get all checkpoints!
+        filepath = self.output_dir + '/checkpoints'
+        # now list all the checkpoints:
+        checkpoint_list = os.listdir(filepath)
 
-        env_runner = hydra.utils.instantiate(
+        # now go through all of them:
+        all_checkpoints = []
+        checkpoint_epoch = []
+        for checkpoint in checkpoint_list:
+            if (checkpoint[-5:]==".ckpt" and checkpoint[:6]=="epoch="):
+                all_checkpoints.append(checkpoint)
+                checkpoint_epoch.append(int(checkpoint.split('=')[-1].split('.')[0]))
+
+        # now sort them:
+        checkpoint_epoch = np.array(checkpoint_epoch)
+        sorted_indices = np.argsort(checkpoint_epoch)
+        all_checkpoints = np.array(all_checkpoints)[sorted_indices]
+        checkpoint_epoch = checkpoint_epoch[sorted_indices]
+
+
+        log_path = os.path.join(self.output_dir, 'eval_logs.json.txt')
+        if wandb_run is None:
+            wandb_run = wandb.init(
+                dir=str(self.output_dir),
+                config=OmegaConf.to_container(cfg, resolve=True),
+                **cfg.logging
+            )
+
+        with JsonLogger(log_path) as json_logger:
+
+            for j in range(len(all_checkpoints)):
+                if j>0 and checkpoint_epoch[j]==checkpoint_epoch[j-1]:
+                    # skip if there are multiple checkpoints for the same epoch
+                    continue
+
+                # load the current checkpoint
+                print ("Loading checkpoint: ", all_checkpoints[j])
+                self.load_checkpoint(path=filepath + '/' + all_checkpoints[j])
+
+                device = torch.device(cfg.training.device)
+                self.model.to(device)
+                policy = self.model
+                policy.eval()
+
+                env_runner = hydra.utils.instantiate(
                     cfg.task.env_runner,
                     output_dir=self.output_dir)
-        dataset = hydra.utils.instantiate(cfg.task.dataset)
-        val_dataset = dataset.get_test_dataset()
-        self.model.set_mean_std(*dataset.get_mean_std(
-            relative_to_gripper=cfg.policy.relative,
-            quaternion_format=cfg.policy.quaternion_format)
-        )        
+                dataset = hydra.utils.instantiate(cfg.task.dataset)
+                val_dataset = dataset.get_test_dataset()
+                self.model.set_mean_std(*dataset.get_mean_std(
+                    relative_to_gripper=cfg.policy.relative,
+                    quaternion_format=cfg.policy.quaternion_format)
+                                        )
 
-        wandb_run = wandb.init(
-            dir=str(self.output_dir),
-            config=OmegaConf.to_container(cfg, resolve=True),
-            **cfg.logging
-        )
+                with torch.no_grad():
+                    env_runner.max_rrt_tries = 10
+                    runner_log = env_runner.run(policy, cfg.policy, dataset.demos, mode="train")
+                    runner_log.update(
+                        env_runner.run(policy, cfg.policy, val_dataset.demos, mode="eval")
+                    )
+                    runner_log['epoch'] = int(checkpoint_epoch[j])
+                    # log all
+                    wandb_run.log(runner_log)
+                    json_logger.log(runner_log)
 
-        log_path = os.path.join(self.output_dir, 'logs.json.txt')
-        with JsonLogger(log_path) as json_logger:
-            with torch.no_grad():
-                env_runner.max_rrt_tries = 10
-                runner_log = env_runner.run(policy, cfg.policy, dataset.demos, mode="train")
-                runner_log.update(
-                    env_runner.run(policy, cfg.policy, val_dataset.demos, mode="eval")
-                )
-                runner_log['epoch'] = self.epoch
-                # log all
-                wandb_run.log(runner_log)
-                json_logger.log(runner_log)
+        print ("Finished the evaluation!")
+
+
+        # # load the models and do the rollout
+        # best_ckpt_path = self.get_best_checkpoint_path()
+        # if best_ckpt_path.is_file():
+        #     print(f"Best checkpoint path {best_ckpt_path}")
+        #     self.load_checkpoint(path=best_ckpt_path)
+
 @hydra.main(
     version_base=None,
     config_path=str(pathlib.Path(__file__).parent.parent.joinpath("config")),
@@ -390,8 +437,8 @@ class TrainingWorkspace(BaseWorkspace):
 def main(cfg):
     workspace = TrainingWorkspace(cfg)
     if cfg.mode == 'train':
+        # we run the evaluation after the training - inside of the run loop
         workspace.run()
-        workspace.rollout()
     elif cfg.mode == 'rollout':
         print("Rollout")
         workspace.rollout()
