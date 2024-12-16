@@ -77,7 +77,7 @@ training:
   model_evaluation_every: 50
   rollout_every: 1000
   checkpoint_every: 10
-  save_milestone_every: 100
+  save_milestone_every: 1000
   visualize_every: 1000
   visualize_batch_size: 8
   val_every: 50
