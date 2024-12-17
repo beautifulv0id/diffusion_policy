@@ -137,6 +137,9 @@ class TrainingWorkspace(BaseWorkspace):
                 cfg.ema,
                 model=self.ema_model)
 
+        # for training do not run more than 1
+        cfg.task.env_runner.max_episodes = min(cfg.task.env_runner.max_episodes, 1)
+
         # configure env
         # env_runner: BaseImageRunner
         if 'env_runner' in cfg.task.keys():
@@ -152,7 +155,6 @@ class TrainingWorkspace(BaseWorkspace):
                     output_dir=self.output_dir)
         else:
             env_runner = None
-
 
         # configure checkpoint
         topk_manager = TopKCheckpointManager(
@@ -299,7 +301,7 @@ class TrainingWorkspace(BaseWorkspace):
                             # log all
                             step_log.update(eval_log)
 
-                    if (self.epoch % cfg.training.visualize_every) == 0 and not cfg.task.dataset.use_precomputed_features:       
+                    if (self.epoch % cfg.training.visualize_every) == 0 and 'rgb' in train_sampling_batch['obs'].keys():       
                         with torch.no_grad():
                             train_sampling_batch = dict_apply(train_sampling_batch, lambda x: x[:cfg.training.visualize_batch_size])
                             batch = dict_apply(train_sampling_batch, lambda x: x.to(device, dtype, non_blocking=True))

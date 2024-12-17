@@ -23,7 +23,7 @@ from absl import flags
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string('save_path',
-                    '/tmp/rlbench_data/',
+                    os.path.join(os.environ["DIFFUSION_POLICY_ROOT"], 'data', 'default'),
                     'Where to save the demos.')
 flags.DEFINE_list('tasks', ["open_drawer","put_item_in_drawer","stack_blocks","sweep_to_dustpan_of_size","turn_tap"],
                   'The tasks to collect. If empty, all tasks are collected.')
@@ -169,15 +169,20 @@ def save_demo(demo, example_path):
     with open(os.path.join(example_path, LOW_DIM_PICKLE), 'wb') as f:
         pickle.dump(demo, f)
 
+def get_demo_index(task_file, variation):
+    episodes_path = os.path.join(FLAGS.save_path, task_file, VARIATIONS_FOLDER % variation, EPISODES_FOLDER)
+    if not os.path.exists(episodes_path):
+        return 0
+    episodes = [e for e in os.listdir(episodes_path) if e.startswith(EPISODE_FOLDER[:-2])]
+    return len(episodes)
 
-
-
-def run(i, lock, task_index, task_demo_indices, task_variation_count, results, file_lock, tasks):
+def run(i, lock, task_index, task_demo_indices, task_variation_count, results, file_lock, task_files):
     """Each thread will choose one task and variation, and then gather
     all the episodes_per_task for that variation."""
 
     # Initialise each thread with random seed
     np.random.seed(None)
+    tasks = [task_file_to_task_class(t) for t in task_files]
     num_tasks = len(tasks)
 
     img_size = list(map(int, FLAGS.image_size))
@@ -230,7 +235,11 @@ def run(i, lock, task_index, task_demo_indices, task_variation_count, results, f
                 print('Process', i, 'finished')
                 break
 
-            my_demo_index = task_demo_indices[task_index.value]
+            if task_demo_indices[task_index.value] == 0:
+                my_demo_index = get_demo_index(task_files[task_index.value], task_variation_count[task_index.value])
+            else:
+                my_demo_index = task_demo_indices[task_index.value]
+
             t = tasks[task_index.value]
             task_env = rlbench_env.get_task(t)
             var_target = task_env.variation_count()
@@ -320,16 +329,14 @@ def main(argv):
                 raise ValueError('Task %s not recognised!.' % t)
         task_files = FLAGS.tasks
 
-    tasks = [task_file_to_task_class(t) for t in task_files]
-
     manager = Manager()
 
     result_dict = manager.dict()
     file_lock = manager.Lock()
 
     task_index = manager.Value('i', 0)
-    task_variation_count = manager.list([0] * len(tasks))
-    task_demo_index = manager.list([0] * len(tasks))
+    task_variation_count = manager.list([0] * len(task_files))
+    task_demo_index = manager.list([0] * len(task_files))
     lock = manager.Lock()
 
     check_and_make(FLAGS.save_path)
@@ -337,7 +344,7 @@ def main(argv):
     processes = [Process(
         target=run, args=(
             i, lock, task_index, task_demo_index, task_variation_count, result_dict, file_lock,
-            tasks))
+            task_files))
         for i in range(FLAGS.processes)]
     [t.start() for t in processes]
     [t.join() for t in processes]

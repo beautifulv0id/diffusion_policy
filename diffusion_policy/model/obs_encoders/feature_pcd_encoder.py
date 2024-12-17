@@ -1,5 +1,6 @@
 import einops
 from torch import nn
+import torch
 from torch.nn import functional as F
 from diffusion_policy.model.common.module_attr_mixin import ModuleAttrMixin
 
@@ -30,11 +31,21 @@ class FeaturePCDEncoder(ModuleAttrMixin):
 
         self.feature_res = feature_res
         self.out_dim = CLIP_RES_TO_DIM[self.feature_res]
+        self.obs_features = nn.Parameter(torch.randn(1, self.out_dim))
         
     def forward(self, rgb, pcd):
-        return self.compute_feature_pcd(rgb, pcd)
+        if rgb is not None:
+            return self.get_feature_pcd(rgb, pcd)
+        else:
+            return self.get_lowdim_feature_pcd(pcd)
+    
+    def get_lowdim_feature_pcd(self, pcd):
+        batch, npts = pcd.shape[0:2]
+        feats = self.obs_features.unsqueeze(0).expand(batch, npts, -1)
+        return feats, pcd
 
-    def compute_feature_pcd(self, rgb, pcd):
+
+    def get_feature_pcd(self, rgb, pcd):
         """
         Compute visual features
 
@@ -45,7 +56,7 @@ class FeaturePCDEncoder(ModuleAttrMixin):
         Returns:
             - rgb_feats: (B, ncam, F, H, W)
             - pcd: (B, ncam * H * W, 3), resampled point cloud
-        """
+        """            
         num_cameras = rgb.shape[1]
 
         # Pass each view independently through backbone

@@ -31,7 +31,7 @@ def create_sample_indices(task_group : zarr.hierarchy.Group, n_episodes, n_obs):
             })
     return indices
 
-def collate_samples(datum, use_pc, use_rgb, use_mask, apply_cameras, use_features):
+def collate_samples(datum, use_pc, use_rgb, use_mask, apply_cameras, use_lowdim_pcd, use_features):
     sample = {
         'obs': dict(),
         'action': dict()
@@ -40,18 +40,22 @@ def collate_samples(datum, use_pc, use_rgb, use_mask, apply_cameras, use_feature
     next_keypoint_idx = datum['action_idx']
     cameras = datum['demo']['cameras']
     state_action = datum['demo']['state_action']
-    if use_pc:
-        sample['obs']['pcd'] = np.stack([cameras[camera]['pcd'][obs_idxs[-1]] for camera in apply_cameras])
-    if use_rgb:
-        rgb = np.stack([cameras[camera]['rgb'][obs_idxs[-1]] for camera in apply_cameras])
-        rgb = rgb.astype(np.float32) / 255.0
-        sample['obs']['rgb'] = rgb
-    if use_mask:
-        sample['obs']['mask'] = np.stack([cameras[camera]['mask'][obs_idxs[-1]] for camera in apply_cameras])
-    if use_features:
-        sample['obs']['clip_features'] = {}
-        sample['obs']['clip_features']['res1'] = np.stack([cameras[camera]['clip_features']['res1'][obs_idxs[-1]] for camera in apply_cameras])
-        sample['obs']['clip_features']['res2'] = np.stack([cameras[camera]['clip_features']['res2'][obs_idxs[-1]] for camera in apply_cameras])
+
+    if use_lowdim_pcd:
+        sample['obs']['pcd'] = datum['demo']['low_dim_pcd'][obs_idxs[-1]]
+    else:
+        if use_pc:
+            sample['obs']['pcd'] = np.stack([cameras[camera]['pcd'][obs_idxs[-1]] for camera in apply_cameras])
+        if use_rgb:
+            rgb = np.stack([cameras[camera]['rgb'][obs_idxs[-1]] for camera in apply_cameras])
+            rgb = rgb.astype(np.float32) / 255.0
+            sample['obs']['rgb'] = rgb
+        if use_mask:
+            sample['obs']['mask'] = np.stack([cameras[camera]['mask'][obs_idxs[-1]] for camera in apply_cameras])
+        if use_features:
+            sample['obs']['clip_features'] = {}
+            sample['obs']['clip_features']['res1'] = np.stack([cameras[camera]['clip_features']['res1'][obs_idxs[-1]] for camera in apply_cameras])
+            sample['obs']['clip_features']['res2'] = np.stack([cameras[camera]['clip_features']['res2'][obs_idxs[-1]] for camera in apply_cameras])
 
     curr_gripper = state_action['proprioception'][obs_idxs]
     sample['obs']['curr_gripper'] = curr_gripper
@@ -119,6 +123,7 @@ class RLBenchDataset(torch.utils.data.Dataset):
                  use_rgb = True,
                  use_pcd = True,
                  use_mask = True,
+                 use_lowdim_pcd = False,
                  use_features = False,
                  rot_noise_scale=0.0,
                  pos_noise_scale=0.0,
@@ -152,6 +157,7 @@ class RLBenchDataset(torch.utils.data.Dataset):
         self.use_rgb = use_rgb
         self.use_pcd = use_pcd
         self.use_mask = use_mask
+        self.use_lowdim_pcd = use_lowdim_pcd
         self.use_features = use_features
         self.demos = demos
         self._cache = dict()
@@ -188,6 +194,7 @@ class RLBenchDataset(torch.utils.data.Dataset):
                     use_rgb=self.use_rgb,
                     use_mask=self.use_mask,
                     apply_cameras=self.cameras,
+                    use_lowdim_pcd=self.use_lowdim_pcd,
                     use_features=self.use_features
                 )
 
@@ -201,7 +208,7 @@ class RLBenchDataset(torch.utils.data.Dataset):
                 self._cache[idx] = sample
 
         if self._training:
-            if not self.use_precomputed_features:
+            if not self.use_precomputed_features and not self.use_lowdim_pcd:
                 sample['obs'].update(self._resize(rgb=sample['obs']['rgb'], pcd=sample['obs']['pcd'], mask=sample['obs'].get('mask', None)))
             sample['obs']['curr_gripper'] = add_noise_to_gripper_pose(sample['obs']['curr_gripper'], self.rot_noise_scale, self.pos_noise_scale)
 
@@ -267,6 +274,7 @@ class RLBenchDataset(torch.utils.data.Dataset):
                 use_rgb=False,
                 use_mask=False,
                 apply_cameras=False,
+                use_lowdim_pcd=False,
                 use_features=False
             )
 
@@ -317,12 +325,13 @@ def test_dataset():
     from diffusion_policy.model.common.workspace_cropping import crop_to_workspace
 
     dataset = RLBenchDataset(
-        dataset_path=os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data/peract.zarr'),
+        dataset_path=os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data/rlbench.zarr'),
         cameras=['left_shoulder', 'right_shoulder', 'wrist', 'front'],
         task_name='open_drawer',
         use_rgb=True,
         use_pcd=True,
         use_mask=False,
+        use_lowdim_pcd=True,
         use_features=False,
         n_obs_steps=3,
         n_episodes=-1,
@@ -342,6 +351,8 @@ def test_dataset():
     data_loader = DataLoader(dataset, batch_size=2, shuffle=False)
     
     batch = next(iter(data_loader))
+
+    print(batch['obs']['pcd'].shape)
     pcd, rgb = extract_rgb_pcd(batch)
     # plot(pcd, rgb)
 
@@ -414,7 +425,7 @@ def test_dataset():
 
 def test_precomputed():
     dataset = RLBenchDataset(
-        dataset_path=os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data/peract.zarr'),
+        dataset_path=os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data/rlbench.zarr'),
         cameras=['left_shoulder', 'right_shoulder', 'wrist', 'front'],
         task_name='open_drawer',
         use_rgb=True,

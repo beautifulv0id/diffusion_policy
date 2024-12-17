@@ -4,7 +4,7 @@ from absl import app
 from absl import flags
 import os
 from diffusion_policy.env.rlbench.rlbench_env import RLBenchEnv
-from diffusion_policy.common.rlbench_util import CAMERAS, create_obs_config, get_workspace_bounds
+from diffusion_policy.common.rlbench_util import CAMERAS, create_obs_config, get_workspace_bounds, get_task_num_low_dim_pcd
 from rlbench.utils import get_stored_demos
 from diffusion_policy.common.rlbench_util import _keypoint_discovery
 from tqdm import tqdm
@@ -20,10 +20,10 @@ import json
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string('save_path',
-                    os.environ['DIFFUSION_POLICY_ROOT'] + '/data/peract.zarr',
+                    os.environ['DIFFUSION_POLICY_ROOT'] + '/data/rlbench.zarr',
                     'Where to save the dataset.')
 flags.DEFINE_string('data_path',
-                    os.environ['DIFFUSION_POLICY_ROOT'] + '/data/peract',
+                    os.environ['DIFFUSION_POLICY_ROOT'] + '/data/rlbench',
                     'Path to the data folder.')
 flags.DEFINE_list('splits', ['train', 'val', 'test'],
                     'Splits to use.')
@@ -34,9 +34,12 @@ flags.DEFINE_list('image_size', [128, 128],
 flags.DEFINE_string('workspace_bounds_path', 
                     os.environ['DIFFUSION_POLICY_ROOT'] + '/diffusion_policy/tasks/peract_workspace_bounds.json', 
                     'Path to the number of objects in each task.')
+flags.DEFINE_string('num_objects_path',
+                    os.environ['DIFFUSION_POLICY_ROOT'] + '/diffusion_policy/tasks/peract_tasks_num_lowdim_pcd.json',
+                    'Path to the number of objects in each task.')
 flags.DEFINE_list('fuse_cameras', ['left_shoulder', 'right_shoulder', 'wrist', 'front'],
                   'Cameras to fuse.')
-flags.DEFINE_list('feature_res', ['res1', 'res2'], 'Feature resolution to use for the fused cameras.')
+flags.DEFINE_list('feature_res', ['res2'], 'Feature resolution to use for the fused cameras.')
 
 
 FEATURE_RES_TO_DSF = {'res1': 2, 'res2': 4}
@@ -74,7 +77,7 @@ def add_groups_to_demo(demo_group, feature_map_pyramid):
             camera_group[camera].create_dataset(f'mask', shape=(0, 1, FLAGS.image_size[0], FLAGS.image_size[1]), dtype=np.uint8, chunks=(1, FLAGS.image_size[0], FLAGS.image_size[1]))
             camera_group[camera].create_dataset(f'pcd', shape=(0, 3, FLAGS.image_size[0], FLAGS.image_size[1]), dtype=np.float32, chunks=(1, 3, FLAGS.image_size[0], FLAGS.image_size[1]))
             camera_group[camera].create_dataset(f'intrinsics', shape=(0, 3, 3), dtype=np.float32, chunks=(1, 3, 3))
-            camera_group[camera].create_dataset(f'extrinsics', shape=(0, 4, 4), dtype=np.float32, chunks=(1, 4, 4))
+            camera_group[camera].create_dataset(f'extrinsics', shape=(0, 4, 4), dtype=np.float32, chunks=(1, 4, 4))            
             
         state_action_group = demo_group.create_group('state_action')
         state_action_group.create_dataset('proprioception', shape=(0, 7 + 1 + 1), dtype=np.float32, chunks=(1, 9))
@@ -125,9 +128,11 @@ def write_rlbench_dataset():
                         if 0 not in keypoints:
                             keypoints = [0] + keypoints
                         demo = get_stored_demos(amount = 1, variation_number=0, task_name=task, from_episode_number=demo_idx, image_paths=False, dataset_root=data_path, random_selection=False, obs_config=obs_config, obs_idxs=keypoints)[0]
-                        
                         demo_group = task_group.create_group(f'demo_{demo_idx}')
                         add_groups_to_demo(demo_group, feature_map_pyramid)
+                        if 'low_dim_pcd' in demo._observations[0].misc:
+                            npcd = get_task_num_low_dim_pcd(FLAGS.num_objects_path, task)
+                            demo_group.create_dataset('low_dim_pcd', shape=(0, npcd, 3), chunks=(1, npcd, 3))
                         camera_group = demo_group['cameras']
                         state_action_group = demo_group['state_action']
                         for kp in keypoints:
@@ -141,8 +146,9 @@ def write_rlbench_dataset():
                                 camera_group[camera][f'intrinsics'].append(obs.misc[f"{camera}_camera_intrinsics"][None,...])
                                 camera_group[camera][f'extrinsics'].append(obs.misc[f"{camera}_camera_extrinsics"][None,...])
 
-                                # Extract DINO features
                                 rgb = rgb / 255.0
+
+                                # Extract DINO features
                                 features = get_dino_features(rgb[0].transpose(1, 2, 0), scale=1)
                                 features = features.cpu().numpy().transpose(2, 0, 1)[None,...]
                                 camera_group[camera]['features']['dino_features'].append(features)
@@ -157,6 +163,8 @@ def write_rlbench_dataset():
                             
                             proprioception = np.concatenate([obs.gripper_pose, [obs.gripper_open], [obs.ignore_collisions]])
                             state_action_group['proprioception'].append(proprioception[None,...])
+                            if 'low_dim_pcd' in obs.misc:
+                                demo_group['low_dim_pcd'].append(obs.misc['low_dim_pcd'][None,...])
                         demo._observations = []
                         with open(os.path.join(save_root, demo_group.path, LOW_DIM_PICKLE), 'wb') as f:
                             pickle.dump(demo, f)
@@ -181,16 +189,30 @@ def add_fused_camera_data():
         pcds = pcds.reshape(t, v, c, -1).transpose(0, 1, 3, 2).reshape(t, -1, c)
         return pcds
     
-    def get_stacked_pcd_and_features(cameras_group, cameras, res):
+    def get_stacked_pcds(cameras_group, cameras):
         pcds = []
-        clip_features = []
         for camera in cameras:
             camera_group = cameras_group[camera]
             pcds.append(camera_group['pcd'][:])
-            clip_features.append(camera_group['features']['clip_features'][res][:])
         pcds = np.stack(pcds, axis=1)
+        return pcds
+    
+    def get_stacked_clip_features(cameras_group, cameras, res):
+        clip_features = []
+        for camera in cameras:
+            camera_group = cameras_group[camera]
+            clip_features.append(camera_group['features']['clip_features'][res][:])
         clip_features = np.stack(clip_features, axis=1)
-        return pcds, clip_features
+        return clip_features
+    
+    def get_stacked_dino_features(cameras_group, cameras):
+        dino_features = []
+        for camera in cameras:
+            camera_group = cameras_group[camera]
+            dino_features.append(camera_group['features']['dino_features'][:])
+        dino_features = np.stack(dino_features, axis=1)
+        return dino_features
+
 
     def compute_totle_min_pcd_size(dataset, workspace_bounds):
         pcd_min_dict = {task: {res: np.inf for res in FLAGS.feature_res} for task in FLAGS.tasks}
@@ -201,7 +223,7 @@ def add_fused_camera_data():
                     task_group = split_group[task]
                     for demo in task_group.keys():
                         demo_group = task_group[demo]
-                        pcds, _ = get_stacked_pcd_and_features(demo_group['cameras'], cameras_to_fuse, res)
+                        pcds = get_stacked_pcds(demo_group['cameras'], cameras_to_fuse)
                         pcds = interpolate_pcds(pcds, FEATURE_RES_TO_DSF[res])
                         min_ = np.min([crop_workspace(pcd, workspace_bounds=workspace_bounds).shape[0] for pcd in pcds])
                         pcd_min_dict[task][res] = int(np.min([pcd_min_dict[task][res], min_]))
@@ -223,7 +245,8 @@ def add_fused_camera_data():
                 for res in FLAGS.feature_res:
                     pcd_min = pcd_min_dict[task][res]
                     res_group = fused_cameras.create_group(res)
-                    pcds, clip_features = get_stacked_pcd_and_features(demo_group['cameras'], cameras_to_fuse, res)
+                    pcds = get_stacked_pcds(demo_group['cameras'], cameras_to_fuse)
+                    clip_features = get_stacked_clip_features(demo_group['cameras'], cameras_to_fuse, res)
                     pcds = interpolate_pcds(pcds, FEATURE_RES_TO_DSF[res])
 
                     # reshape clip features

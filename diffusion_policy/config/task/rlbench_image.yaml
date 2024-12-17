@@ -22,11 +22,12 @@ dataset:
   cameras: ${task.cameras}
   n_obs_steps: ${n_obs_steps}
   use_mask: False
+  use_lowdim_pcd: False
   cache_size: 2000
   image_rescale: [1., 1.]
   rot_noise_scale: 0.0
   pos_noise_scale: 0.0
-  use_precomputed_features: True
+  use_precomputed_features: False
   feature_res: "res2"
 
 env_runner:
