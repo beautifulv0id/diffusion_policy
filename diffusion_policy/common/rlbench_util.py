@@ -31,23 +31,19 @@ CAMERAS = ['left_shoulder', 'right_shoulder', 'wrist', 'overhead', 'front']
 
 Instructions = Dict[str, Dict[int, torch.Tensor]]
 
-def rlbench_action_to_se3(signal, quaternion_format='xyzw'):
-    shape = signal.shape
-    signal = signal.reshape(-1, signal.shape[-1])
+def convert_rlbench_action(signal, quaternion_format='xyzw'):
     ret = signal[..., 7:]
     if quaternion_format == 'xyzw':
         signal = signal[..., [0, 1, 2, 6, 3, 4, 5]]
-    pose = torch.eye(4, device=signal.device).unsqueeze(0).expand(signal.shape[0], -1, -1).clone()
-    pose[..., :3, :3] = quaternion_to_matrix(signal[..., 3:])
-    pose[..., :3, 3] = signal[..., :3]
-    pose = pose.reshape(shape[:-1] + (4, 4))
-    return pose, ret
+    act_r = quaternion_to_matrix(signal[..., 3:7])
+    act_p = signal[..., :3]
+    return act_r, act_p, ret
 
-def se3_to_rlbench_action(pose, res=None, quaternion_format='xyzw'):
-    quat = matrix_to_quaternion(pose[..., :3, :3])
+def unconvert_rlbench_action(act_r, act_p, res=None, quaternion_format='xyzw'):
+    quat = matrix_to_quaternion(act_r)
     if quaternion_format == 'xyzw':
         quat = quat[..., [1, 2, 3, 0]]
-    signal = torch.cat([pose[..., :3, 3], quat], dim=-1)
+    signal = torch.cat([act_p, quat], dim=-1)
     if res is not None:
         res = res > 0.5
         signal = torch.cat([signal, res], -1)

@@ -123,7 +123,7 @@ training:
   visualize_batch_size: 8
 
 logging:
-  project: diffusion_policy_debug
+  project: point_attention_debug
   resume: True
   mode: online
   name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_name}

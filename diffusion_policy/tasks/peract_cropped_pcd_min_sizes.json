@@ -1,6 +1,50 @@
 {
-    "open_drawer": {
-        "res1": 5300,
-        "res2": 1313
+    "put_item_in_drawer": {
+        "res2": 1257
+    },
+    "stack_blocks": {
+        "res2": 205
+    },
+    "sweep_to_dustpan_of_size": {
+        "res2": 662
+    },
+    "turn_tap": {
+        "res2": 517
+    },
+    "slide_block_to_target": {
+        "res2": 242
+    },
+    "meat_off_grill": {
+        "res2": 971
+    },
+    "close_jar": {
+        "res2": 237
+    },
+    "screw_nail": {
+        "res2": 262
+    },
+    "put_money_in_safe": {
+        "res2": 1074
+    },
+    "stack_wine": {
+        "res2": 554
+    },
+    "put_groceries_in_cupboard": {
+        "res2": 550
+    },
+    "place_shape_in_shape_sorter": {
+        "res2": 343
+    },
+    "push_buttons": {
+        "res2": 340
+    },
+    "insert_onto_square_peg": {
+        "res2": 213
+    },
+    "stack_cups": {
+        "res2": 435
+    },
+    "place_cups": {
+        "res2": 355
     }
 }

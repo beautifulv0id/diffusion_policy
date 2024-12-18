@@ -30,7 +30,10 @@ from diffusion_policy.common.se3_util import se3_from_rot_pos
 from diffusion_policy.policy.base_image_policy import BaseImagePolicy
 from typing import Dict
 
-from diffusion_policy.common.rlbench_util import rlbench_action_to_se3, se3_to_rlbench_action
+from diffusion_policy.model.common.workspace_cropping import crop_to_workspace
+from diffusion_policy.model.obs_encoders.feature_pcd_encoder import FeaturePCDEncoder
+
+from diffusion_policy.common.rlbench_util import convert_rlbench_action, unconvert_rlbench_action
 
 from torch import einsum
 
@@ -58,6 +61,8 @@ class DiffuserActor(BaseImagePolicy):
                  gripper_loc_bounds=None,
                  rotation_parametrization='6D',
                  quaternion_format='xyzw',
+                 feature_res="res2",
+                 workspace_bounds=None,
                  diffusion_timesteps=100,
                  scaling_factor=1.0,
                  nhist=3,
@@ -70,6 +75,11 @@ class DiffuserActor(BaseImagePolicy):
         self._quaternion_format = quaternion_format
         self._relative = relative
         self.use_instruction = use_instruction
+        self.feature_pcd_encoder = FeaturePCDEncoder(
+            backbone=backbone,
+            feature_res=feature_res
+        )
+        self.feature_pcd_up = nn.Linear(self.feature_pcd_encoder.out_dim, embedding_dim)
         self.encoder = DiffuserActorEncoder(
             backbone=backbone,
             image_size=image_size,
@@ -101,27 +111,13 @@ class DiffuserActor(BaseImagePolicy):
         self.nhorizon = nhorizon
         self.use_mask = use_mask
         self.gripper_loc_bounds = torch.tensor(gripper_loc_bounds) if gripper_loc_bounds is not None else None
-
-    def encode_inputs(self, visible_rgb, visible_pcd, instruction,
-                      curr_gripper, mask=None):
-        # Compute visual features/positional embeddings at different scales
-        rgb_feats_pyramid, pcd_pyramid = self.encoder.encode_images(
-            visible_rgb, visible_pcd
-        )
-
-        rgb_feats = rgb_feats_pyramid[0]
-        pcd = pcd_pyramid[0]
-
-        if self.use_mask:
-            context_feats, context, mask_idx = self.encoder.mask_out_features_pcd(mask, rgb_feats, pcd, n_min=0, n_max=1024)
+        if workspace_bounds is not None:
+            self.register_buffer("workspace_bounds", torch.tensor(workspace_bounds, requires_grad=False))
         else:
-            # Keep only low-res scale
-            context_feats = einops.rearrange(
-                rgb_feats_pyramid[0],
-                "b ncam c h w -> b (ncam h w) c"
-            )
-            context = pcd_pyramid[0]
+            self.workspace_bounds = None
 
+    def encode_inputs(self, context_feats, context, instruction,
+                      curr_gripper, mask=None):
         # Encode instruction (B, 53, F)
         instr_feats = None
         if self.use_instruction:
@@ -149,7 +145,7 @@ class DiffuserActor(BaseImagePolicy):
             instr_feats,  # language features
             adaln_gripper_feats,  # gripper history features
             fps_feats, fps_pcd  # sampled visual features
-        ), mask_idx if self.use_mask else None
+        )
 
     def policy_forward_pass(self, trajectory, timestep, fixed_inputs, need_attn_weights=False):
         # Parse inputs
@@ -224,31 +220,23 @@ class DiffuserActor(BaseImagePolicy):
     def compute_trajectory(
         self,
         trajectory_mask,
-        rgb_obs,
+        feature_obs,
         pcd_obs,
         instruction,
         curr_gripper,
         mask_obs=None,
         need_attn_weights=False
-    ):
-        
-        if self._relative:
-            curr_gripper_abs = curr_gripper.clone()
-            pcd_obs, curr_gripper = self.convert2rel(pcd_obs, curr_gripper)
-
-        curr_gripper = self.convert_rot(curr_gripper)
-        
-
+    ):       
         # Prepare inputs
-        fixed_inputs, mask_idx = self.encode_inputs(
-            rgb_obs, pcd_obs, instruction, curr_gripper, mask_obs
+        fixed_inputs = self.encode_inputs(
+            feature_obs, pcd_obs, instruction, curr_gripper, mask_obs
         )
 
         # Condition on start-end pose
         B, nhist, D = curr_gripper.shape
         cond_data = torch.zeros(
             (B, trajectory_mask.size(1), D),
-            device=rgb_obs.device
+            device=feature_obs.device
         )
         cond_mask = torch.zeros_like(cond_data)
         cond_mask = cond_mask.bool()
@@ -261,19 +249,23 @@ class DiffuserActor(BaseImagePolicy):
             need_attn_weights=need_attn_weights
         )
 
-    def normalize_pos(self, pos):
+    def normalize_pos(self, x):
+        x = x.clone()
         if self.gripper_loc_bounds is None:
-            return pos * self.scaling_factor
-        pos_min = self.gripper_loc_bounds[0].float().to(pos.device)
-        pos_max = self.gripper_loc_bounds[1].float().to(pos.device)
-        return (pos - pos_min) / (pos_max - pos_min) * 2.0 - 1.0
+            return x * self.scaling_factor
+        pos_min = self.gripper_loc_bounds[0].float().to(x.device)
+        pos_max = self.gripper_loc_bounds[1].float().to(x.device)
+        x[...,:3] = (x[...,:3] - pos_min) / (pos_max - pos_min) * 2.0 - 1.0
+        return x
 
-    def unnormalize_pos(self, pos):
+    def unnormalize_pos(self, x):
+        x = x.clone()
         if self.gripper_loc_bounds is None:
-            return pos / self.scaling_factor
-        pos_min = self.gripper_loc_bounds[0].float().to(pos.device)
-        pos_max = self.gripper_loc_bounds[1].float().to(pos.device)
-        return (pos + 1.0) / 2.0 * (pos_max - pos_min) + pos_min
+            return x / self.scaling_factor
+        pos_min = self.gripper_loc_bounds[0].float().to(x.device)
+        pos_max = self.gripper_loc_bounds[1].float().to(x.device)
+        x[...,:3] = (x[...,:3] + 1.0) / 2.0 * (pos_max - pos_min) + pos_min
+        return x
 
     def convert_rot(self, signal):
         signal[..., 3:7] = normalise_quat(signal[..., 3:7])
@@ -316,35 +308,16 @@ class DiffuserActor(BaseImagePolicy):
                 signal[..., 3:7] = signal[..., (4, 5, 6, 3)]
         return signal
     
-
-    def convert2rel(self, pcd, curr_gripper, trajectory=None):
-        """Convert coordinate system relaative to current gripper."""
-       # convert2rel
-        inv_rot = quaternion_invert(curr_gripper[:,-1:, 3:7])
-        inv_pos = -quaternion_apply(inv_rot, curr_gripper[:,-1:, :3])
-        inv_pos_rot = torch.cat((inv_pos, inv_rot), -1)
-
-        b, v, c, h, w = pcd.shape
-        pcd = einops.rearrange(pcd, 'b v c h w->b (v h w) c')
-        pcd = quaternion_apply(inv_rot, pcd) + inv_pos.view(b, 1, 3)
-        pcd = einops.rearrange(pcd, 'b (v h w) c->b v c h w', v=v, h=h, w=w)
-        curr_gripper = pos_quat_apply(inv_pos_rot, curr_gripper)
-        if trajectory is not None:
-            trajectory = pos_quat_apply(inv_pos_rot, trajectory)
-            return pcd, curr_gripper, trajectory
+    def convert2gripper(self, x):
+        x = x.clone()
+        x[...,:3] = x[...,:3] - self.rel_to
+        return x
         
-        return pcd, curr_gripper
+    def convert2world(self, x):
+        x = x.clone()
+        x[...,:3] = x[...,:3] + self.rel_to
+        return x
     
-    def convert2abs(self, trajectory, curr_gripper, pcd=None):
-        trajectory = pos_quat_apply(curr_gripper[:,-1:], trajectory)
-        if pcd is not None:
-            b, v, c, h, w = pcd.shape
-            pcd = einops.rearrange(pcd, 'b v c h w->b (v h w) c')
-            pcd = quaternion_apply(curr_gripper[:,-1:, 3:7], pcd) + curr_gripper[:,-1:, :3]
-            pcd = einops.rearrange(pcd, 'b (v h w) c->b v c h w', v=v, h=h, w=w)
-            return trajectory, pcd
-        return trajectory
-
     def forward(
         self,
         gt_trajectory,
@@ -353,6 +326,7 @@ class DiffuserActor(BaseImagePolicy):
         pcd_obs,
         instruction,
         curr_gripper,
+        feature_obs=None,
         run_inference=False,
         mask_obs=None,
         need_attn_weights=False
@@ -372,43 +346,50 @@ class DiffuserActor(BaseImagePolicy):
             is ALWAYS expressed as a quaternion form.
             The model converts it to 6D internally if needed.
         """
+        if feature_obs is None:
+            feature_obs, pcd_obs = self.feature_pcd_encoder(rgb_obs, pcd_obs)
+            feature_obs = self.feature_pcd_up(feature_obs)
+            if self.workspace_bounds is not None:
+                pcd_obs, feature_obs = crop_to_workspace(pcd_obs, feature_obs, self.workspace_bounds, self.max_pcd_points)       
+
         # Normalize all pos
         if gt_trajectory is not None:
-            gt_trajectory = gt_trajectory.clone()
-            gt_trajectory[:, :, :3] = self.normalize_pos(gt_trajectory[:, :, :3])
-        pcd_obs = pcd_obs.clone()
-        curr_gripper = curr_gripper.clone()
-        pcd_obs = torch.permute(self.normalize_pos(
-            torch.permute(pcd_obs, [0, 1, 3, 4, 2])
-        ), [0, 1, 4, 2, 3])
-        curr_gripper[..., :3] = self.normalize_pos(curr_gripper[..., :3])
+            gt_trajectory = self.normalize_pos(gt_trajectory)
+        pcd_obs = self.normalize_pos(pcd_obs)
+        curr_gripper = self.normalize_pos(curr_gripper)
+        curr_gripper = curr_gripper[..., :7]
 
         if gt_trajectory is not None:
             gt_openess = gt_trajectory[..., 7:8]
             gt_trajectory = gt_trajectory[..., :7]
-        curr_gripper = curr_gripper[..., :7]
+
+        if self._relative:
+            self.rel_to = curr_gripper[:, -1:, :3]
+            pcd_obs = self.convert2gripper(pcd_obs)
+            curr_gripper = self.convert2gripper(curr_gripper)
+            if gt_trajectory is not None:
+                gt_trajectory = self.convert2gripper(gt_trajectory)
+
+        # Convert rotation parametrization
+        curr_gripper = self.convert_rot(curr_gripper)
+        if gt_trajectory is not None:
+            gt_trajectory = self.convert_rot(gt_trajectory)
 
         # gt_trajectory is expected to be in the quaternion format
         if run_inference:
             return self.compute_trajectory(
                 trajectory_mask,
-                rgb_obs,
+                feature_obs,
                 pcd_obs,
                 instruction,
                 curr_gripper,
                 mask_obs,
                 need_attn_weights=need_attn_weights
             )
-        if self._relative:
-            pcd_obs, curr_gripper, gt_trajectory = self.convert2rel(pcd_obs, curr_gripper, gt_trajectory)
-        # Convert rotation parametrization
-        gt_trajectory = self.convert_rot(gt_trajectory)
-        curr_gripper = self.convert_rot(curr_gripper)
-
 
         # Prepare inputs
-        fixed_inputs, mask_idx = self.encode_inputs(
-            rgb_obs, pcd_obs, instruction, curr_gripper, mask_obs
+        fixed_inputs = self.encode_inputs(
+            feature_obs, pcd_obs, instruction, curr_gripper, mask_obs
         )
 
         # Condition on start-end pose
@@ -460,17 +441,18 @@ class DiffuserActor(BaseImagePolicy):
         return total_loss
     
     def predict_action(self, obs_dict: Dict[str, torch.Tensor], need_attn_weights=False) -> Dict[str, torch.Tensor]:
-        trajectory_mask = torch.zeros(1, self.nhorizon, device=obs_dict['rgb'].device)
+        trajectory_mask = torch.zeros(1, self.nhorizon, device=obs_dict['pcd'].device)
         trajectory = self.forward(
             gt_trajectory=None,
             trajectory_mask=trajectory_mask,
-            rgb_obs=obs_dict['rgb'],
+            rgb_obs=obs_dict.get('rgb', None),
             pcd_obs=obs_dict['pcd'],
             instruction=None,
             curr_gripper=obs_dict['curr_gripper'],
             run_inference=True,
             mask_obs=obs_dict.get('mask', None),
-            need_attn_weights=need_attn_weights
+            feature_obs=None,
+            need_attn_weights=need_attn_weights,
         )
 
         # Normalize quaternion
@@ -481,10 +463,10 @@ class DiffuserActor(BaseImagePolicy):
         trajectory = self.unconvert_rot(trajectory)
 
         if self._relative:
-            trajectory = self.convert2abs(trajectory, obs_dict['curr_gripper'])
+            trajectory = self.convert2world(trajectory)
 
         # unnormalize position
-        trajectory[:, :, :3] = self.unnormalize_pos(trajectory[:, :, :3])
+        trajectory = self.unnormalize_pos(trajectory)
         # Convert gripper status to probaility
         if trajectory.shape[-1] > 7:
             trajectory[..., 7] = trajectory[..., 7].sigmoid()
@@ -499,7 +481,7 @@ class DiffuserActor(BaseImagePolicy):
         return self.forward(
             gt_trajectory=batch['action']['gt_trajectory'],
             trajectory_mask=None,
-            rgb_obs=batch['obs']['rgb'],
+            rgb_obs=batch['obs'].get('rgb', None),
             pcd_obs=batch['obs']['pcd'],
             instruction=None,
             curr_gripper=batch['obs']['curr_gripper'],
@@ -524,9 +506,7 @@ class DiffuserActor(BaseImagePolicy):
 
         out = self.predict_action(batch['obs'])
         trajectory = out['trajectory']
-        pred_act, pred_act_gr = rlbench_action_to_se3(trajectory)
-        pred_act_p = pred_act[..., :3, -1]
-        pred_act_r = pred_act[..., :3, :3]
+        pred_act_r, pred_act_p, pred_act_gr = convert_rlbench_action(trajectory)
 
         pos_error = torch.nn.functional.mse_loss(pred_act_p, gt_act_p)
 

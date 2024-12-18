@@ -160,21 +160,23 @@ def _evaluate_task_on_demos_multiproc(demo_idx : mp.Value,
                                             use_low_dim_pcd=env.apply_low_dim_pcd)
                     obs_dict = dict_apply(obs_dict, lambda x: torch.from_numpy(x).unsqueeze(0))
 
-                    if env.apply_rgb:
-                        rgb = obs_dict['rgb']
-                        rgbs = torch.cat([rgbs, rgb], dim=0)
-                    if env.apply_pc:
-                        pcd = obs_dict['pcd']
-                        pcds = torch.cat([pcds, pcd], dim=0)
-                    if env.apply_low_dim_pcd:
-                        low_dim_pcd = obs_dict['low_dim_pcd']
-                        low_dim_pcds = torch.cat([low_dim_pcds, low_dim_pcd], dim=0)
                     if env.apply_poses:
                         keypoint_pose = obs_dict['keypoint_poses']
                         keypoint_poses = torch.cat([keypoint_poses, keypoint_pose], dim=0)
-                    if env.apply_mask:
-                        mask = obs_dict['mask']
-                        masks = torch.cat([masks, mask], dim=0)
+                    if env.apply_low_dim_pcd:
+                        low_dim_pcd = obs_dict['low_dim_pcd']
+                        low_dim_pcds = torch.cat([low_dim_pcds, low_dim_pcd], dim=0)
+                        rgbs, pcds, masks = None, None, None
+                    else:
+                        if env.apply_rgb:
+                            rgb = obs_dict['rgb']
+                            rgbs = torch.cat([rgbs, rgb], dim=0)
+                        if env.apply_pc:
+                            pcd = obs_dict['pcd']
+                            pcds = torch.cat([pcds, pcd], dim=0)
+                        if env.apply_mask:
+                            mask = obs_dict['mask']
+                            masks = torch.cat([masks, mask], dim=0)
 
                     gripper = obs_dict['curr_gripper']
                     grippers = torch.cat([grippers, gripper], dim=0)
@@ -199,21 +201,22 @@ def _evaluate_task_on_demos_multiproc(demo_idx : mp.Value,
                 obs_dict["low_dim_state"] = pad_input(low_dim_states, npad)
                 low_dim_states = low_dim_states[-n_obs_steps:]
 
-                if env.apply_rgb:
-                    obs_dict["rgb"] = rgbs[-1:]
-                    rgbs = rgbs[-n_obs_steps:]
-                if env.apply_pc:
-                    obs_dict["pcd"]  = pcds[-1:]
-                    pcds = pcds[-n_obs_steps:]
-                if env.apply_low_dim_pcd:
-                    obs_dict["low_dim_pcd"] = low_dim_pcds[-1:]
-                    low_dim_pcds = low_dim_pcds[-n_obs_steps:]
                 if env.apply_poses:
                     obs_dict["keypoint_poses"] = keypoint_poses[-1:]
                     keypoint_poses = keypoint_poses[-n_obs_steps:]
-                if env.apply_mask:
-                    obs_dict["mask"] = masks[-1:].bool()
-                    masks = masks[-n_obs_steps:]
+                if env.apply_low_dim_pcd:
+                    obs_dict["low_dim_pcd"] = low_dim_pcds[-1:]
+                    low_dim_pcds = low_dim_pcds[-n_obs_steps:]
+                else:
+                    if env.apply_rgb:
+                        obs_dict["rgb"] = rgbs[-1:]
+                        rgbs = rgbs[-n_obs_steps:]
+                    if env.apply_pc:
+                        obs_dict["pcd"]  = pcds[-1:]
+                        pcds = pcds[-n_obs_steps:]
+                    if env.apply_mask:
+                        obs_dict["mask"] = masks[-1:].bool()
+                        masks = masks[-n_obs_steps:]
 
                 with lock:
                     out = actioner.predict(dict_apply(obs_dict, lambda x: x.type(dtype).to(device)))

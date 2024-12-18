@@ -24,7 +24,7 @@ policy:
   use_instruction: false
   fps_subsampling_factor: 5
   scaling_factor: 3.0
-  # gripper_loc_bounds: ${task.gripper_loc_bounds}
+  gripper_loc_bounds: ${task.gripper_loc_bounds}
   rotation_parametrization: '6D'
   quaternion_format: 'xyzw' 
   diffusion_timesteps: 100
@@ -35,14 +35,14 @@ policy:
   use_mask: ${task.dataset.use_mask}
 
 dataloader:
-  batch_size: 1
+  batch_size: 16
   num_workers: 0
   shuffle: True
   pin_memory: False
   persistent_workers: False
 
 val_dataloader:
-  batch_size: 1
+  batch_size: 16
   num_workers: 0
   shuffle: False
   pin_memory: False
@@ -103,7 +103,7 @@ checkpoint:
   save_last_snapshot: False
 
 logging:
-  project: diffusion_policy_debug
+  project: point_attention_debug
   resume: True
   mode: online
   name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task.name}

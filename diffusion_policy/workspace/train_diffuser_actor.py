@@ -287,7 +287,7 @@ class TrainingWorkspace(BaseWorkspace):
                             # log all
                             step_log.update(eval_log)
 
-                    if (self.epoch % cfg.training.visualize_every) == 0 and not cfg.task.dataset.use_precomputed_features:       
+                    if (self.epoch % cfg.training.visualize_every) == 0 and 'rgb' in train_sampling_batch['obs'].keys():       
                         with torch.no_grad():
                             train_sampling_batch = dict_apply(train_sampling_batch, lambda x: x[:cfg.training.visualize_batch_size])
                             batch = dict_apply(train_sampling_batch, lambda x: x.to(device, dtype, non_blocking=True))

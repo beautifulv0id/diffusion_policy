@@ -685,7 +685,7 @@ with torch.no_grad():
     def test():
         from diffusion_policy.common.pytorch_util import dict_apply
         from diffusion_policy.common.se3_util import random_se3
-        from diffusion_policy.common.rlbench_util import se3_to_rlbench_action
+        from diffusion_policy.common.rlbench_util import unconvert_rlbench_action
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         horizon = 1
@@ -749,11 +749,11 @@ with torch.no_grad():
         pcd_, curr_gripper_, trajectory_ = convert2rel(pcd, curr_gripper, trajectory, H)
         batch_ = {
             'action': {
-                'gt_trajectory': se3_to_rlbench_action(trajectory_, res=trajectory0[..., 7:]),
+                'gt_trajectory': unconvert_rlbench_action(trajectory_[...,:3,:3],trajectory_[...,:3,-1], res=trajectory0[..., 7:]),
             },
             'obs': {
                 'low_dim_pcd': pcd_,
-                'curr_gripper': se3_to_rlbench_action(curr_gripper_, res=curr_gripper0[..., 7:])
+                'curr_gripper': unconvert_rlbench_action(curr_gripper_[...,:3,:3],curr_gripper_[...,:3,-1], res=curr_gripper0[..., 7:])
             }
         }
         trajectory_, curr_gripper_, pcd_ = convert2abs(trajectory_, curr_gripper_, pcd_, H)
