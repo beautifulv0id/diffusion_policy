@@ -36,6 +36,7 @@ class SE3FlowMatching(BaseImagePolicy):
                  causal_attn=True,
                  gripper_loc_bounds=None,
                  workspace_bounds=None,
+                 crop_workspace=True,
                  max_pcd_points=None,
                  feature_res="res2",
                  pcd_self_attn=False,
@@ -73,7 +74,7 @@ class SE3FlowMatching(BaseImagePolicy):
             self.register_buffer("gripper_loc_bounds", torch.tensor(gripper_loc_bounds, requires_grad=False))
         else:
             self.gripper_loc_bounds = None
-        if workspace_bounds is not None:
+        if workspace_bounds is not None and crop_workspace:
             self.register_buffer("workspace_bounds", torch.tensor(workspace_bounds, requires_grad=False))
         else:
             self.workspace_bounds = None
