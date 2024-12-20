@@ -30,6 +30,7 @@ policy:
   scaling_factor: 3.0
   gripper_loc_bounds: ${task.gripper_loc_bounds}
   workspace_bounds: ${task.workspace_bounds}
+  crop_workspace: True
   max_pcd_points: ${max_pcd_points}
   quaternion_format: 'xyzw' 
   diffusion_timesteps: 50

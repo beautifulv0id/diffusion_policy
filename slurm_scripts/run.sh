@@ -34,7 +34,7 @@ then
 fi
 
 hydra_run_dir=$(cat $HYDRA_RUN_DIR_FILE)
-id=$(docker run -dt  -v ${DIFFUSION_POLICY_ROOT}:/workspace oddtoddler400/se3diffuser:latest)
+id=$(docker run -dt  -v ${DIFFUSION_POLICY_ROOT}:/workspace oddtoddler400/pointattention:latest)
 echo "Container ID: $id"
 echo "Running training script"
 docker exec -t $id /bin/bash -c "source activate se3diffuser && 

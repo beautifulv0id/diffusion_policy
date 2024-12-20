@@ -6,12 +6,12 @@
 #SBATCH --gres=gpu:1
 #SBATCH -C 'rtx3090|a5000'
 #SBATCH --array=0-7%1
-#SBATCH --output=../logs/%A_put_item_in_drawer_lowdim/train_%a.out
-#SBATCH -J put_item_in_drawer_lowdim
+#SBATCH --output=../../data/logs/%A_put_item_in_drawer_image/train_%a.out
+#SBATCH -J put_item_in_drawer_image
 
-training_script=train_diffuser_actor_lowdim.py
+training_script=train_diffuser_actor.py
 task_name=put_item_in_drawer
-task_config=put_item_in_drawer_lowdim
+task_config=put_item_in_drawer_image
 job_name=$task_config
 
 args="task=$task_config\
@@ -26,8 +26,7 @@ kwargs=${@:1}
     
 args="$args $kwargs"
 
-HYDRA_RUN_DIR_FILE=${DIFFUSION_POLICY_ROOT}/slurm_scripts/logs/${SLURM_ARRAY_JOB_ID}_${job_name}/hydra_run_dir_${task_name}.txt
-cd ${DIFFUSION_POLICY_ROOT}/slurm_scripts/
+HYDRA_RUN_DIR_FILE=${DIFFUSION_POLICY_ROOT}/data/logs/${SLURM_ARRAY_JOB_ID}_${job_name}/hydra_run_dir_${task_name}.txtcd ${DIFFUSION_POLICY_ROOT}/slurm_scripts/
 . run.sh $training_script \
             $task_name \
             $task_config \
@@ -35,3 +34,5 @@ cd ${DIFFUSION_POLICY_ROOT}/slurm_scripts/
             $task_config \
             $HYDRA_RUN_DIR_FILE \
             $args \
+
+

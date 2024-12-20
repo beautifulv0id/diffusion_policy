@@ -70,7 +70,8 @@ training:
   # training loop control
   # in epochs
   model_evaluation_every: 50
-  rollout_every: 5000
+  rollout_every: 1000
+
   checkpoint_every: 10
   visualize_every: 1000
   visualize_batch_size: 8
