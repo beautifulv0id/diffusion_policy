@@ -88,11 +88,35 @@ class SE3GraspPointCloudSuperEncoder(ModuleAttrMixin):
         return act_points, act_features
 
     def combine_time(self, obs_f, act_f, time_emb):
+        obs_time_f = self.obs_combine_time(obs_f, time_emb)
+        act_time_f = self.act_combine_time(act_f, time_emb)
+
+        return obs_time_f, act_time_f
+
+    def obs_combine_time(self, obs_f, time_emb):
         obs_time_f = torch.cat((obs_f, time_emb.repeat(1, obs_f.shape[1],1)), dim=-1)
+        return self.obs_merger(obs_time_f)
+
+    def act_combine_time(self, act_f, time_emb):
         act_time_f = torch.cat((act_f, time_emb.repeat(1, act_f.shape[1],1)), dim=-1)
+        return self.act_merger(act_time_f)
 
-        return self.obs_merger(obs_time_f), self.act_merger(act_time_f)
+class SE3GraspFPSEncoder(SE3GraspPointCloudSuperEncoder):
+    def __init__(self, dim_features=128, depth=3, nheads=4, n_steps_inf=50, n_points_out=100, nhist=3, dim_pcd_features=64):
+        super(SE3GraspFPSEncoder, self).__init__(dim_features, depth, nheads, n_steps_inf, n_points_out, nhist, dim_pcd_features)
+        input_dim = dim_pcd_features
+        output_dim = dim_features
+        self.linear = nn.Linear(input_dim, output_dim)
 
+    def encode_obs(self, obs):
+        obs_pcd_x, obs_pcd_f = super().encode_obs(obs)
+        pcd, obs_f = obs['pcd'], obs['pcd_features']
+        batch = pcd.shape[0]
+        device = pcd.device
+        vectors = torch.zeros((3,3))[None,None,:,:].repeat(batch, pcd.shape[1], 1, 1).to(device)
+        obs_x = {'centers': pcd, 'vectors': vectors}
+        obs_f = self.linear(obs_f)
+        return obs_x, obs_f, obs_pcd_x, obs_pcd_f
 
 
 if __name__=='__main__':
