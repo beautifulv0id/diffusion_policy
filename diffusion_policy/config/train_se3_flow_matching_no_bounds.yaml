@@ -1,0 +1,130 @@
+# Actually the task entry loads the yaml file inside task
+defaults:
+  - _self_
+  - task: open_drawer_image
+
+name: train_se3_flow_matching
+_target_: diffusion_policy.workspace.train_se3_flow_matching.TrainingWorkspace
+
+exp_name: "train_se3_flow_matching_no_bounds"
+n_obs_steps: &n_obs_steps 3
+use_keyframe_actions: True
+horizon: ${eval:'1 if ${use_keyframe_actions} else 16'}
+n_action_steps: ${eval:'1 if ${use_keyframe_actions} else 8'}
+embedding_dim: 192
+num_episodes: -1
+mode: train
+
+max_pcd_points: 
+  _target_: diffusion_policy.common.rlbench_util.get_task_cropped_pcd_min_size
+  path: "${oc.env:DIFFUSION_POLICY_ROOT}/diffusion_policy/tasks/peract_cropped_pcd_min_sizes.json"
+  task: ${task.task_name}
+  res: ${policy.feature_res}
+
+policy:
+  _target_: diffusion_policy.policy.se3_flow_matching.SE3FlowMatching
+  embedding_dim: ${embedding_dim}
+  backbone: "clip"
+  n_points_out: 1000
+  feature_res: ${task.dataset.feature_res}
+  scaling_factor: 3.0
+  gripper_loc_bounds: ${task.gripper_loc_bounds}
+  #workspace_bounds: ${task.workspace_bounds}
+  crop_workspace: False
+  max_pcd_points: ${max_pcd_points}
+  quaternion_format: 'xyzw' 
+  diffusion_timesteps: 50
+  nhist: ${n_obs_steps}
+  nhorizon: ${horizon}
+  relative: False
+  causal_attn: True
+
+dataloader:
+  batch_size: 8
+  num_workers: 0
+  shuffle: True
+  pin_memory: False
+  persistent_workers: False
+
+val_dataloader:
+  batch_size: 2
+  num_workers: 0
+  shuffle: False
+  pin_memory: False
+  persistent_workers: False
+
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 1.0e-4
+  betas: [0.95, 0.999]
+  eps: 1.0e-8
+  weight_decay: 1.0e-6
+
+training:
+  device: "cuda:0"
+  seed: 21
+  debug: False
+  resume: False
+  # optimization
+  lr_scheduler: cosine
+  lr_warmup_steps: 500
+  num_epochs: 5000
+  gradient_accumulate_every: 1
+  # EMA destroys performance when used with BatchNorm
+  # replace BatchNorm with GroupNorm.
+  use_ema: False
+  # training loop control
+  # in epochs
+  model_evaluation_every: 50
+  rollout_every: 1000
+  checkpoint_every: 10
+  save_milestone_every: 1000
+  visualize_every: 1000
+  visualize_batch_size: 8
+  val_every: 50
+  sample_every: 50
+  # steps per epoch
+  max_train_steps: null
+  max_val_steps: null
+  # misc
+  tqdm_interval_sec: 1.0
+
+ema:
+  _target_: diffusion_policy.model.diffusion.ema_model.EMAModel
+  inv_gamma: 1.0
+  max_value: 0.9999
+  min_value: 0.0
+  power: 0.75
+  update_after_step: 0
+
+
+checkpoint:
+  topk:
+    monitor_key: val_loss
+    mode: min
+    k: 3
+    format_str: 'epoch={epoch:04d}-val_loss={val_loss:.3f}.ckpt'
+  save_last_ckpt: True
+  save_last_snapshot: False
+
+logging:
+  project: point_attention_debug
+  resume: True
+  mode: online
+  name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task.name}
+  id: null
+  group: null
+  tags: ["${name}", "${task.name}", "${exp_name}"]
+
+multi_run:
+  run_dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task.name}
+  wandb_name_base: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task.name}
+
+hydra:
+  job:
+    override_dirname: ${name}
+  run:
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task.name}
+  sweep:
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task.name}
+    subdir: ${hydra.job.num}
