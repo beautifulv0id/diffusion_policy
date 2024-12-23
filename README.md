@@ -9,6 +9,13 @@ mamba env create -f conda_environment.yaml
 conda activate se3diffuser
 ```
 
+**IMPORTANT ENV VARIABLES THAT NEED TO BE SET**:
+
+* DIFFUSION_POLICY_ROOT (path to root of this repo)
+* DIFFUSION_POLICY_DATA_ROOT (path to root of data folder, default would be the same as DIFFUSION_POLICY_ROOT)
+* WANDB_API_KEY (wandb api key for logging - only needed in combination with docker!)
+
+
 Install mamba using:
 ```bash
 curl -L -O "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh"
