@@ -33,7 +33,7 @@ policy:
   crop_workspace: False
   max_pcd_points: ${max_pcd_points}
   quaternion_format: 'xyzw' 
-  diffusion_timesteps: 50
+  diffusion_timesteps: 100
   nhist: ${n_obs_steps}
   nhorizon: ${horizon}
   relative: False
