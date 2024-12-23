@@ -4,7 +4,7 @@ defaults:
   - task: open_drawer_image
 
 name: train_se3_flow_matching
-_target_: diffusion_policy.workspace.train_se3_flow_matching.TrainingWorkspace
+_target_: diffusion_policy.workspace.train_se3_flow_matching_no_bounds.TrainingWorkspace
 
 exp_name: "train_se3_flow_matching_no_bounds"
 n_obs_steps: &n_obs_steps 3
