@@ -198,7 +198,6 @@ def mask_out_features_pcd(mask, rgbs, pcd, n_min = 0, n_max=1000000):
     return rgbs, pcd
 
 def create_obs_state_plot(obs, gt_action=None, pred_action=None, downsample=1, use_mask=False, lowdim = False, quaternion_format: str = 'xyzw'):
-    return None
     n_batch = obs[[k for k in obs.keys()][0]].shape[0]
     images = []
     for bidx in range(n_batch):
