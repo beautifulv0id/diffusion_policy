@@ -15,10 +15,7 @@ job_name=$task_config
 
 args="task=$task_config\
     training.resume=True\
-    task.env_runner.n_procs_max=5\
-    task.dataset.use_precomputed_features=False\
-    num_episodes=20\
-    policy.crop_workspace=False"
+    task.env_runner.n_procs_max=5"
 
 if [ $SLURM_ARRAY_TASK_ID -eq $SLURM_ARRAY_TASK_MAX ]; then
     args="$args mode=rollout"
