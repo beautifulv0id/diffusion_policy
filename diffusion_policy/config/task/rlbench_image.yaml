@@ -17,7 +17,7 @@ use_lowdim_pcd: False
 
 dataset:
   _target_: diffusion_policy.dataset.rlbench_dataset.RLBenchDataset
-  dataset_path: ${oc.env:DIFFUSION_POLICY_DATA_ROOT}/data/rlbench.zarr
+  dataset_path: "${oc.env:DIFFUSION_POLICY_DATA_ROOT}/data/rlbench.zarr"
   n_episodes: ${num_episodes}
   task_name: ${task.task_name}
   cameras: ${task.cameras}
