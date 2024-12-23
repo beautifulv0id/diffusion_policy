@@ -34,7 +34,7 @@ then
 fi
 
 hydra_run_dir=$(cat $HYDRA_RUN_DIR_FILE)
-id=$(docker run -e WANDB_API_KEY=$WANDB_API_KEY -dt  -v ${DIFFUSION_POLICY_ROOT}:/workspace oddtoddler400/pointattention:latest)
+id=$(docker run -e WANDB_API_KEY=$WANDB_API_KEY DIFFUSION_POLICY_DATA_ROOT=$DIFFUSION_POLICY_DATA_ROOT -dt  -v ${DIFFUSION_POLICY_ROOT}:/workspace oddtoddler400/pointattention:latest)
 echo "Container ID: $id"
 echo "Running training script"
 docker exec -t $id /bin/bash -c "source activate se3diffuser && 
