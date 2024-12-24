@@ -257,8 +257,8 @@ class TrainingWorkspace(BaseWorkspace):
                     policy.eval()
 
                     # run rollout (TASK SATISFACTION)
-                    if (self.epoch % cfg.training.rollout_every) == 0 \
-                            and self.epoch > 0:
+                    if (self.epoch % cfg.training.rollout_every) == 0 and self.epoch > 0:
+                        print ("RUNNING ROLLOUT" + str(self.epoch))
                         dataset.empty_cache() # empty cache before running
                         val_dataset.empty_cache()
                         runner_log = env_runner.run(policy, cfg.policy, dataset.demos, mode="train")
@@ -270,6 +270,7 @@ class TrainingWorkspace(BaseWorkspace):
 
                     # run validation
                     if (self.epoch % cfg.training.val_every) == 0:
+                        print ("RUNNING VALIDATION" + str(self.epoch))
                         with torch.no_grad():
                             val_losses = list()
                             with tqdm.tqdm(val_dataloader, desc=f"Validation epoch {self.epoch}",
@@ -291,11 +292,11 @@ class TrainingWorkspace(BaseWorkspace):
                                 step_log['val_loss'] = val_loss
 
 
-                    ## Run Experiment related Validation ## #TODO: as far as I see, this currently has no effect!
-                    if (self.epoch % cfg.training.model_evaluation_every) == 0:
-                        evaluation_log = self.model.evaluate(val_sampling_batch, validation=True)
-                        # log all
-                        step_log.update(evaluation_log)
+                    # ## Run Experiment related Validation ## #TODO: as far as I see, this currently has no effect!
+                    # if (self.epoch % cfg.training.model_evaluation_every) == 0:
+                    #     evaluation_log = self.model.evaluate(val_sampling_batch, validation=True)
+                    #     # log all
+                    #     step_log.update(evaluation_log)
 
                     # sample on a training batch
                     if (self.epoch % cfg.training.sample_every) == 0:
@@ -376,12 +377,12 @@ class TrainingWorkspace(BaseWorkspace):
             if (checkpoint[-5:]==".ckpt" and checkpoint[:6]=="epoch="):
                 if (post_train):
                     # if after training - only additionally roll out the checkpoints that have not been rolled out before
-                    if (int(checkpoint.split('=')[-1].split('.')[0]))%cfg.training.rollout_every!=0:
+                    if (int(checkpoint[6:10]))%cfg.training.rollout_every!=0 or int(checkpoint[6:10])==0:
                         all_checkpoints.append(checkpoint)
-                        checkpoint_epoch.append(int(checkpoint.split('=')[-1].split('.')[0]))
+                        checkpoint_epoch.append(int(checkpoint[6:10]))
                 else:
                     all_checkpoints.append(checkpoint)
-                    checkpoint_epoch.append(int(checkpoint.split('=')[-1].split('.')[0]))
+                    checkpoint_epoch.append(int(checkpoint[6:10]))
 
 
         # now sort them:
