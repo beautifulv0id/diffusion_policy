@@ -3,6 +3,7 @@
 #SBATCH -c 6
 #SBATCH --mem=8G
 #SBATCH -p gpu
+#SBATCH -C 'rtx3090|a5000|a6000'
 #SBATCH --gres=gpu:1
 #SBATCH --array=0-1%1
 #SBATCH --output=../../data/logs/%A_open_drawer_image/train_%a.out
