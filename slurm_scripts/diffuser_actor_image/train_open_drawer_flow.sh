@@ -16,7 +16,7 @@ job_name=$task_config
 
 args="task=$task_config\
     training.resume=True\
-    task.env_runner.n_procs_max=5
+    task.env_runner.n_procs_max=5"
 
 if [ $SLURM_ARRAY_TASK_ID -eq $SLURM_ARRAY_TASK_MAX ]; then
     args="$args mode=rollout"
