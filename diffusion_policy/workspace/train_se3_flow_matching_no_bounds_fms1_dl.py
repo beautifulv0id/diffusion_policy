@@ -88,7 +88,7 @@ class TrainingWorkspace(BaseWorkspace):
         # if cfg.training.use_ema:
         #     self.ema_model.set_normalizer(normalizer)
 
-        std = torch.Tensor([1.0, 1.0, 1.0, math.pi, math.pi, math.pi])[None, ...]
+        std = torch.Tensor([0.72, 0.72, 0.72, math.pi, math.pi, math.pi])[None, ...]
         mean = torch.Tensor([0, 0, 0, 0, 0, 0])[None, ...]
         self.model.set_mean_std(mean, std)
 
@@ -421,7 +421,7 @@ class TrainingWorkspace(BaseWorkspace):
                     output_dir=self.output_dir)
                 dataset = hydra.utils.instantiate(cfg.task.dataset)
                 val_dataset = dataset.get_test_dataset()
-                std = torch.Tensor([1.0, 1.0, 1.0, math.pi, math.pi, math.pi])[None, ...]
+                std = torch.Tensor([0.72, 0.72, 0.72, math.pi, math.pi, math.pi])[None, ...]
                 mean = torch.Tensor([0, 0, 0, 0, 0, 0])[None, ...]
                 self.model.set_mean_std(mean, std)
                 # self.model.set_mean_std(*dataset.get_mean_std(
