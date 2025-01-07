@@ -9,7 +9,7 @@
 #SBATCH --output=../../data/logs/%A_open_drawer_image/train_%a.out
 #SBATCH -J open_drawer_image
 
-training_script=train_se3_flow_matching_no_bounds_fms2_dl.py
+training_script=train_se3_flow_matching_no_bounds_fms21_dl.py
 task_name=open_drawer
 task_config=open_drawer_image
 job_name=$task_config
