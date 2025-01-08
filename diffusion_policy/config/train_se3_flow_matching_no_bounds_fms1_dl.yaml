@@ -22,7 +22,7 @@ max_pcd_points:
   res: ${policy.feature_res}
 
 policy:
-  _target_: diffusion_policy.policy.se3_flow_matching_dl.SE3FlowMatching
+  _target_: diffusion_policy.policy.se3_flow_matching_dl_fixed.SE3FlowMatching
   embedding_dim: ${embedding_dim}
   backbone: "clip"
   n_points_out: 1000
