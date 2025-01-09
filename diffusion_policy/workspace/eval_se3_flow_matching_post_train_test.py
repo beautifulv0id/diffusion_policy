@@ -148,7 +148,7 @@ class TrainingWorkspace(BaseWorkspace):
                         cfg.task.n_train_vis = min(eval_cfg.n_vis,1)
                         cfg.task.n_val_vis = min(eval_cfg.n_vis,1)
                     if 'n_procs_max' in eval_cfg.keys():
-                        cfg.task.n_procs_max = eval_cfg.n_procs_max
+                        cfg.task.env_runner.n_procs_max = eval_cfg.n_procs_max
 
                     env_runner = hydra.utils.instantiate(
                         cfg.task.env_runner,
