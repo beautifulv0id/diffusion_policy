@@ -1,7 +1,7 @@
 # Actually the task entry loads the yaml file inside task
 defaults:
   - _self_
-  - task: open_drawer_image
+  - rlbench_image
 
 name: train_ursa_flow
 _target_: diffusion_policy.workspace.train_ursa_flow.TrainingWorkspace
@@ -15,22 +15,16 @@ embedding_dim: 192
 num_episodes: -1
 mode: train
 
-max_pcd_points: 
-  _target_: diffusion_policy.common.rlbench_util.get_task_cropped_pcd_min_size
-  path: "${oc.env:DIFFUSION_POLICY_ROOT}/diffusion_policy/tasks/peract_cropped_pcd_min_sizes.json"
-  task: ${task.task_name}
-  res: ${policy.feature_res}
-
 policy:
   _target_: diffusion_policy.policy.ursa_flow.URSAFlow
   embedding_dim: ${embedding_dim}
   backbone: "clip"
-  fps_subsampling_factor: 10
+  fps_subsampling_factor: 30
   feature_res: "res2"
   scaling_factor: 3.0
-  gripper_loc_bounds: ${task.gripper_loc_bounds}
-  workspace_bounds: ${task.workspace_bounds}
-  max_pcd_points: ${max_pcd_points}
+  gripper_loc_bounds: ${gripper_loc_bounds}
+  workspace_bounds: null
+  max_pcd_points: null
   rotation_parametrization: 'so3'
   quaternion_format: 'xyzw' 
   diffusion_timesteps: 100
@@ -39,8 +33,8 @@ policy:
   t_switch: 0.75
   relative: True
   causal_attn: True
-  use_mask: ${task.dataset.use_mask}
-  use_precomputed_features: ${task.dataset.use_precomputed_features}
+  use_mask: ${dataset.use_mask}
+  use_precomputed_features: ${dataset.use_precomputed_features}
 
 dataloader:
   batch_size: 2
@@ -78,14 +72,14 @@ training:
   use_ema: False
   # training loop control
   # in epochs
-  model_evaluation_every: 100
+  model_evaluation_every: 50
   rollout_every: 1000
-
   checkpoint_every: 10
+  save_milestone_every: 1000
   visualize_every: 1000
   visualize_batch_size: 8
-  val_every: 100
-  sample_every: 100
+  val_every: 50
+  sample_every: 50
   # steps per epoch
   max_train_steps: null
   max_val_steps: null
@@ -114,20 +108,20 @@ logging:
   project: point_attention_debug
   resume: True
   mode: online
-  name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task.name}
+  name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_names}
   id: null
   group: null
-  tags: ["${name}", "${task.name}", "${exp_name}"]
+  tags: ["${name}", "${task_names}", "${exp_name}"]
 
 multi_run:
-  run_dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task.name}
-  wandb_name_base: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task.name}
+  run_dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_names}
+  wandb_name_base: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_names}
 
 hydra:
   job:
     override_dirname: ${name}
   run:
-    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task.name}
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_names}
   sweep:
-    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task.name}
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_names}
     subdir: ${hydra.job.num}

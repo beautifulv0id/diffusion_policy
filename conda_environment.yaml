@@ -8,9 +8,9 @@ channels:
 dependencies:
   - python
   - pip
-  - pytorch=2.5.1
-  - torchvision=0.20.1
-  - torchaudio
+  - pytorch=2.3.1
+  - torchvision=0.18.1
+  - torchaudio=2.3.1
   - pytorch3d
   - pytorch-cuda=12.1
   - dgl
@@ -42,4 +42,5 @@ dependencies:
     - packaging
     - ninja 
     - git+https://github.com/openai/CLIP.git
+    - transformers
 

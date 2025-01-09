@@ -1,8 +1,0 @@
-defaults:
-  - rlbench_mask
-
-name: open_drawer_mask
-task_name: open_drawer
-
-env_runner:
-  max_steps: 3

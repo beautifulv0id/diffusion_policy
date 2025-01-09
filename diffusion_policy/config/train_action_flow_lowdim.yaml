@@ -24,8 +24,8 @@ policy:
   embedding_dim: ${embedding_dim}
   fps_subsampling_factor: 5
   scaling_factor: 3.0
-  gripper_loc_bounds: ${task.gripper_loc_bounds}
-  nkeypoints: ${task.nkeypoints}
+  gripper_loc_bounds: ${gripper_loc_bounds}
+  nkeypoints: ${nkeypoints}
   rotation_parametrization: 'so3'
   quaternion_format: 'xyzw' 
   diffusion_timesteps: 100
@@ -64,20 +64,21 @@ training:
   # optimization
   lr_scheduler: cosine
   lr_warmup_steps: 500
-  num_epochs: 2000
+  num_epochs: 5000
   gradient_accumulate_every: 1
   # EMA destroys performance when used with BatchNorm
   # replace BatchNorm with GroupNorm.
   use_ema: False
   # training loop control
   # in epochs
-  model_evaluation_every: 5
-  rollout_every: 2000
+  model_evaluation_every: 50
+  rollout_every: 1000
   checkpoint_every: 10
+  save_milestone_every: 1000
   visualize_every: 1000
   visualize_batch_size: 8
-  val_every: 5
-  sample_every: 5
+  val_every: 50
+  sample_every: 50
   # steps per epoch
   max_train_steps: null
   max_val_steps: null
@@ -106,20 +107,20 @@ logging:
   project: point_attention_debug
   resume: True
   mode: online
-  name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task.name}
+  name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_names}
   id: null
   group: null
-  tags: ["${name}", "${task.name}", "${exp_name}"]
+  tags: ["${name}", "${task_names}", "${exp_name}"]
 
 multi_run:
-  run_dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task.name}
-  wandb_name_base: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task.name}
+  run_dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_names}
+  wandb_name_base: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_names}
 
 hydra:
   job:
     override_dirname: ${name}
   run:
-    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task.name}
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_names}
   sweep:
-    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task.name}
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_names}
     subdir: ${hydra.job.num}

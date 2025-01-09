@@ -1,41 +1,49 @@
 import numpy as np
 import torch
 import zarr
-import copy
+from collections import defaultdict, Counter
+import itertools
 import os
+import random
 import pickle
 from time import time
+from pathlib import Path
 from diffusion_policy.common.rlbench_util import create_obs_state_plot, convert_rlbench_action, unconvert_rlbench_action
 from diffusion_policy.common.pytorch_util import dict_apply
 from diffusion_policy.common.so3_util import normal_so3
 from diffusion_policy.dataset.rlbench_utils import Resize
 from rlbench.backend.const import LOW_DIM_PICKLE
 
-def create_sample_indices(task_group : zarr.hierarchy.Group, n_episodes, n_obs):
+def create_sample_indices(split : zarr.hierarchy.Group, taskvar, n_episodes, n_obs):
     indices = []
-    for i, demo_group in enumerate(task_group.values()):
-        if i >= n_episodes:
-            break
-        trajectory_length = demo_group['state_action']['proprioception'].shape[0]
-        for action_idx in range(1, trajectory_length):
-            obs_idxs = []
-            for offset in reversed(range(1, n_obs+1)):
-                if action_idx - offset < 0:
-                    obs_idxs.append(0)
-                else:
-                    obs_idxs.append(action_idx-offset)
-            indices.append({
-                'demo': demo_group,
-                'obs_idxs': obs_idxs,
-                'action_idx': action_idx
-            })
+    for (task, var) in taskvar:
+        taskvar_group = split[task][var]
+        for i, demo_group in enumerate(taskvar_group.values()):
+            if i >= n_episodes and n_episodes > 0:
+                break
+            trajectory_length = demo_group['state_action']['proprioception'].shape[0]
+            for action_idx in range(1, trajectory_length):
+                obs_idxs = []
+                for offset in reversed(range(1, n_obs+1)):
+                    if action_idx - offset < 0:
+                        obs_idxs.append(0)
+                    else:
+                        obs_idxs.append(action_idx-offset)
+                indices.append({
+                    'task': task,
+                    'var': var,
+                    'demo': demo_group,
+                    'obs_idxs': obs_idxs,
+                    'action_idx': action_idx
+                })
     return indices
 
-def collate_samples(datum, use_pc, use_rgb, use_mask, apply_cameras, use_lowdim_pcd, use_features):
+def collate_samples(datum, instructions, use_pc, use_rgb, use_mask, apply_cameras, use_lowdim_pcd, use_features):
     sample = {
         'obs': dict(),
         'action': dict()
     }
+
     obs_idxs = datum['obs_idxs']
     next_keypoint_idx = datum['action_idx']
     cameras = datum['demo']['cameras']
@@ -62,6 +70,18 @@ def collate_samples(datum, use_pc, use_rgb, use_mask, apply_cameras, use_lowdim_
     sample['obs']['low_dim_state'] = curr_gripper[:,7:8]
 
     sample['action']['gt_trajectory'] = state_action['proprioception'][next_keypoint_idx].reshape(1, -1)
+
+    task = datum['task']
+    var = datum['var']
+    # Sample one instruction feature
+    if instructions:
+        instr = random.choice(instructions[task][var])
+        instr = instr[None].repeat(1, 1, 1)
+    else:
+        instr = torch.zeros((1, 53, 512))
+
+    sample['obs']['instr'] = instr
+
     return sample
 
 def collate_samples_fused(datum, feature_res):
@@ -104,22 +124,25 @@ def add_noise_to_gripper_pose(gripper_pose, rot_noise_scale, pos_noise_scale):
     gripper_pose = unconvert_rlbench_action(gripper_p, gripper_r, ret)
     return gripper_pose
 
-def load_demos(task_path):
+def load_demos(root, taskvar):
     demos = []
-    for demo in os.listdir(task_path):
-        if not demo.startswith('demo'):
-            continue
-        with open(os.path.join(task_path, demo, LOW_DIM_PICKLE), 'rb') as f:
-            demo = pickle.load(f)
-        demos.append(demo)
+    for task, var in taskvar:
+        task_path = os.path.join(root, task, str(var))
+        for demo in os.listdir(task_path):
+            if not demo.startswith('demo'):
+                continue
+            with open(os.path.join(task_path, demo, LOW_DIM_PICKLE), 'rb') as f:
+                demo = pickle.load(f)
+            demos.append((task, var, demo))
     return demos
 
 class RLBenchDataset(torch.utils.data.Dataset):
     
     def __init__(self,
-                 dataset_path: str,
+                 root: str,
+                 instructions = None,
                  cameras = ['left_shoulder', 'right_shoulder', 'wrist', 'front'],
-                 task_name = 'open_drawer',
+                 taskvar = [('open_drawer', 0)],
                  use_rgb = True,
                  use_pcd = True,
                  use_mask = True,
@@ -136,21 +159,31 @@ class RLBenchDataset(torch.utils.data.Dataset):
                  feature_res=None
                  ):
         
-        self._training = True
-
-        print(f"Loading dataset from {dataset_path} for task {task_name}")
-        print("Cache size: ", cache_size)
+        self._training = True if split == 'train' else False
 
         if self._training:
             self._resize = Resize(scales=image_rescale)
-        
+
+        root = Path(root)
+        split_path = root / split
+
+        print(f"Loading dataset from {split_path}")
+        print("Cache size: ", cache_size)
+
+        # Keep variations and useful instructions
+        self._instructions = defaultdict(dict)
+        self._num_vars = Counter()  # variations of the same task
+        for root_, (task, var) in itertools.product([split_path], taskvar):
+            data_dir = root_ / task / str(var)
+            if data_dir.is_dir():
+                if instructions is not None:
+                    self._instructions[task][var] = instructions[task][var]
+                self._num_vars[task] += 1
+
         # read from zarr dataset
-        dataset_root = zarr.open(dataset_path, 'r')
-        task_group = dataset_root[split][task_name]
-        demos = load_demos(os.path.join(dataset_path, split, task_name))
-        if n_episodes == -1:
-            n_episodes = len(demos)
-        indices = create_sample_indices(task_group, n_episodes, n_obs_steps)
+        split_root = zarr.open(split_path, 'r')
+        indices = create_sample_indices(split_root, taskvar, n_episodes, n_obs_steps)
+        demos = load_demos(split_path, taskvar)
 
         self.indices = indices
         self.cameras = cameras
@@ -165,8 +198,8 @@ class RLBenchDataset(torch.utils.data.Dataset):
         self.rot_noise_scale = rot_noise_scale
         self.pos_noise_scale = pos_noise_scale
         self.split = split
-        self.dataset_path = dataset_path
-        self.task_name = task_name
+        self._root = root
+        self.task_name = taskvar
         self.n_obs_steps = n_obs_steps
         self.n_episodes = n_episodes
         self.image_rescale = image_rescale
@@ -190,6 +223,7 @@ class RLBenchDataset(torch.utils.data.Dataset):
             else:
                 sample = collate_samples(
                     index,
+                    self._instructions,
                     use_pc=self.use_pcd,
                     use_rgb=self.use_rgb,
                     use_mask=self.use_mask,
@@ -198,7 +232,7 @@ class RLBenchDataset(torch.utils.data.Dataset):
                     use_features=self.use_features
                 )
 
-            sample = dict_apply(sample, lambda x: torch.from_numpy(x))
+            sample = dict_apply(sample, lambda x: torch.from_numpy(x) if isinstance(x, np.ndarray) else x)
 
             if len(self._cache) == self._cache_size and self._cache_size > 0:
                 key = list(self._cache.keys())[int(time()) % self._cache_size]
@@ -216,9 +250,9 @@ class RLBenchDataset(torch.utils.data.Dataset):
     
     def get_dataset(self, split):
         dataset = RLBenchDataset(
-            dataset_path=self.dataset_path,
+            root=self._root,
             cameras=self.cameras,
-            task_name=self.task_name,
+            taskvar=self.task_name,
             use_rgb=self.use_rgb,
             use_pcd=self.use_pcd,
             use_mask=self.use_mask,
@@ -265,12 +299,13 @@ class RLBenchDataset(torch.utils.data.Dataset):
         return imgs    
     
     def get_stats(self, relative_to_gripper=False, quaternion_format='xyzw'):
-        from pytorch3d.transforms import matrix_to_quaternion, quaternion_to_matrix, quaternion_multiply
+        from pytorch3d.transforms import quaternion_to_matrix
         act_stats = []
         for idx in range(len(self)):
             index = self.indices[idx]
             sample = collate_samples(
                 index,
+                self._instructions,
                 use_pc=False,
                 use_rgb=False,
                 use_mask=False,
@@ -324,15 +359,16 @@ def extract_rgb_pcd(batch):
 def test_dataset():
     from torch.nn import functional as F
     from diffusion_policy.model.common.workspace_cropping import crop_to_workspace
+    from diffusion_policy.common.pytorch_util import print_dict
 
     dataset = RLBenchDataset(
-        dataset_path=os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data/rlbench.zarr'),
+        root=os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data/multi_task_test.zarr'),
         cameras=['left_shoulder', 'right_shoulder', 'wrist', 'front'],
-        task_name='open_drawer',
+        taskvar=[('put_item_in_drawer', 0), ('open_drawer', 0)],
         use_rgb=True,
         use_pcd=True,
         use_mask=False,
-        use_lowdim_pcd=True,
+        use_lowdim_pcd=False,
         use_features=False,
         n_obs_steps=3,
         n_episodes=-1,
@@ -352,6 +388,8 @@ def test_dataset():
     data_loader = DataLoader(dataset, batch_size=2, shuffle=False)
     
     batch = next(iter(data_loader))
+
+    print_dict(batch)
 
     print(batch['obs']['pcd'].shape)
     pcd, rgb = extract_rgb_pcd(batch)

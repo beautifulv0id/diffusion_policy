@@ -1,7 +1,6 @@
-# Actually the task entry loads the yaml file inside task
 defaults:
   - _self_
-  - task: open_drawer_image
+  - rlbench_image
 
 name: train_se3_flow_matching
 _target_: diffusion_policy.workspace.train_se3_flow_matching.TrainingWorkspace
@@ -9,29 +8,23 @@ _target_: diffusion_policy.workspace.train_se3_flow_matching.TrainingWorkspace
 exp_name: "train_se3_flow_matching"
 n_obs_steps: &n_obs_steps 3
 use_keyframe_actions: True
-horizon: ${eval:'1 if ${use_keyframe_actions} else 16'}
-n_action_steps: ${eval:'1 if ${use_keyframe_actions} else 8'}
+horizon: 1
+n_action_steps: 1
 embedding_dim: 192
 num_episodes: -1
 mode: train
-
-max_pcd_points: 
-  _target_: diffusion_policy.common.rlbench_util.get_task_cropped_pcd_min_size
-  path: "${oc.env:DIFFUSION_POLICY_ROOT}/diffusion_policy/tasks/peract_cropped_pcd_min_sizes.json"
-  task: ${task.task_name}
-  res: ${policy.feature_res}
 
 policy:
   _target_: diffusion_policy.policy.se3_flow_matching.SE3FlowMatching
   embedding_dim: ${embedding_dim}
   backbone: "clip"
   n_points_out: 1000
-  feature_res: ${task.dataset.feature_res}
+  feature_res: ${dataset.feature_res}
   scaling_factor: 3.0
-  gripper_loc_bounds: ${task.gripper_loc_bounds}
-  workspace_bounds: ${task.workspace_bounds}
+  gripper_loc_bounds: ${gripper_loc_bounds}
+  workspace_bounds: null
   crop_workspace: True
-  max_pcd_points: ${max_pcd_points}
+  max_pcd_points: null
   quaternion_format: 'xyzw' 
   diffusion_timesteps: 50
   nhist: ${n_obs_steps}
@@ -111,20 +104,20 @@ logging:
   project: point_attention_debug
   resume: True
   mode: online
-  name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task.name}
+  name: ${now:%Y.%m.%d-%H.%M.%S}_${name}
   id: null
   group: null
-  tags: ["${name}", "${task.name}", "${exp_name}"]
+  tags: ["${name}", "${exp_name}"]
 
 multi_run:
-  run_dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task.name}
-  wandb_name_base: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task.name}
+  run_dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+  wandb_name_base: ${now:%Y.%m.%d-%H.%M.%S}_${name}
 
 hydra:
   job:
     override_dirname: ${name}
   run:
-    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task.name}
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
   sweep:
-    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task.name}
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
     subdir: ${hydra.job.num}

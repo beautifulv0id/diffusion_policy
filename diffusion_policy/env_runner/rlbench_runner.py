@@ -11,14 +11,12 @@ from diffusion_policy.env.rlbench.rlbench_utils import Actioner
 from typing import List
 import wandb
 from diffusion_policy.env_runner.rlbench_utils import _evaluate_task_on_demos
-
+from torch.nn.parallel import DistributedDataParallel
 
 class RLBenchRunner(BaseImageRunner):
     def __init__(self, 
                  output_dir,
-                 data_root, #TODO: or pass demos?
-                task_str: str,
-                max_steps: int,
+                 data_root,
                 max_episodes: int,
                 max_rrt_tries: int = 1,
                 n_action_steps: int = 1,
@@ -44,7 +42,6 @@ class RLBenchRunner(BaseImageRunner):
                 adaptor=None,
                  ):
         super(RLBenchRunner, self).__init__(output_dir)
-        self.task_str = task_str
 
         assert any([apply_rgb, apply_pc, apply_low_dim_pcd]), "At least one of apply_rgb, apply_pc, apply_low_dim_pcd must be True"
         
@@ -69,9 +66,7 @@ class RLBenchRunner(BaseImageRunner):
         }
 
 
-        self.task_str = task_str
         self.action_dim = action_dim
-        self.max_steps = max_steps
         self.max_rrt_tries = max_rrt_tries
         self.demo_tries = demo_tries
         self.n_train_vis = n_train_vis
@@ -89,12 +84,13 @@ class RLBenchRunner(BaseImageRunner):
         if len(demos) == 0:
             return {}
 
-        state_dict = {k: v.detach().clone() for k, v in policy.state_dict().items()}
+        if isinstance(policy, DistributedDataParallel):
+            state_dict = {k: v.detach().clone() for k, v in policy.module.state_dict().items()}
+        else:
+            state_dict = {k: v.detach().clone() for k, v in policy.state_dict().items()}
         
         log_data = _evaluate_task_on_demos(env_args=self.env_args,
-                                task_str=self.task_str,
                                 demos=demos[:self.max_episodes],
-                                max_steps=self.max_steps,
                                 state_dict=state_dict,
                                 policy_cfg=policy_cfg,
                                 action_dim=self.action_dim,
@@ -115,19 +111,19 @@ class RLBenchRunner(BaseImageRunner):
         for i, rgbs in enumerate(rgbs_ls):
             if rgbs is not None:
                 sim_video = wandb.Video(rgbs, fps=30, format="mp4")
-                name = f"video/{mode}_{self.task_str}_{i}"
+                name = f"video/{mode}_{i}"
                 log_data[name] = sim_video
         
         for i, obs_state in enumerate(obs_state_ls):
             if obs_state is not None:
                 obs_state = wandb.Video(obs_state, fps=1, format="mp4")
-                name = f"obs_state/{mode}_{self.task_str}_obs_state_{i}"
+                name = f"obs_state/{mode}_obs_state_{i}"
                 log_data[name] = obs_state
         
         for i, mask in enumerate(mask_ls):
             if mask is not None:
                 sim_plots = wandb.Video(mask, fps=1, format="mp4")
-                name = f"mask/{mode}_{self.task_str}_mask_{i}"
+                name = f"mask/{mode}_mask_{i}"
                 log_data[name] = sim_plots
 
         

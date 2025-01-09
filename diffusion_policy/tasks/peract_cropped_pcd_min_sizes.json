@@ -1,6 +1,7 @@
 {
     "open_drawer": {
-        "res2": 1100
+        "res1": 5300,
+        "res2": 1000
     },
     "put_item_in_drawer": {
         "res2": 1257

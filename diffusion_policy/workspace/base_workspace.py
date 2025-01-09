@@ -107,6 +107,7 @@ class BaseWorkspace:
         self.load_payload(payload, 
             exclude_keys=exclude_keys, 
             include_keys=include_keys)
+        torch.cuda.empty_cache()
         return payload
     
     @classmethod

@@ -1,11 +1,12 @@
 from diffusion_policy.env.rlbench.rlbench_env import RLBenchEnv
 from diffusion_policy.env.rlbench.rlbench_utils import task_file_to_task_class, Actioner, Mover, get_actions_from_demo
+from diffusion_policy.common.rlbench_util import get_max_episode_lengths
 from diffusion_policy.common.rlbench_util import extract_obs
 import torch
 import numpy as np
 from rlbench.task_environment import TaskEnvironment
 from rlbench.demo import Demo
-from typing import List
+from typing import List, Tuple
 from diffusion_policy.common.rlbench_util import extract_obs, create_obs_state_plot
 from diffusion_policy.common.pytorch_util import dict_apply
 import torch.nn.functional as F
@@ -16,9 +17,7 @@ import hydra
 
 @torch.no_grad()
 def _evaluate_task_on_demos(env_args : dict, 
-                            task_str: str,
-                            demos: List[Demo],  
-                            max_steps: int,
+                            demos: List[Tuple[str, int, Demo]], # (task_str, variation_number, demo)
                             state_dict,
                             policy_cfg,
                             action_dim: int = 7,
@@ -37,7 +36,7 @@ def _evaluate_task_on_demos(env_args : dict,
     events = [mp.Event() for _ in range(n_procs)]  
     processes = [mp.Process(target=_evaluate_task_on_demos_multiproc, 
                                     args=(demo_idx, lock, queue, events[i], env_args, 
-                                        task_str, demos, max_steps, state_dict, policy_cfg, action_dim,
+                                        demos, state_dict, policy_cfg, action_dim,
                                         max_rrt_tries, demo_tries, n_visualize, 
                                         verbose, plot_gt_action,return_model_obs)
                         ) for i in range(n_procs)]
@@ -67,14 +66,12 @@ def _evaluate_task_on_demos(env_args : dict,
     return log_data
 
 @torch.no_grad()
-def _evaluate_task_on_demos_multiproc(demo_idx : mp.Value,
-                            lock : mp.Lock,
+def _evaluate_task_on_demos_multiproc(demo_idx,
+                            lock,
                             proc_log_data : mp.Queue,
-                            event : mp.Event,
+                            event,
                             env_args : dict,      
-                            task_str: str,
                             demos: List[Demo],  
-                            max_steps: int,
                             state_dict,
                             policy_cfg,
                             action_dim: int = 7,
@@ -85,16 +82,14 @@ def _evaluate_task_on_demos_multiproc(demo_idx : mp.Value,
                             plot_gt_action: bool = False,
                             return_model_obs: bool = False):
     
+    max_episode_lenghts = get_max_episode_lengths()
     policy = create_policy(policy_cfg, state_dict)  
     actioner = Actioner(policy, action_dim=action_dim)
-    env = RLBenchEnv(**env_args)
-    env.launch()
     device = actioner.device
     dtype = actioner.dtype
-    task_type = task_file_to_task_class(task_str)
-    task : TaskEnvironment = env.env.get_task(task_type)
-    task.set_variation(0)
+    env = RLBenchEnv(**env_args)
     n_obs_steps = env.n_obs_steps
+    env.launch()
 
     while True:
         with lock:
@@ -103,7 +98,11 @@ def _evaluate_task_on_demos_multiproc(demo_idx : mp.Value,
             if my_demo_id >= len(demos):
                 break
     
-        demo = demos[my_demo_id]
+        task_str, variation_number, demo = demos[my_demo_id]
+        task_type = task_file_to_task_class(task_str)
+        task : TaskEnvironment = env.env.get_task(task_type)
+        task.set_variation(variation_number)
+
         if plot_gt_action:
             gt_actions = get_actions_from_demo(demo)
         gt_action = None
@@ -146,6 +145,8 @@ def _evaluate_task_on_demos_multiproc(demo_idx : mp.Value,
 
             move = Mover(task, max_tries=max_rrt_tries)
             reward = 0.0
+
+            max_steps = max_episode_lenghts[task_str]
 
             for step_id in range(max_steps):
                 # Fetch the current observation, and predict one action

@@ -20,6 +20,7 @@ from pathlib import Path
 import json
 from PIL import Image
 import io
+import os
 import einops
 import torch.nn.functional as F
 
@@ -68,6 +69,33 @@ def get_gripper_loc_bounds(path: str, buffer: float = 0.0, task: Optional[str] =
         gripper_loc_bounds_max = np.max(np.stack([bounds[1] for bounds in gripper_loc_bounds.values()]), axis=0) + buffer
         gripper_loc_bounds = np.stack([gripper_loc_bounds_min, gripper_loc_bounds_max])
     return gripper_loc_bounds
+
+
+def load_instructions(
+    instructions: Optional[Path],
+    tasks: Optional[Sequence[str]] = None,
+    variations: Optional[Sequence[int]] = None,
+) -> Optional[Instructions]:
+    if instructions is not None:
+        with open(instructions, "rb") as fid:
+            data: Instructions = pickle.load(fid)
+        if tasks is not None:
+            data = {task: var_instr for task, var_instr in data.items() if task in tasks}
+        if variations is not None:
+            data = {
+                task: {
+                    var: instr for var, instr in var_instr.items() if var in variations
+                }
+                for task, var_instr in data.items()
+            }
+        return data
+    return None
+
+def get_max_episode_lengths():
+    path = os.path.join(os.environ["DIFFUSION_POLICY_ROOT"], "diffusion_policy/tasks/peract_episodes.json")
+    file = json.load(open(path, "r"))
+    return file['max_episode_length']
+
 
 def get_workspace_bounds(path: str, buffer: float = 0.0):
     workspace_bounds = json.load(open(path, "r"))["bounds"]

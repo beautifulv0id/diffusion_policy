@@ -166,6 +166,14 @@ class SE3FlowMatching(BaseImagePolicy):
 
         trajectory = self.vec_to_pose(at)
 
+
+        if self._relative:
+            trajectory = self.convert2abs(trajectory)
+        # Back to quaternion
+        trajectory = self.unconvert_rot(trajectory, res=gripper_open > 0.5)
+        # unnormalize position
+        trajectory = self.unnormalize_pos(trajectory)
+
         return trajectory, gripper_open
        
     def forward(
@@ -258,7 +266,7 @@ class SE3FlowMatching(BaseImagePolicy):
         return loss
     
     def predict_action(self, obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        trajectory, gripper_open = self.forward(
+        return self.forward(
             gt_trajectory=None,
             rgb_obs=obs_dict.get('rgb', None),
             pcd_obs=obs_dict['pcd'],
@@ -268,18 +276,6 @@ class SE3FlowMatching(BaseImagePolicy):
             feature_obs=obs_dict.get('clip_features', None)
         )
     
-        if self._relative:
-            trajectory = self.convert2abs(trajectory)
-        # Back to quaternion
-        trajectory = self.unconvert_rot(trajectory, res=gripper_open > 0.5)
-        # unnormalize position
-        trajectory = self.unnormalize_pos(trajectory)
-
-        output = dict()
-        output['trajectory'] = trajectory
-        output['gripper_openess'] = gripper_open
-
-        return output
 
     
     def compute_loss(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:

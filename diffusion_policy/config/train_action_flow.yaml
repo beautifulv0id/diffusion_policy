@@ -1,7 +1,7 @@
 # Actually the task entry loads the yaml file inside task
 defaults:
   - _self_
-  - task: open_drawer_image
+  - rlbench_image
 
 name: train_action_flow
 _target_: diffusion_policy.workspace.train_diffuser_actor.TrainingWorkspace
@@ -19,10 +19,10 @@ policy:
   _target_: diffusion_policy.policy.action_flow.ActionFlow
   embedding_dim: ${embedding_dim}
   backbone: "clip"
-  image_size: ${task.image_size}
+  image_size: ${image_size}
   fps_subsampling_factor: 5
   scaling_factor: 3.0
-  gripper_loc_bounds: ${task.gripper_loc_bounds}
+  gripper_loc_bounds: ${gripper_loc_bounds}
   rotation_parametrization: 'so3'
   quaternion_format: 'xyzw' 
   diffusion_timesteps: 100
@@ -31,7 +31,7 @@ policy:
   t_switch: 0.75
   relative: True
   causal_attn: True
-  use_mask: ${task.dataset.use_mask}
+  use_mask: ${dataset.use_mask}
 
 dataloader:
   batch_size: 2
@@ -71,8 +71,8 @@ training:
   # in epochs
   model_evaluation_every: 50
   rollout_every: 1000
-
   checkpoint_every: 10
+  save_milestone_every: 1000
   visualize_every: 1000
   visualize_batch_size: 8
   val_every: 50
@@ -105,20 +105,20 @@ logging:
   project: point_attention_debug
   resume: True
   mode: online
-  name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task.name}
+  name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_names}
   id: null
   group: null
-  tags: ["${name}", "${task.name}", "${exp_name}"]
+  tags: ["${name}", "${task_names}", "${exp_name}"]
 
 multi_run:
-  run_dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task.name}
-  wandb_name_base: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task.name}
+  run_dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_names}
+  wandb_name_base: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_names}
 
 hydra:
   job:
     override_dirname: ${name}
   run:
-    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task.name}
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_names}
   sweep:
-    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task.name}
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_names}
     subdir: ${hydra.job.num}

@@ -93,11 +93,11 @@ def print_dict(x, indent=0, print_values=False):
             print_dict(x[k], indent+1, print_values=print_values)
         else:
             if isinstance(x[k], torch.Tensor):
-                print(" "*3*indent+k+":", x[k].detach().cpu().numpy().shape, x[k].dtype)
+                print(" "*3*indent+str(k)+":", x[k].detach().cpu().numpy().shape, x[k].dtype)
                 if print_values:
                     print( x[k][0].detach().cpu().numpy())
             else:
-                print(" "*3*indent+k+":", x[k])
+                print(" "*3*indent+str(k)+":", x[k])
 
 def compare_dicts(a, b, rtol=1e-4, atol=1e-3):
     for k in a.keys():

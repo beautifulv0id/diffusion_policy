@@ -1,11 +1,22 @@
+datatype: image
+instructions: ${oc.env:DIFFUSION_POLICY_ROOT}/data/rlbench_instructions/instructions.pkl
+tasks:
+  - open_drawer
+  - sweep_to_dustpan_of_size
+variations: 
+  - 0
+  - 1
+  - 3
+
+task_names: ${eval:'"_".join(${tasks})'}
+
 image_size: [128, 128]
-type: image
+
 
 gripper_loc_bounds: 
   _target_: diffusion_policy.common.rlbench_util.get_gripper_loc_bounds
   path: "${oc.env:DIFFUSION_POLICY_ROOT}/diffusion_policy/tasks/18_peract_tasks_location_bounds.json"
   buffer: 0.0
-  task: ${task.task_name}
 
 workspace_bounds:
   _target_: diffusion_policy.common.rlbench_util.get_workspace_bounds
@@ -17,13 +28,12 @@ use_lowdim_pcd: False
 
 dataset:
   _target_: diffusion_policy.dataset.rlbench_dataset.RLBenchDataset
-  dataset_path: ${oc.env:DIFFUSION_POLICY_ROOT}/data/rlbench_small.zarr
+  root: ${oc.env:DIFFUSION_POLICY_ROOT}/data/peract.zarr
   n_episodes: ${num_episodes}
-  task_name: ${task.task_name}
-  cameras: ${task.cameras}
+  cameras: ${cameras}
   n_obs_steps: ${n_obs_steps}
   use_mask: False
-  use_lowdim_pcd: ${task.use_lowdim_pcd}
+  use_lowdim_pcd: ${use_lowdim_pcd}
   cache_size: 2000
   image_rescale: [1., 1.]
   rot_noise_scale: 0.0
@@ -34,9 +44,7 @@ dataset:
 env_runner:
   _target_: diffusion_policy.env_runner.rlbench_runner.RLBenchRunner
   data_root: ""
-  task_str: ${task.task_name}
   max_episodes: 25
-  max_steps: 3
   max_rrt_tries: 1
   demo_tries: 1
   n_train_vis: 1
@@ -50,9 +58,9 @@ env_runner:
   action_dim: 8
   headless: True
   apply_rgb: True
-  apply_cameras: ${task.cameras}
+  apply_cameras: ${cameras}
   apply_pc: True
   apply_mask: False
-  apply_low_dim_pcd: ${task.use_lowdim_pcd}
+  apply_low_dim_pcd: ${use_lowdim_pcd}
   apply_pose: false
-  image_size: ${task.image_size}
+  image_size: ${image_size}

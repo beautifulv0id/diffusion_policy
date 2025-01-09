@@ -1,43 +1,46 @@
-# Actually the task entry loads the yaml file inside task
 defaults:
   - _self_
-  - task: stack_blocks_lowdim
+  - rlbench_image
 
-name: train_diffuser_actor_lowdim
-_target_: diffusion_policy.workspace.train_diffuser_actor.TrainingWorkspace
+name: train_se3_flow_matching
+_target_: diffusion_policy.workspace.train_se3_flow_matching_mg.TrainingWorkspace
 
-exp_name: "train_diffuser_actor_lowdim"
+exp_name: "train_se3_flow_matching"
 n_obs_steps: &n_obs_steps 3
 use_keyframe_actions: True
-horizon: ${eval:'1 if ${use_keyframe_actions} else 16'}
-n_action_steps: ${eval:'1 if ${use_keyframe_actions} else 8'}
+horizon: 1
+n_action_steps: 1
 embedding_dim: 192
 num_episodes: -1
 mode: train
 
 policy:
-  _target_: diffusion_policy.policy.diffuser_actor_lowdim.DiffuserActor
+  _target_: diffusion_policy.policy.se3_flow_matching.SE3FlowMatching
   embedding_dim: ${embedding_dim}
-  fps_subsampling_factor: 5
+  backbone: "clip"
+  n_points_out: 1000
+  feature_res: ${dataset.feature_res}
+  scaling_factor: 3.0
   gripper_loc_bounds: ${gripper_loc_bounds}
-  nkeypoints: ${nkeypoints}
-  rotation_parametrization: '6D'
-  quaternion_format: 'xyzw' # 3DDA
-  # quaternion_format: 'wxyz' # 'xyzw'
-  diffusion_timesteps: 100
+  workspace_bounds: null
+  crop_workspace: True
+  max_pcd_points: null
+  quaternion_format: 'xyzw' 
+  diffusion_timesteps: 50
   nhist: ${n_obs_steps}
   nhorizon: ${horizon}
-  relative: 0
+  relative: False
+  causal_attn: True
 
 dataloader:
   batch_size: 8
   num_workers: 0
-  shuffle: True
+  shuffle: False
   pin_memory: False
   persistent_workers: False
 
 val_dataloader:
-  batch_size: 8
+  batch_size: 2
   num_workers: 0
   shuffle: False
   pin_memory: False
@@ -92,7 +95,7 @@ checkpoint:
   topk:
     monitor_key: val_loss
     mode: min
-    k: 5
+    k: 1
     format_str: 'epoch={epoch:04d}-val_loss={val_loss:.3f}.ckpt'
   save_last_ckpt: True
   save_last_snapshot: False
@@ -101,20 +104,20 @@ logging:
   project: point_attention_debug
   resume: True
   mode: online
-  name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_names}
+  name: ${now:%Y.%m.%d-%H.%M.%S}_${name}
   id: null
   group: null
-  tags: ["${name}", "${task_names}", "${exp_name}"]
+  tags: ["${name}", "${exp_name}"]
 
 multi_run:
-  run_dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_names}
-  wandb_name_base: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_names}
+  run_dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+  wandb_name_base: ${now:%Y.%m.%d-%H.%M.%S}_${name}
 
 hydra:
   job:
     override_dirname: ${name}
   run:
-    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_names}
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
   sweep:
-    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_names}
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
     subdir: ${hydra.job.num}

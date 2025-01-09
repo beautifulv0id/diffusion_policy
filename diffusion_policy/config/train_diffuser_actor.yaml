@@ -1,7 +1,7 @@
 # Actually the task entry loads the yaml file inside task
 defaults:
   - _self_
-  - task: open_drawer_image
+  - rlbench_image
 
 name: train_diffuser_actor
 _target_: diffusion_policy.workspace.train_diffuser_actor.TrainingWorkspace
@@ -18,13 +18,13 @@ mode: train
 policy:
   _target_: diffusion_policy.policy.diffuser_actor.DiffuserActor
   backbone: "clip"
-  image_size: ${task.image_size}
+  image_size: ${image_size}
   embedding_dim: ${embedding_dim}
   num_vis_ins_attn_layers: 2
   use_instruction: false
   fps_subsampling_factor: 5
   scaling_factor: 3.0
-  gripper_loc_bounds: ${task.gripper_loc_bounds}
+  gripper_loc_bounds: ${gripper_loc_bounds}
   rotation_parametrization: '6D'
   quaternion_format: 'xyzw' 
   diffusion_timesteps: 100
@@ -32,7 +32,7 @@ policy:
   nhorizon: ${horizon}
   relative: 0
   lang_enhanced: false
-  use_mask: ${task.dataset.use_mask}
+  use_mask: ${dataset.use_mask}
 
 dataloader:
   batch_size: 16
@@ -106,20 +106,20 @@ logging:
   project: point_attention_debug
   resume: True
   mode: online
-  name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task.name}
+  name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_names}
   id: null
   group: null
-  tags: ["${name}", "${task.name}", "${exp_name}"]
+  tags: ["${name}", "${task_names}", "${exp_name}"]
 
 multi_run:
-  run_dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task.name}
-  wandb_name_base: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task.name}
+  run_dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_names}
+  wandb_name_base: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_names}
 
 hydra:
   job:
     override_dirname: ${name}
   run:
-    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task.name}
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_names}
   sweep:
-    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task.name}
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_names}
     subdir: ${hydra.job.num}

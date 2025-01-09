@@ -20,15 +20,15 @@ import json
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string('save_path',
-                    os.environ['DIFFUSION_POLICY_ROOT'] + '/data/rlbench.zarr',
+                    os.environ['DIFFUSION_POLICY_ROOT'] + '/data/peract.zarr',
                     'Where to save the dataset.')
 flags.DEFINE_string('data_path',
-                    os.environ['DIFFUSION_POLICY_ROOT'] + '/data/rlbench',
+                    os.environ['DIFFUSION_POLICY_ROOT'] + '/data/peract',
                     'Path to the data folder.')
 flags.DEFINE_list('splits', ['train', 'val', 'test'],
                     'Splits to use.')
 flags.DEFINE_integer('n_demos', -1, 'Number of demos to use.')
-flags.DEFINE_list('tasks', ['open_drawer'], 'Tasks to use.')
+flags.DEFINE_list('tasks', ['sweep_to_dustpan_of_size','open_drawer'], 'Tasks to use.')
 flags.DEFINE_list('image_size', [128, 128],
                   'The size of the images tp save.')
 flags.DEFINE_string('workspace_bounds_path', 
@@ -40,6 +40,7 @@ flags.DEFINE_string('num_objects_path',
 flags.DEFINE_list('fuse_cameras', ['left_shoulder', 'right_shoulder', 'wrist', 'front'],
                   'Cameras to fuse.')
 flags.DEFINE_list('feature_res', ['res2'], 'Feature resolution to use for the fused cameras.')
+flags.DEFINE_bool('precompute_features', False, 'Whether to precompute features.')
 
 
 FEATURE_RES_TO_DSF = {'res1': 2, 'res2': 4}
@@ -98,7 +99,8 @@ def write_rlbench_dataset():
 
     for split in splits:
         data_path = os.path.join(data_root, split)
-        save_path = os.path.join(save_root, split)
+        if not os.path.exists(data_path):
+            continue
         print(f'Processing folder {data_path}')
         split_group = dataset.create_group(split)
         with tqdm(FLAGS.tasks, desc="outer",
@@ -106,68 +108,76 @@ def write_rlbench_dataset():
 
             for task in gtask:
                 task_path = os.path.join(data_path, task)
-                episodes_path = os.path.join(task_path, 'variation0', 'episodes')
-
-                if FLAGS.n_demos == -1:
-                    num_demos = len(os.listdir(episodes_path))
-
-                print(f"Task: {task}, Number of episodes: {num_demos}")
-
-                # Create a new dataset
                 task_group = split_group.create_group(task)
-                os.makedirs(os.path.join(save_path, task), exist_ok=True)
+                variations = [var[9:] for var in os.listdir(task_path) if var.startswith('variation')]
+                for variation in variations:
+                    variation_group = task_group.create_group(variation)
+                    episodes_path = os.path.join(task_path, 'variation'+variation, 'episodes')
 
-                # create arrays for the observations
-                obs_config = create_obs_config(image_size=FLAGS.image_size, apply_cameras=CAMERAS, apply_pc=True, apply_mask=True, apply_rgb=True, apply_depth=False)
-                obs_config_low_dim = create_obs_config(image_size=FLAGS.image_size, apply_cameras=[], apply_pc=False, apply_mask=False, apply_rgb=False, apply_depth=False)
-                with tqdm(range(num_demos), desc=f"Task: {task}",
-                            leave=False) as tepoch:
-                    for demo_idx in tepoch:
-                        demo_lowdim = get_stored_demos(amount = 1, variation_number=0, task_name=task, from_episode_number=demo_idx, image_paths=True, dataset_root=data_path, random_selection=False, obs_config=obs_config_low_dim)[0]
-                        keypoints = _keypoint_discovery(demo_lowdim)
-                        if 0 not in keypoints:
-                            keypoints = [0] + keypoints
-                        demo = get_stored_demos(amount = 1, variation_number=0, task_name=task, from_episode_number=demo_idx, image_paths=False, dataset_root=data_path, random_selection=False, obs_config=obs_config, obs_idxs=keypoints)[0]
-                        demo_group = task_group.create_group(f'demo_{demo_idx}')
-                        add_groups_to_demo(demo_group, feature_map_pyramid)
-                        if 'low_dim_pcd' in demo._observations[0].misc:
-                            npcd = get_task_num_low_dim_pcd(FLAGS.num_objects_path, task)
-                            demo_group.create_dataset('low_dim_pcd', shape=(0, npcd, 3), chunks=(1, npcd, 3))
-                        camera_group = demo_group['cameras']
-                        state_action_group = demo_group['state_action']
-                        for kp in keypoints:
-                            obs = demo[kp]
-                            for camera in CAMERAS:
-                                rgb = obs.__dict__[f"{camera}_rgb"].transpose(2, 0, 1)[None,...]
-                                camera_group[camera]['rgb'].append(rgb)
-                                camera_group[camera]['pcd'].append(obs.__dict__[f"{camera}_point_cloud"].transpose(2, 0, 1)[None,...])
-                                mask = (obs.__dict__[f"{camera}_mask"] > 97).astype(np.bool_)
-                                camera_group[camera][f'mask'].append(mask[None,None,...])
-                                camera_group[camera][f'intrinsics'].append(obs.misc[f"{camera}_camera_intrinsics"][None,...])
-                                camera_group[camera][f'extrinsics'].append(obs.misc[f"{camera}_camera_extrinsics"][None,...])
+                    if FLAGS.n_demos == -1:
+                        num_demos = len(os.listdir(episodes_path))
 
-                                rgb = rgb / 255.0
+                    print(f"Task: {task}, Variation: {variation}, Number of episodes: {num_demos}")
 
-                                # Extract DINO features
-                                features = get_dino_features(rgb[0].transpose(1, 2, 0), scale=1)
-                                features = features.cpu().numpy().transpose(2, 0, 1)[None,...]
-                                camera_group[camera]['features']['dino_features'].append(features)
+                    # Create a new dataset
+                    # os.makedirs(os.path.join(save_path, task), exist_ok=True)
 
-                                # Extract CLIP features
-                                rgb = torch.tensor(rgb, device='cuda').float()
-                                with torch.no_grad():
-                                    rgb_ = normalize(rgb)
-                                    features = model(rgb_)
-                                for pyramid_lvl in feature_map_pyramid:
-                                    camera_group[camera]['features']['clip_features'][pyramid_lvl['res']].append(features[pyramid_lvl['res']].cpu().numpy())
-                            
-                            proprioception = np.concatenate([obs.gripper_pose, [obs.gripper_open], [obs.ignore_collisions]])
-                            state_action_group['proprioception'].append(proprioception[None,...])
-                            if 'low_dim_pcd' in obs.misc:
-                                demo_group['low_dim_pcd'].append(obs.misc['low_dim_pcd'][None,...])
-                        demo._observations = []
-                        with open(os.path.join(save_root, demo_group.path, LOW_DIM_PICKLE), 'wb') as f:
-                            pickle.dump(demo, f)
+                    # create arrays for the observations
+                    obs_config = create_obs_config(image_size=FLAGS.image_size, apply_cameras=CAMERAS, apply_pc=True, apply_mask=True, apply_rgb=True, apply_depth=False)
+                    obs_config_low_dim = create_obs_config(image_size=FLAGS.image_size, apply_cameras=[], apply_pc=False, apply_mask=False, apply_rgb=False, apply_depth=False)
+                    with tqdm(range(num_demos), desc=f"Task: {task}",
+                                leave=False) as tepoch:
+                        for demo_idx in tepoch:
+                            demo_lowdim = get_stored_demos(amount = 1, variation_number=int(variation), task_name=task, from_episode_number=demo_idx, image_paths=True, dataset_root=data_path, random_selection=False, obs_config=obs_config_low_dim)[0]
+                            keypoints = _keypoint_discovery(demo_lowdim)
+                            if 0 not in keypoints:
+                                keypoints = [0] + keypoints
+                            try:
+                                demo = get_stored_demos(amount = 1, variation_number=int(variation), task_name=task, from_episode_number=demo_idx, image_paths=False, dataset_root=data_path, random_selection=False, obs_config=obs_config, obs_idxs=keypoints)[0]
+                                demo_group = variation_group.create_group(f'demo_{demo_idx}')
+                                add_groups_to_demo(demo_group, feature_map_pyramid)
+                                if 'low_dim_pcd' in demo._observations[0].misc:
+                                    npcd = get_task_num_low_dim_pcd(FLAGS.num_objects_path, task)
+                                    demo_group.create_dataset('low_dim_pcd', shape=(0, npcd, 3), chunks=(1, npcd, 3))
+                                camera_group = demo_group['cameras']
+                                state_action_group = demo_group['state_action']
+                                for kp in keypoints:
+                                    obs = demo[kp]
+                                    for camera in CAMERAS:
+                                        rgb = obs.__dict__[f"{camera}_rgb"].transpose(2, 0, 1)[None,...]
+                                        camera_group[camera]['rgb'].append(rgb)
+                                        camera_group[camera]['pcd'].append(obs.__dict__[f"{camera}_point_cloud"].transpose(2, 0, 1)[None,...])
+                                        mask = (obs.__dict__[f"{camera}_mask"] > 97).astype(np.bool_)
+                                        camera_group[camera][f'mask'].append(mask[None,None,...])
+                                        camera_group[camera][f'intrinsics'].append(obs.misc[f"{camera}_camera_intrinsics"][None,...])
+                                        camera_group[camera][f'extrinsics'].append(obs.misc[f"{camera}_camera_extrinsics"][None,...])
+
+                                        rgb = rgb / 255.0
+
+                                        if FLAGS.precompute_features:
+                                            # Extract DINO features
+                                            # features = get_dino_features(rgb[0].transpose(1, 2, 0), scale=1)
+                                            # features = features.cpu().numpy().transpose(2, 0, 1)[None,...]
+                                            # camera_group[camera]['features']['dino_features'].append(features)
+
+                                            # Extract CLIP features
+                                            rgb = torch.tensor(rgb, device='cuda').float()
+                                            with torch.no_grad():
+                                                rgb_ = normalize(rgb)
+                                                features = model(rgb_)
+                                            for pyramid_lvl in feature_map_pyramid:
+                                                camera_group[camera]['features']['clip_features'][pyramid_lvl['res']].append(features[pyramid_lvl['res']].cpu().numpy())
+                                    
+                                    proprioception = np.concatenate([obs.gripper_pose, [obs.gripper_open], [obs.ignore_collisions]])
+                                    state_action_group['proprioception'].append(proprioception[None,...])
+                                    if 'low_dim_pcd' in obs.misc:
+                                        demo_group['low_dim_pcd'].append(obs.misc['low_dim_pcd'][None,...])
+                                demo._observations = []
+                                with open(os.path.join(save_root, demo_group.path, LOW_DIM_PICKLE), 'wb') as f:
+                                    pickle.dump(demo, f)
+                            except Exception as e:
+                                print(f"Error processing split {split}, task {task}, demo {demo_idx}: {e}")
+                                continue
 
 def write_min_pcd_size(pcd_min):
     path = os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], "diffusion_policy", "tasks", "peract_cropped_pcd_min_sizes.json")
@@ -279,7 +289,8 @@ def read_zarr_dataset():
 
 def main(argv):
     write_rlbench_dataset()
-    add_fused_camera_data()
+    if FLAGS.precompute_features:
+        add_fused_camera_data()
     read_zarr_dataset()
   
    
