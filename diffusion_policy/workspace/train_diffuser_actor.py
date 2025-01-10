@@ -40,6 +40,12 @@ class TrainingWorkspace(BaseWorkspace):
     def __init__(self, cfg: OmegaConf, output_dir=None):
         super().__init__(cfg, output_dir=output_dir)
 
+        # dump current config to yaml file:
+        # check if file exists
+        if not os.path.exists(self.output_dir + "/config_raw.yaml"):
+            with open(self.output_dir + "/config_raw.yaml", "w") as f:
+                OmegaConf.save(cfg, f)
+
         # set seed
         seed = cfg.training.seed
         torch.manual_seed(seed)
@@ -340,8 +346,8 @@ class TrainingWorkspace(BaseWorkspace):
         print ("training finished, now do the evaluation!")
         # add sleep here to ensure that all of the models are really saved
         time.sleep(10)
-        self.rollout(wandb_run=wandb_run, post_train=True)
-
+        # now here do not do any rollouts!
+        # self.rollout(wandb_run=wandb_run, post_train=True)
 
     def rollout(self, wandb_run=None, post_train=False):
         cfg = copy.deepcopy(self.cfg)
@@ -424,11 +430,12 @@ class TrainingWorkspace(BaseWorkspace):
 def main(cfg):
     workspace = TrainingWorkspace(cfg)
     if cfg.mode == 'train':
+        # we run the evaluation after the training - inside of the run loop
         workspace.run()
-        workspace.rollout()
     elif cfg.mode == 'rollout':
         print("Rollout")
-        workspace.rollout()
+        print ("Configered to not do any rollouts!")
+        # workspace.rollout()
     else:
         raise ValueError(f"Unknown mode {cfg.mode}")
 
