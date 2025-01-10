@@ -43,8 +43,10 @@ class TrainingWorkspace(BaseWorkspace):
         super().__init__(cfg, output_dir=output_dir)
 
         # dump current config to yaml file:
-        with open(self.output_dir + "/config_raw.yaml", "w") as f:
-            OmegaConf.save(cfg, f)
+        # check if file exists
+        if not os.path.exists(self.output_dir + "/config_raw.yaml"):
+            with open(self.output_dir + "/config_raw.yaml", "w") as f:
+                OmegaConf.save(cfg, f)
 
         # set seed
         seed = cfg.training.seed
