@@ -39,6 +39,7 @@ echo "Container ID: $id"
 echo "Running training script"
 docker exec -t $id /bin/bash -c "source activate se3diffuser && 
                         cd /workspace/diffusion_policy/workspace &&
+                        pip install open3d &&
                         HYDRA_FULL_ERROR=1 xvfb-run -a python3 $training_script $args hydra.run.dir=$hydra_run_dir"
 docker stop $id
 
