@@ -16,7 +16,7 @@ minute=${datetime:10:2}
 second=${datetime:12:2}
 
 # Construct the path
-path="data/outputs/${year}.${month}.${day}/${hour}.${minute}.${second}_${training_script_base}_${task_config}"
+path="data/outputs/${year}.${month}.${day}/${hour}.${minute}.${second}_${training_script_base}"
 
 # Print the path
 echo "$path"

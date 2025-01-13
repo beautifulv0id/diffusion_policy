@@ -254,7 +254,7 @@ class SE3FlowMatching(BaseImagePolicy):
 
         # Predict the noise residual
         at_pose = self.vec_to_pose(at)
-        input_data = {'obs': obs, 'act': at_pose, 'time': time}
+        input_data = {'act': at_pose, 'time': time}
         d_act, openess = self.model.forward_act(input_data)
 
         # Compute loss

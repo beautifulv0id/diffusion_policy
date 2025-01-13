@@ -19,8 +19,6 @@ def create_sample_indices(split : zarr.hierarchy.Group, taskvar, n_episodes, n_o
     for (task, var) in taskvar:
         taskvar_group = split[task][var]
         for i, demo_group in enumerate(taskvar_group.values()):
-            if i >= n_episodes and n_episodes > 0:
-                break
             trajectory_length = demo_group['state_action']['proprioception'].shape[0]
             for action_idx in range(1, trajectory_length):
                 obs_idxs = []
@@ -36,6 +34,8 @@ def create_sample_indices(split : zarr.hierarchy.Group, taskvar, n_episodes, n_o
                     'obs_idxs': obs_idxs,
                     'action_idx': action_idx
                 })
+    if n_episodes > 0:
+        indices = random.sample(indices, n_episodes)
     return indices
 
 def collate_samples(datum, instructions, use_pc, use_rgb, use_mask, apply_cameras, use_lowdim_pcd, use_features):
@@ -81,6 +81,7 @@ def collate_samples(datum, instructions, use_pc, use_rgb, use_mask, apply_camera
         instr = torch.zeros((1, 53, 512))
 
     sample['obs']['instr'] = instr
+    sample['obs']['task'] = task
 
     return sample
 
@@ -124,18 +125,6 @@ def add_noise_to_gripper_pose(gripper_pose, rot_noise_scale, pos_noise_scale):
     gripper_pose = unconvert_rlbench_action(gripper_p, gripper_r, ret)
     return gripper_pose
 
-def load_demos(root, taskvar):
-    demos = []
-    for task, var in taskvar:
-        task_path = os.path.join(root, task, str(var))
-        for demo in os.listdir(task_path):
-            if not demo.startswith('demo'):
-                continue
-            with open(os.path.join(task_path, demo, LOW_DIM_PICKLE), 'rb') as f:
-                demo = pickle.load(f)
-            demos.append((task, var, demo))
-    return demos
-
 class RLBenchDataset(torch.utils.data.Dataset):
     
     def __init__(self,
@@ -173,17 +162,19 @@ class RLBenchDataset(torch.utils.data.Dataset):
         # Keep variations and useful instructions
         self._instructions = defaultdict(dict)
         self._num_vars = Counter()  # variations of the same task
+        this_taskvar = []
         for root_, (task, var) in itertools.product([split_path], taskvar):
             data_dir = root_ / task / str(var)
             if data_dir.is_dir():
                 if instructions is not None:
                     self._instructions[task][var] = instructions[task][var]
                 self._num_vars[task] += 1
+                this_taskvar.append((task, var))
+
 
         # read from zarr dataset
         split_root = zarr.open(split_path, 'r')
-        indices = create_sample_indices(split_root, taskvar, n_episodes, n_obs_steps)
-        demos = load_demos(split_path, taskvar)
+        indices = create_sample_indices(split_root, this_taskvar, n_episodes, n_obs_steps)
 
         self.indices = indices
         self.cameras = cameras
@@ -192,14 +183,13 @@ class RLBenchDataset(torch.utils.data.Dataset):
         self.use_mask = use_mask
         self.use_lowdim_pcd = use_lowdim_pcd
         self.use_features = use_features
-        self.demos = demos
         self._cache = dict()
         self._cache_size = cache_size
         self.rot_noise_scale = rot_noise_scale
         self.pos_noise_scale = pos_noise_scale
         self.split = split
         self._root = root
-        self.task_name = taskvar
+        self.taskvar = taskvar
         self.n_obs_steps = n_obs_steps
         self.n_episodes = n_episodes
         self.image_rescale = image_rescale
@@ -252,7 +242,7 @@ class RLBenchDataset(torch.utils.data.Dataset):
         dataset = RLBenchDataset(
             root=self._root,
             cameras=self.cameras,
-            taskvar=self.task_name,
+            taskvar=self.taskvar,
             use_rgb=self.use_rgb,
             use_pcd=self.use_pcd,
             use_mask=self.use_mask,

@@ -95,6 +95,12 @@ Note: You need to share the files with your drive.
 
 Use `scripts/download_peract.sh` to download tasks from the drive to `<data_path>/peract`.
 
+### Download Pre-generated single task (ours)
+```bash
+rclone copy gdrive,shared_with_me:geometric_attention/data/rlbench.zarr.tar.gz <data_path>/rlbench
+tar -xzvf rlbench.zarr.tar.gz
+```
+
 ### Process Dataset
 Bring dataset in our format:
 ```bash

@@ -9,6 +9,7 @@ import dill
 import torch
 import threading
 import json
+from torch.nn.parallel import DistributedDataParallel
 
 class BaseWorkspace:
     include_keys = tuple()
@@ -56,6 +57,8 @@ class BaseWorkspace:
             if hasattr(value, 'state_dict') and hasattr(value, 'load_state_dict'):
                 # modules, optimizers and samplers etc
                 if key not in exclude_keys:
+                    if isinstance(value, DistributedDataParallel):
+                        value = value.module
                     if use_thread:
                         payload['state_dicts'][key] = _copy_to_cpu(value.state_dict())
                     else:
@@ -88,9 +91,16 @@ class BaseWorkspace:
         if include_keys is None:
             include_keys = payload['pickles'].keys()
 
+        def strip_ddp_prefix(state_dict, prefix="module."):
+            """Removes the specified prefix from keys in the state_dict."""
+            if any(k.startswith(prefix) for k in state_dict):
+                return {k[len(prefix):] if k.startswith(prefix) else k: v for k, v in state_dict.items()}
+            return state_dict
+
+
         for key, value in payload['state_dicts'].items():
             if key not in exclude_keys:
-                self.__dict__[key].load_state_dict(value, **kwargs)
+                self.__dict__[key].load_state_dict(strip_ddp_prefix(value), **kwargs)
         for key in include_keys:
             if key in payload['pickles']:
                 self.__dict__[key] = dill.loads(payload['pickles'][key])

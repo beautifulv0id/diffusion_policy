@@ -8,10 +8,7 @@ variations:
   - 1
   - 3
 
-task_names: ${eval:'"_".join(${tasks})'}
-
-image_size: [128, 128]
-
+task_desc: ${eval:'${tasks}[0] if len(${tasks}) == 1 else "multi_task"'}
 
 gripper_loc_bounds: 
   _target_: diffusion_policy.common.rlbench_util.get_gripper_loc_bounds
@@ -63,4 +60,3 @@ env_runner:
   apply_mask: False
   apply_low_dim_pcd: ${use_lowdim_pcd}
   apply_pose: false
-  image_size: ${image_size}

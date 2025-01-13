@@ -57,7 +57,7 @@ def load_model(hydra_path, cfg):
     return policy
 
 def load_dataset(cfg):
-    dataset = hydra.utils.instantiate(cfg.task.dataset)
+    dataset = hydra.utils.instantiate(cfg.dataset)
     return dataset
 
 def load_config(config_name: str, overrides: list = []):
@@ -84,8 +84,8 @@ if __name__ == '__main__':
     
     cfg = load_config(args.config, overrides)
 
-    task_str = cfg.task.dataset.task_name
-    lowdim = cfg.task.type == 'lowdim'
+    task_str = cfg.dataset.task_name
+    lowdim = cfg.type == 'lowdim'
     hydra_path = args.hydra_path
     save_path = os.path.join(args.save_root, task_str, hydra_path.split('/')[-1])
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")

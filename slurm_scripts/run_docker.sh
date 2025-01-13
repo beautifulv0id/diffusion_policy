@@ -28,9 +28,11 @@ then
 fi
 
 hydra_run_dir=$(cat $HYDRA_RUN_DIR_FILE)
-. ~/miniconda3/etc/profile.d/conda.sh
-conda activate /home/stud_herrmann/miniforge3/envs/se3diffuser
-
+id=$(docker run -e WANDB_API_KEY=$WANDB_API_KEY -dt  -v ${DIFFUSION_POLICY_ROOT}:/workspace oddtoddler400/pointattention:latest)
+echo "Container ID: $id"
 echo "Running training script"
-cd $DIFFUSION_POLICY_ROOT/diffusion_policy/workspace
-HYDRA_FULL_ERROR=1 python $training_script $args hydra.run.dir=$hydra_run_dir
+docker exec -t $id /bin/bash -c "source activate se3diffuser && 
+                        cd /workspace/diffusion_policy/workspace &&
+                        HYDRA_FULL_ERROR=1 xvfb-run python $training_script $args hydra.run.dir=$hydra_run_dir"
+docker stop $id
+

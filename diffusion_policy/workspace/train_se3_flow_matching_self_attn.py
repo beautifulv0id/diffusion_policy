@@ -14,6 +14,8 @@ if __name__ == "__main__":
     os.chdir(ROOT_DIR)
 
 import os
+import math
+import math
 import hydra
 import torch
 from omegaconf import OmegaConf
@@ -99,10 +101,9 @@ class TrainingWorkspace(BaseWorkspace):
         # self.model.set_normalizer(normalizer)
         # if cfg.training.use_ema:
         #     self.ema_model.set_normalizer(normalizer)
-        self.model.set_mean_std(*dataset.get_mean_std(
-            relative_to_gripper=cfg.policy.relative, 
-            quaternion_format=cfg.policy.quaternion_format)
-            )
+        std = torch.Tensor([2.0, 2.0, 2.0, math.pi, math.pi, math.pi])[None, ...]
+        mean = torch.Tensor([0, 0, 0, 0, 0, 0])[None, ...]
+        self.model.flow.set_mean_std(mean, std)
 
         # configure lr scheduler
         lr_scheduler = get_scheduler(
@@ -389,10 +390,9 @@ class TrainingWorkspace(BaseWorkspace):
                     output_dir=self.output_dir)
                 dataset = self.get_dataset(cfg)
                 val_dataset = dataset.get_test_dataset()
-                self.model.set_mean_std(*dataset.get_mean_std(
-                    relative_to_gripper=cfg.policy.relative,
-                    quaternion_format=cfg.policy.quaternion_format)
-                                        )
+                std = torch.Tensor([2.0, 2.0, 2.0, math.pi, math.pi, math.pi])[None, ...]
+                mean = torch.Tensor([0, 0, 0, 0, 0, 0])[None, ...]
+                self.model.flow.set_mean_std(mean, std)
 
                 with torch.no_grad():
                     env_runner.max_rrt_tries = 10

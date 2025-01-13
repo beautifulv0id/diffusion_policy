@@ -51,7 +51,7 @@ optimizer:
   lr: 1.0e-4
   betas: [0.95, 0.999]
   eps: 1.0e-8
-  weight_decay: 1.0e-6
+  weight_decay: 5.0e-4
 
 training:
   device: "cuda:0"
@@ -104,20 +104,20 @@ logging:
   project: point_attention_debug
   resume: True
   mode: online
-  name: ${now:%Y.%m.%d-%H.%M.%S}_${name}
+  name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_desc}
   id: null
   group: null
-  tags: ["${name}", "${exp_name}"]
+  tags: ["${name}", "${task_desc}", "${exp_name}"]
 
 multi_run:
-  run_dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
-  wandb_name_base: ${now:%Y.%m.%d-%H.%M.%S}_${name}
+  run_dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_desc}
+  wandb_name_base: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_desc}
 
 hydra:
   job:
     override_dirname: ${name}
   run:
-    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_desc}
   sweep:
-    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_desc}
     subdir: ${hydra.job.num}

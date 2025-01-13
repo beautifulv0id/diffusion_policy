@@ -5,7 +5,7 @@ defaults:
 name: train_diffusion_unet_image
 _target_: diffusion_policy.workspace.train_diffusion_unet_image_workspace.TrainDiffusionUnetLowdimWorkspace
 
-task_name: ${task_names}
+task_name: ${task_desc}
 exp_name: "default"
 
 mode: "train"

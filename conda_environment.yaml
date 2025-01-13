@@ -14,14 +14,14 @@ dependencies:
   - pytorch3d
   - pytorch-cuda=12.1
   - dgl
-  - wandb
+  - wandb=0.19.1
   - matplotlib
   - click
   - hydra-core
   - dill
   - tqdm
   - wandb
-  - diffusers
+  - diffusers=0.11.1
   - pip:
     - pydantic
     - pandas

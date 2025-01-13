@@ -106,20 +106,20 @@ logging:
   project: point_attention_debug
   resume: True
   mode: online
-  name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_names}
+  name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_desc}
   id: null
   group: null
-  tags: ["${name}", "${task_names}", "${exp_name}"]
+  tags: ["${name}", "${task_desc}", "${exp_name}"]
 
 multi_run:
-  run_dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_names}
-  wandb_name_base: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_names}
+  run_dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_desc}
+  wandb_name_base: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_desc}
 
 hydra:
   job:
     override_dirname: ${name}
   run:
-    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_names}
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_desc}
   sweep:
-    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_names}
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_desc}
     subdir: ${hydra.job.num}

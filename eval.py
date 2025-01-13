@@ -46,7 +46,7 @@ def main(checkpoint, output_dir, device):
     
     # run eval
     env_runner = hydra.utils.instantiate(
-        cfg.task.env_runner,
+        cfg.env_runner,
         output_dir=output_dir)
     runner_log = env_runner.run(policy)
     

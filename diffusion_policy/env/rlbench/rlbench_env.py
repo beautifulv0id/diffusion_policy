@@ -25,7 +25,7 @@ from pyrep.objects.dummy import Dummy
 from pyrep.objects.shape import Shape
 from pyrep.const import PrimitiveShape
 from pyrep.objects.vision_sensor import VisionSensor
-import wandb.sdk.data_types.video as wv
+# import wandb.sdk.data_types.video as wv
 from diffusion_policy.env.rlbench.rlbench_utils import CircleCameraMotion
 from diffusion_policy.common.rlbench_util import extract_obs, create_obs_config, _keypoint_discovery, create_obs_state_plot, CAMERAS
 from diffusion_policy.common.pytorch_util import print_dict
@@ -335,19 +335,19 @@ class RLBenchEnv:
     def stop_recording(self):
         self._recording = False
 
-    def save_video(self):
-        if len(self._rgbs) == 0:
-            return None
-        path = os.path.join(self.output_dir, "media", wv.util.generate_id() + ".mp4")
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        import imageio.v2 as iio
-        writer = iio.get_writer(path, fps=30, format='FFMPEG', mode='I')
-        for image in self._rgbs:
-            writer.append_data(image)
-        writer.close()
-        self._rgbs = []
-        self._cam_motion.restore_pose()
-        return path
+    # def save_video(self):
+    #     if len(self._rgbs) == 0:
+    #         return None
+    #     path = os.path.join(self.output_dir, "media", wv.util.generate_id() + ".mp4")
+    #     os.makedirs(os.path.dirname(path), exist_ok=True)
+    #     import imageio.v2 as iio
+    #     writer = iio.get_writer(path, fps=30, format='FFMPEG', mode='I')
+    #     for image in self._rgbs:
+    #         writer.append_data(image)
+    #     writer.close()
+    #     self._rgbs = []
+    #     self._cam_motion.restore_pose()
+    #     return path
     
     def get_rgbs(self):
         if len(self._rgbs) == 0:
