@@ -24,7 +24,7 @@ args="tasks=${tasks}\
     dataset.use_precomputed_features=False\
     dataset.cache_size=1000\
     dataset.root=$data_dir\
-    dataset.image_rescale=[0.75,1.25]\
+    dataset.image_rescale=[1,1]\
     dataloader.batch_size=96\
     policy.crop_workspace=False\
     training.model_evaluation_every=10"

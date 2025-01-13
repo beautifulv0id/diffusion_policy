@@ -63,7 +63,7 @@ training:
   # optimization
   lr_scheduler: cosine
   lr_warmup_steps: 500
-  num_epochs: 5000
+  num_epochs: 5001
   gradient_accumulate_every: 1
   # EMA destroys performance when used with BatchNorm
   # replace BatchNorm with GroupNorm.
@@ -71,10 +71,10 @@ training:
   # training loop control
   # in epochs
   model_evaluation_every: 50
-  rollout_every: 1000
+  rollout_every: 10000
   checkpoint_every: 10
   save_milestone_every: 1000
-  visualize_every: 1000
+  visualize_every: 10000
   visualize_batch_size: 8
   val_every: 50
   sample_every: 50
@@ -97,7 +97,7 @@ checkpoint:
   topk:
     monitor_key: val_loss
     mode: min
-    k: 1
+    k: 3
     format_str: 'epoch={epoch:04d}-val_loss={val_loss:.3f}.ckpt'
   save_last_ckpt: True
   save_last_snapshot: False

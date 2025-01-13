@@ -154,10 +154,9 @@ class TrainingWorkspace(BaseWorkspace):
         train_dataloader = DataLoader(dataset, **cfg.dataloader, sampler=DistributedSampler(dataset), generator=g)
         val_dataset = dataset.get_validation_dataset()
         val_dataloader = DataLoader(val_dataset, **cfg.val_dataloader, sampler=DistributedSampler(val_dataset), generator=g)
-        self.model.set_mean_std(*dataset.get_mean_std(
-            relative_to_gripper=cfg.policy.relative, 
-            quaternion_format=cfg.policy.quaternion_format)
-            )
+        std = torch.Tensor([2.0, 2.0, 2.0, math.pi, math.pi, math.pi])[None, ...]
+        mean = torch.Tensor([0, 0, 0, 0, 0, 0])[None, ...]
+        self.model.flow.set_mean_std(mean, std)
 
         # configure lr scheduler
         lr_scheduler = get_scheduler(
@@ -433,80 +432,6 @@ class TrainingWorkspace(BaseWorkspace):
                     self.epoch += 1
                     gepoch.set_postfix(train_loss=train_loss, refresh=False)
 
-        # print ("training finished, now do the evaluation!")
-        # add sleep here to ensure that all of the models are really saved
-        # time.sleep(10)
-        # if dist.get_rank() == 0:
-        #     self.rollout(wandb_run=wandb_run)
-
-    def rollout(self, wandb_run=None):
-        cfg = copy.deepcopy(self.cfg)
-
-        # get all checkpoints!
-        filepath = self.output_dir + '/checkpoints'
-        # now list all the checkpoints:
-        checkpoint_list = os.listdir(filepath)
-
-        # now go through all of them:
-        all_checkpoints = []
-        checkpoint_epoch = []
-        for checkpoint in checkpoint_list:
-            if (checkpoint[-5:]==".ckpt" and checkpoint[:6]=="epoch="):
-                all_checkpoints.append(checkpoint)
-                checkpoint_epoch.append(int(checkpoint.split('=')[-1].split('.')[0]))
-
-        # now sort them:
-        checkpoint_epoch = np.array(checkpoint_epoch)
-        sorted_indices = np.argsort(checkpoint_epoch)
-        all_checkpoints = np.array(all_checkpoints)[sorted_indices]
-        checkpoint_epoch = checkpoint_epoch[sorted_indices]
-
-
-        log_path = os.path.join(self.output_dir, 'eval_logs.json.txt')
-        if wandb_run is None:
-            wandb_run = wandb.init(
-                dir=str(self.output_dir),
-                config=OmegaConf.to_container(cfg, resolve=True),
-                **cfg.logging
-            )
-
-        with JsonLogger(log_path) as json_logger:
-
-            for j in range(len(all_checkpoints)):
-                if j>0 and checkpoint_epoch[j]==checkpoint_epoch[j-1]:
-                    # skip if there are multiple checkpoints for the same epoch
-                    continue
-
-                # load the current checkpoint
-                print ("Loading checkpoint: ", all_checkpoints[j])
-                self.load_checkpoint(path=filepath + '/' + all_checkpoints[j])
-
-                device = torch.device(cfg.training.device)
-                self.model.to(device)
-                policy = self.model
-                policy.eval()
-
-                env_runner = hydra.utils.instantiate(
-                    cfg.env_runner,
-                    output_dir=self.output_dir)
-                dataset = dataset = self.get_dataset(cfg)
-                val_dataset = dataset.get_test_dataset()
-                std = torch.Tensor([2.0, 2.0, 2.0, math.pi, math.pi, math.pi])[None, ...]
-                mean = torch.Tensor([0, 0, 0, 0, 0, 0])[None, ...]
-                self.model.flow.set_mean_std(mean, std)
-
-                with torch.no_grad():
-                    env_runner.max_rrt_tries = 10
-                    runner_log = env_runner.run(policy, cfg.policy, dataset.demos, mode="train")
-                    runner_log.update(
-                        env_runner.run(policy, cfg.policy, val_dataset.demos, mode="eval")
-                    )
-                    runner_log['epoch'] = int(checkpoint_epoch[j])
-                    # log all
-                    wandb_run.log(runner_log)
-                    json_logger.log(runner_log)
-
-        print ("Finished the evaluation!")
 
     def synchronize_between_processes(self, a_dict):
         all_dicts = all_gather(a_dict)

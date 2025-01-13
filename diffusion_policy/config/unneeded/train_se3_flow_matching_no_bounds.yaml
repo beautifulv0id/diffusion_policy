@@ -1,12 +1,12 @@
 # Actually the task entry loads the yaml file inside task
 defaults:
   - _self_
-  - rlbench_image
+  - task: open_drawer_image
 
-name: train_diffuser_actor
-_target_: diffusion_policy.workspace.train_diffuser_actor_se_3_flow.TrainingWorkspace
+name: train_se3_flow_matching
+_target_: diffusion_policy.workspace.train_se3_flow_matching_no_bounds.TrainingWorkspace
 
-exp_name: "train_diffuser_actor"
+exp_name: "train_se3_flow_matching_no_bounds"
 n_obs_steps: &n_obs_steps 3
 use_keyframe_actions: True
 horizon: ${eval:'1 if ${use_keyframe_actions} else 16'}
@@ -15,34 +15,39 @@ embedding_dim: 192
 num_episodes: -1
 mode: train
 
+max_pcd_points: 
+  _target_: diffusion_policy.common.rlbench_util.get_task_cropped_pcd_min_size
+  path: "${oc.env:DIFFUSION_POLICY_ROOT}/diffusion_policy/tasks/peract_cropped_pcd_min_sizes.json"
+  task: ${task.task_name}
+  res: ${policy.feature_res}
+
 policy:
-  _target_: diffusion_policy.policy.diffuser_actor_se_3_flow.DiffuserActor
-  backbone: "clip"
-  image_size: ${image_size}
+  _target_: diffusion_policy.policy.se3_flow_matching.SE3FlowMatching
   embedding_dim: ${embedding_dim}
-  num_vis_ins_attn_layers: 2
-  use_instruction: false
-  fps_subsampling_factor: 5
+  backbone: "clip"
+  n_points_out: 1000
+  feature_res: ${task.dataset.feature_res}
   scaling_factor: 3.0
-  gripper_loc_bounds: ${gripper_loc_bounds}
-  rotation_parametrization: '6D'
+  gripper_loc_bounds: ${task.gripper_loc_bounds}
+  #workspace_bounds: ${task.workspace_bounds}
+  crop_workspace: False
+  max_pcd_points: ${max_pcd_points}
   quaternion_format: 'xyzw' 
   diffusion_timesteps: 100
   nhist: ${n_obs_steps}
   nhorizon: ${horizon}
-  relative: 0
-  lang_enhanced: false
-  use_mask: ${dataset.use_mask}
+  relative: False
+  causal_attn: True
 
 dataloader:
-  batch_size: 16
+  batch_size: 8
   num_workers: 0
   shuffle: True
   pin_memory: False
   persistent_workers: False
 
 val_dataloader:
-  batch_size: 16
+  batch_size: 2
   num_workers: 0
   shuffle: False
   pin_memory: False
@@ -71,7 +76,7 @@ training:
   # training loop control
   # in epochs
   model_evaluation_every: 50
-  rollout_every: 1000
+  rollout_every: 10000
   checkpoint_every: 10
   save_milestone_every: 1000
   visualize_every: 10000
@@ -106,20 +111,20 @@ logging:
   project: point_attention_debug
   resume: True
   mode: online
-  name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_desc}
+  name: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task.name}
   id: null
   group: null
-  tags: ["${name}", "${task_desc}", "${exp_name}"]
+  tags: ["${name}", "${task.name}", "${exp_name}"]
 
 multi_run:
-  run_dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_desc}
-  wandb_name_base: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task_desc}
+  run_dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task.name}
+  wandb_name_base: ${now:%Y.%m.%d-%H.%M.%S}_${name}_${task.name}
 
 hydra:
   job:
     override_dirname: ${name}
   run:
-    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_desc}
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task.name}
   sweep:
-    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_desc}
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task.name}
     subdir: ${hydra.job.num}

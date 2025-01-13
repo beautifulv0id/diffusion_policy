@@ -29,6 +29,7 @@ from diffusion_policy.common.pytorch_util import dict_apply, optimizer_to
 from diffusion_policy.model.common.lr_scheduler import get_scheduler
 from diffusion_policy.policy.diffuser_actor_se_3_flow import DiffuserActor
 from diffusion_policy.common.rlbench_util import load_instructions
+import time
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
