@@ -17,7 +17,6 @@ import os
 import math
 import hydra
 import torch
-from omegaconf import OmegaConf
 import pathlib
 from torch.utils.data import DataLoader
 import copy
@@ -30,10 +29,22 @@ from diffusion_policy.common.checkpoint_util import TopKCheckpointManager
 from diffusion_policy.common.json_logger import JsonLogger
 from diffusion_policy.common.pytorch_util import dict_apply, optimizer_to
 from diffusion_policy.model.common.lr_scheduler import get_scheduler
-from diffusion_policy.policy.se3_flow_matching import SE3FlowMatching
 from diffusion_policy.common.rlbench_util import load_instructions
+from diffusion_policy.model.common.trajectory_criterion import TrajectoryCriterion
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel
+from torch.utils.data.distributed import DistributedSampler
+from omegaconf import OmegaConf
+import pickle
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
+
+def seed_worker(worker_id):
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
+    np.random.seed(np.random.get_state()[1][0] + worker_id)
+
 
 class TrainingWorkspace(BaseWorkspace):
     include_keys = ['global_step', 'epoch']
@@ -42,18 +53,13 @@ class TrainingWorkspace(BaseWorkspace):
         super().__init__(cfg, output_dir=output_dir)
 
         # dump current config to yaml file:
-        with open(self.output_dir + "/config_raw.yaml", "w") as f:
-            OmegaConf.save(cfg, f)
-
-        # set seed
-        seed = cfg.training.seed
-        torch.manual_seed(seed)
-        np.random.seed(seed)
-        random.seed(seed)
+        if dist.get_rank() == 0:
+            with open(self.output_dir + "/config_raw.yaml", "w") as f:
+                OmegaConf.save(cfg, f)
 
         # configure model
-        self.model : SE3FlowMatching = hydra.utils.instantiate(cfg.policy)
-        self.ema_model: SE3FlowMatching = None
+        self.model = hydra.utils.instantiate(cfg.policy)
+        self.ema_model = None
         if cfg.training.use_ema:
             self.ema_model = copy.deepcopy(self.model)
         # configure training state
@@ -92,14 +98,11 @@ class TrainingWorkspace(BaseWorkspace):
 
         # configure data
         dataset = self.get_dataset(cfg)
-        train_dataloader = DataLoader(dataset, **cfg.dataloader)
-        # normalizer = dataset.get_normalizer()
-        # configure validation data
+        g = torch.Generator()
+        g.manual_seed(0)
+        train_dataloader = DataLoader(dataset, **cfg.dataloader, sampler=DistributedSampler(dataset), generator=g)
         val_dataset = dataset.get_validation_dataset()
-        val_dataloader = DataLoader(val_dataset, **cfg.val_dataloader)
-        # self.model.set_normalizer(normalizer)
-        # if cfg.training.use_ema:
-        #     self.ema_model.set_normalizer(normalizer)
+        val_dataloader = DataLoader(val_dataset, **cfg.val_dataloader, sampler=DistributedSampler(val_dataset), generator=g)
         std = torch.Tensor([2.0, 2.0, 2.0, math.pi, math.pi, math.pi])[None, ...]
         mean = torch.Tensor([0, 0, 0, 0, 0, 0])[None, ...]
         self.model.flow.set_mean_std(mean, std)
@@ -118,16 +121,17 @@ class TrainingWorkspace(BaseWorkspace):
         )
 
         # configure logging
-        wandb_run = wandb.init(
-            dir=str(self.output_dir),
-            config=OmegaConf.to_container(cfg, resolve=True),
-            **cfg.logging
-        )
-        wandb.config.update(
-            {
-                "output_dir": self.output_dir,
-            }
-        )
+        if dist.get_rank() == 0:
+            wandb_run = wandb.init(
+                dir=str(self.output_dir),
+                config=OmegaConf.to_container(cfg, resolve=True),
+                **cfg.logging
+            )
+            wandb.config.update(
+                {
+                    "output_dir": self.output_dir,
+                }
+            )
 
         if cfg.training.debug:
             cfg.training.num_epochs = 2
@@ -141,16 +145,11 @@ class TrainingWorkspace(BaseWorkspace):
             cfg.env_runner.max_episodes = 1
 
         # # configure ema
-        ema: SE3FlowMatching = None
+        ema = None
         if cfg.training.use_ema:
             ema = hydra.utils.instantiate(
                 cfg.ema,
                 model=self.ema_model)
-
-        # configure env
-        env_runner = hydra.utils.instantiate(
-            cfg.env_runner,
-            output_dir=self.output_dir)
 
         # configure checkpoint
         topk_manager = TopKCheckpointManager(
@@ -159,9 +158,15 @@ class TrainingWorkspace(BaseWorkspace):
         )
 
         # device transfer
-        device = torch.device(cfg.training.device)
-        self.model.to(device)
+        device = 'cuda:{}'.format(torch.cuda.current_device())
+        self.model = self.model.to(device)
         dtype = self.model.dtype
+        rank = dist.get_rank()
+        # create model and move it to GPU with id rank
+        device_id = rank % torch.cuda.device_count()
+        self.model = DistributedDataParallel(self.model, device_ids=[device_id],
+                                        broadcast_buffers=False, find_unused_parameters=True
+        )
 
         if self.ema_model is not None:
             self.ema_model.to(device)
@@ -173,7 +178,7 @@ class TrainingWorkspace(BaseWorkspace):
         train_sampling_batch = None
         val_sampling_batch = None
 
-
+        criterion = TrajectoryCriterion(quaternion_format=cfg.policy.quaternion_format)
 
         # training loop
         log_path = os.path.join(self.output_dir, 'logs.json.txt')
@@ -193,11 +198,18 @@ class TrainingWorkspace(BaseWorkspace):
                             if train_sampling_batch is None:
                                 train_sampling_batch = batch
                                 
-                            batch = dict_apply(batch, lambda x: x.to(device, dtype, non_blocking=True))
+                            batch = dict_apply(batch, lambda x: x.to(device, dtype, non_blocking=True) if isinstance(x, torch.Tensor) else x)
 
                             # compute loss
-                            raw_loss = self.model.compute_loss(batch)
-
+                            raw_loss = self.model(
+                                gt_trajectory=batch['action']['gt_trajectory'],
+                                rgb_obs=batch['obs'].get('rgb', None),
+                                pcd_obs=batch['obs']['pcd'],
+                                instruction=batch['obs'].get('instruction', None),
+                                curr_gripper=batch['obs']['curr_gripper'],
+                                run_inference=False,
+                                feature_obs=batch['obs'].get('clip_features', None)
+                            )
                             loss = raw_loss / cfg.training.gradient_accumulate_every
                             loss.backward()
 
@@ -227,8 +239,9 @@ class TrainingWorkspace(BaseWorkspace):
                             is_last_batch = (batch_idx == (len(train_dataloader) - 1))
                             if not is_last_batch:
                                 # log of last step is combined with validation and rollout
-                                wandb_run.log(step_log, step=self.global_step)
-                                json_logger.log(step_log)
+                                if dist.get_rank() == 0:
+                                    wandb_run.log(step_log, step=self.global_step)
+                                    json_logger.log(step_log)
                                 self.global_step += 1
 
                             if (cfg.training.max_train_steps is not None) \
@@ -246,17 +259,6 @@ class TrainingWorkspace(BaseWorkspace):
                     #     policy = self.ema_model
                     policy.eval()
 
-                    # run rollout (TASK SATISFACTION)
-                    if ((self.epoch + 1) % cfg.training.rollout_every) == 0:
-                        dataset.empty_cache() # empty cache before running
-                        val_dataset.empty_cache()
-                        runner_log = env_runner.run(policy, cfg.policy, dataset.demos, mode="train")
-                        runner_log.update(
-                            env_runner.run(policy, cfg.policy, val_dataset.demos, mode="eval")
-                        )
-                        # log all
-                        step_log.update(runner_log)
-
                     # run validation
                     if ((self.epoch + 1) % cfg.training.val_every) == 0:
                         with torch.no_grad():
@@ -265,37 +267,81 @@ class TrainingWorkspace(BaseWorkspace):
                                         leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
                                 for batch_idx, batch in enumerate(tepoch):
                                     # batch = format_batch(batch)
-                                    batch = dict_apply(batch, lambda x: x.to(device, dtype, non_blocking=True))
+                                    batch = dict_apply(batch, lambda x: x.to(device, dtype, non_blocking=True) if isinstance(x, torch.Tensor) else x)
                                     if val_sampling_batch is None:
                                         val_sampling_batch = batch
 
-                                    loss = self.model.compute_loss(batch)
+                                    loss = self.model(
+                                        gt_trajectory=batch['action']['gt_trajectory'],
+                                        rgb_obs=batch['obs'].get('rgb', None),
+                                        pcd_obs=batch['obs']['pcd'],
+                                        instruction=batch['obs'].get('instruction', None),
+                                        curr_gripper=batch['obs']['curr_gripper'],
+                                        run_inference=False,
+                                        feature_obs=batch['obs'].get('clip_features', None)
+                                    )
                                     val_losses.append(loss)
                                     if (cfg.training.max_val_steps is not None) \
                                             and batch_idx >= (cfg.training.max_val_steps - 1):
                                         break
                             if len(val_losses) > 0:
-                                val_loss = torch.mean(torch.tensor(val_losses)).item()
-                                # log epoch average validation loss
-                                step_log['val_loss'] = val_loss
+                                values = self.synchronize_between_processes({'val_loss': torch.tensor(val_losses)})
+                                val_loss = torch.mean(values['val_loss']).item()
+                                if dist.get_rank() == 0:
+                                    step_log['val_loss'] = val_loss
 
+                    if ((self.epoch + 1) % cfg.training.model_evaluation_every) == 0:
+                        with torch.no_grad():
+                            values = {}
+                            with tqdm.tqdm(val_dataloader, desc=f"Validation epoch {self.epoch}",
+                                        leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
+                                for batch_idx, batch in enumerate(tepoch):
+                                    batch = dict_apply(batch, lambda x: x.to(device, dtype, non_blocking=True) if isinstance(x, torch.Tensor) else x)
+                                    pred_act, pred_act_gr = self.model(
+                                        gt_trajectory=None,
+                                        rgb_obs=batch['obs'].get('rgb', None),
+                                        pcd_obs=batch['obs']['pcd'],
+                                        instruction=batch['obs'].get('instruction', None),
+                                        curr_gripper=batch['obs']['curr_gripper'],
+                                        run_inference=True,
+                                        feature_obs=batch['obs'].get('clip_features', None)
+                                    )
+                                    # log all
+                                    evaluation_log = criterion.compute_metrics(pred_act, pred_act_gr, batch, validation=True)
+                                    
+                                    # gather per-task metrics
+                                    for key, val in evaluation_log.items():
+                                        if key not in values:
+                                            values[key] = torch.Tensor([]).to(device)
+                                        values[key] = torch.cat([values[key], val.unsqueeze(0)])
 
-                    ## Run Experiment related Validation ## #TODO: as far as I see, this currently has no effect!
-                    if ((self.epoch+1) % cfg.training.model_evaluation_every) == 0:
-                        evaluation_log = self.model.evaluate(val_sampling_batch, validation=True)
-                        # log all
-                        step_log.update(evaluation_log)
+                                    if (cfg.training.max_val_steps is not None) \
+                                            and batch_idx >= (cfg.training.max_val_steps - 1):
+                                        break
+                            
+                            values = self.synchronize_between_processes(values)
+                            values = {k: v.mean().item() for k, v in values.items()}
+                            if dist.get_rank() == 0:
+                                step_log.update(values)
 
                     # sample on a training batch
-                    if ((self.epoch+1) % cfg.training.sample_every) == 0:
+                    if ((self.epoch + 1) % cfg.training.sample_every) == 0 and dist.get_rank() == 0:
                         with torch.no_grad():
                             # sample trajectory from training set, and evaluate difference
-                            batch = dict_apply(train_sampling_batch, lambda x: x.to(device, dtype, non_blocking=True))
+                            train_sampling_batch = dict_apply(train_sampling_batch, lambda x: x.to(device, dtype, non_blocking=True) if isinstance(x, torch.Tensor) else x)
 
-                            eval_log = policy.evaluate(batch)
+                            pred_act, pred_act_gr = policy(
+                                gt_trajectory=None,
+                                rgb_obs=train_sampling_batch['obs'].get('rgb', None),
+                                pcd_obs=train_sampling_batch['obs']['pcd'],
+                                instruction=train_sampling_batch['obs'].get('instruction', None),
+                                curr_gripper=train_sampling_batch['obs']['curr_gripper'],
+                                run_inference=True,
+                                feature_obs=train_sampling_batch['obs'].get('clip_features', None)
+                            )
+                            eval_log = criterion.compute_metrics(pred_act, pred_act_gr, train_sampling_batch)
                             # log all
                             step_log.update(eval_log)
-
 
                     # checkpoint
                     # sanitize metric names
@@ -304,10 +350,10 @@ class TrainingWorkspace(BaseWorkspace):
                         new_key = key.replace('/', '_')
                         metric_dict[new_key] = value
 
-                    if ((self.epoch+1) % cfg.training.save_milestone_every) == 0:
+                    if ((self.epoch + 1) % cfg.training.save_milestone_every) == 0 and dist.get_rank() == 0:
                         self.save_checkpoint(tag="epoch="+str(self.epoch).zfill(4))
 
-                    if ((self.epoch+1) % cfg.training.checkpoint_every) == 0:
+                    if ((self.epoch + 1) % cfg.training.checkpoint_every) == 0 and dist.get_rank() == 0:
                         # checkpointing
                         if cfg.checkpoint.save_last_ckpt:
                             self.save_checkpoint()
@@ -326,101 +372,86 @@ class TrainingWorkspace(BaseWorkspace):
 
                     # end of epoch
                     # log of last step is combined with validation and rollout
-                    wandb_run.log(step_log, step=self.global_step)
-                    json_logger.log(step_log)
+                    if dist.get_rank() == 0:
+                        wandb_run.log(step_log, step=self.global_step)
+                        json_logger.log(step_log)
                     self.global_step += 1
                     self.epoch += 1
                     gepoch.set_postfix(train_loss=train_loss, refresh=False)
 
-        print ("training finished, now do the evaluation!")
-        # add sleep here to ensure that all of the models are really saved
-        time.sleep(10)
-        self.rollout(wandb_run=wandb_run)
 
-    def rollout(self, wandb_run=None):
-        cfg = copy.deepcopy(self.cfg)
+    def synchronize_between_processes(self, a_dict):
+        all_dicts = all_gather(a_dict)
 
-        # get all checkpoints!
-        filepath = self.output_dir + '/checkpoints'
-        # now list all the checkpoints:
-        checkpoint_list = os.listdir(filepath)
+        if not is_dist_avail_and_initialized() or dist.get_rank() == 0:
+            merged = {}
+            for key in all_dicts[0].keys():
+                device = all_dicts[0][key].device
+                merged[key] = torch.cat([
+                    p[key].to(device) for p in all_dicts
+                    if key in p
+                ])
+            a_dict = merged
+        return a_dict
 
-        # now go through all of them:
-        all_checkpoints = []
-        checkpoint_epoch = []
-        for checkpoint in checkpoint_list:
-            if (checkpoint[-5:]==".ckpt" and checkpoint[:6]=="epoch="):
-                all_checkpoints.append(checkpoint)
-                checkpoint_epoch.append(int(checkpoint.split('=')[-1].split('.')[0]))
+def all_gather(data):
+    """
+    Run all_gather on arbitrary picklable data (not necessarily tensors)
 
-        # now sort them:
-        checkpoint_epoch = np.array(checkpoint_epoch)
-        sorted_indices = np.argsort(checkpoint_epoch)
-        all_checkpoints = np.array(all_checkpoints)[sorted_indices]
-        checkpoint_epoch = checkpoint_epoch[sorted_indices]
+    Args:
+        data: any picklable object
+    Returns:
+        list[data]: list of data gathered from each rank
+    """
+    world_size = get_world_size()
+    if world_size == 1:
+        return [data]
+
+    # serialized to a Tensor
+    buffer = pickle.dumps(data)
+    storage = torch.ByteStorage.from_buffer(buffer)
+    tensor = torch.ByteTensor(storage).to("cuda")
+
+    # obtain Tensor size of each rank
+    local_size = torch.tensor([tensor.numel()], device="cuda")
+    size_list = [torch.tensor([0], device="cuda") for _ in range(world_size)]
+    dist.all_gather(size_list, local_size)
+    size_list = [int(size.item()) for size in size_list]
+    max_size = max(size_list)
+
+    # receiving Tensor from all ranks
+    # we pad the tensor because torch all_gather does not support
+    # gathering tensors of different shapes
+    tensor_list = []
+    for _ in size_list:
+        tensor_list.append(torch.empty(
+            (max_size,), dtype=torch.uint8, device="cuda"
+        ))
+    if local_size != max_size:
+        padding = torch.empty(
+            size=(max_size - local_size,),
+            dtype=torch.uint8, device="cuda"
+        )
+        tensor = torch.cat((tensor, padding), dim=0)
+    dist.all_gather(tensor_list, tensor)
+
+    data_list = []
+    for size, tensor in zip(size_list, tensor_list):
+        buffer = tensor.cpu().numpy().tobytes()[:size]
+        data_list.append(pickle.loads(buffer))
+
+    return data_list
 
 
-        log_path = os.path.join(self.output_dir, 'eval_logs.json.txt')
-        if wandb_run is None:
-            wandb_run = wandb.init(
-                dir=str(self.output_dir),
-                config=OmegaConf.to_container(cfg, resolve=True),
-                **cfg.logging
-            )
+def is_dist_avail_and_initialized():
+    if not dist.is_available():
+        return False
+    if not dist.is_initialized():
+        return False
+    return True
 
-        with JsonLogger(log_path) as json_logger:
 
-            for j in range(len(all_checkpoints)):
-                if j>0 and checkpoint_epoch[j]==checkpoint_epoch[j-1]:
-                    # skip if there are multiple checkpoints for the same epoch
-                    continue
-
-                # load the current checkpoint
-                print ("Loading checkpoint: ", all_checkpoints[j])
-                self.load_checkpoint(path=filepath + '/' + all_checkpoints[j])
-
-                device = torch.device(cfg.training.device)
-                self.model.to(device)
-                policy = self.model
-                policy.eval()
-
-                env_runner = hydra.utils.instantiate(
-                    cfg.env_runner,
-                    output_dir=self.output_dir)
-                dataset = self.get_dataset(cfg)
-                val_dataset = dataset.get_test_dataset()
-                self.model.set_mean_std(*dataset.get_mean_std(
-                    relative_to_gripper=cfg.policy.relative,
-                    quaternion_format=cfg.policy.quaternion_format)
-                                        )
-
-                with torch.no_grad():
-                    env_runner.max_rrt_tries = 10
-                    runner_log = env_runner.run(policy, cfg.policy, dataset.demos, mode="train")
-                    runner_log.update(
-                        env_runner.run(policy, cfg.policy, val_dataset.demos, mode="eval")
-                    )
-                    runner_log['epoch'] = int(checkpoint_epoch[j])
-                    # log all
-                    wandb_run.log(runner_log)
-                    json_logger.log(runner_log)
-
-        print ("Finished the evaluation!")
-
-@hydra.main(
-    version_base=None,
-    config_path=str(pathlib.Path(__file__).parent.parent.joinpath("config")),
-    config_name=pathlib.Path(__file__).stem)
-def main(cfg):
-    workspace = TrainingWorkspace(cfg)
-    if cfg.mode == 'train':
-        # we run the evaluation after the training - inside of the run loop
-        workspace.run()
-    elif cfg.mode == 'rollout':
-        print("Rollout")
-        workspace.rollout()
-    else:
-        raise ValueError(f"Unknown mode {cfg.mode}")
-
-if __name__ == "__main__":
-    main()
+def get_world_size():
+    if not is_dist_avail_and_initialized():
+        return 1
+    return dist.get_world_size()

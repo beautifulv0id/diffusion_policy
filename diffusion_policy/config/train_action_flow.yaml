@@ -1,10 +1,10 @@
 # Actually the task entry loads the yaml file inside task
 defaults:
   - _self_
-  - rlbench_image
+  - diffuser_actor_dataset
 
 name: train_action_flow
-_target_: diffusion_policy.workspace.train_diffuser_actor.TrainingWorkspace
+_target_: diffusion_policy.workspace.base_flow_matching.TrainingWorkspace
 
 exp_name: "train_action_flow"
 n_obs_steps: &n_obs_steps 3
@@ -58,7 +58,7 @@ training:
   device: "cuda:0"
   seed: 21
   debug: False
-  resume: False
+  resume: True
   # optimization
   lr_scheduler: cosine
   lr_warmup_steps: 500

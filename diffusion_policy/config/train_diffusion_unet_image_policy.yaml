@@ -1,9 +1,9 @@
 defaults:
   - _self_
-  - rlbench_image
+  - diffuser_actor_dataset
 
 name: train_diffusion_unet_image
-_target_: diffusion_policy.workspace.train_diffusion_unet_image_workspace.TrainDiffusionUnetLowdimWorkspace
+_target_: diffusion_policy.workspace.base_diffusion.TrainingWorkspace
 
 task_name: ${task_desc}
 exp_name: "default"
@@ -97,7 +97,7 @@ training:
   device: "cuda:0"
   seed: 21
   debug: False
-  resume: False
+  resume: True
   # optimization
   lr_scheduler: cosine
   lr_warmup_steps: 500

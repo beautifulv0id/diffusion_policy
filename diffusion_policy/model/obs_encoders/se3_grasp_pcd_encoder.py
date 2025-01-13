@@ -55,11 +55,11 @@ class SE3GraspPointCloudSuperEncoder(ModuleAttrMixin):
                 nn.GELU()
             )
         
-        # self.act_inst_merger = nn.Sequential(
-        #         nn.Linear(2 * dim_features, dim_features),
-        #         nn.LayerNorm(dim_features),
-        #         nn.GELU()
-        #     )
+        self.act_inst_merger = nn.Sequential(
+                nn.Linear(2 * dim_features, dim_features),
+                nn.LayerNorm(dim_features),
+                nn.GELU()
+            )
 
     def forward(self, x):
         obs_points, obs_features = self.encode_obs(x['obs'])
@@ -137,9 +137,9 @@ class SE3GraspPointCloudSuperEncoder(ModuleAttrMixin):
         act_time_f = torch.cat((act_f, time_emb.repeat(1, act_f.shape[1],1)), dim=-1)
         return self.act_merger(act_time_f)
     
-    # def act_combine_instruction(self, act_f, instr_f):
-    #     act_instr_f = torch.cat((act_f, instr_f.repeat(1, act_f.shape[1],1)), dim=-1)
-    #     return self.act_inst_merger(act_instr_f)
+    def act_combine_instruction(self, act_f, instr_f):
+        act_instr_f = torch.cat((act_f, instr_f.repeat(1, act_f.shape[1],1)), dim=-1)
+        return self.act_inst_merger(act_instr_f)
 
 class SE3GraspFPSEncoder(SE3GraspPointCloudSuperEncoder):
     def __init__(self, dim_features=128, depth=3, nheads=4, n_steps_inf=50, n_points_out=100, nhist=3, dim_pcd_features=64):

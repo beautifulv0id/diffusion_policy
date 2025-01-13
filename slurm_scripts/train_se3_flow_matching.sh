@@ -4,7 +4,7 @@
 #SBATCH --mem=32G
 #SBATCH -p gpu
 #SBATCH --gres=gpu:1
-#SBATCH --array=0-1%1
+#SBATCH --array=0-8%1
 #SBATCH --output=../data/logs/%A_se3_flow_matching/train_%a.out
 #SBATCH -J se3_flow_matching
 
@@ -17,21 +17,18 @@ data_dir=${DIFFUSION_POLICY_ROOT}/data/diffuser_actor.zarr
 
 args="tasks=${tasks}\
     variations=${variations}\
-    training.resume=True\
-    env_runner.n_procs_max=5\
-    dataset.use_precomputed_features=False\
+    optimizer.lr=4e-4\
+    dataset.cache_size=1000\
     dataset.root=$data_dir\
-    dataset.image_rescale=[0.75,1.25]\
-    policy.crop_workspace=False"
-
-if [ $SLURM_ARRAY_TASK_ID -eq $SLURM_ARRAY_TASK_MAX ]; then
-    args="$args mode=rollout"
-fi
+    dataloader.batch_size=96\
+    val_dataloader.batch_size=96\
+    training.model_evaluation_every=10"
 
 kwargs=${@:1}
     
 args="$args $kwargs"
 
+HYDRA_FULL_ERROR=1
 HYDRA_RUN_DIR_FILE=${DIFFUSION_POLICY_ROOT}/data/logs/${SLURM_ARRAY_JOB_ID}_${job_name}/hydra_run_dir.txt
 cd ${DIFFUSION_POLICY_ROOT}/slurm_scripts/
 . run.sh $training_script \

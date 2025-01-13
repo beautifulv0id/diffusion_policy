@@ -1,9 +1,9 @@
 defaults:
   - _self_
-  - rlbench_image
+  - diffuser_actor_dataset
 
 name: train_se3_flow_matching
-_target_: diffusion_policy.workspace.train_se3_flow_matching_mg.TrainingWorkspace
+_target_: diffusion_policy.workspace.base_flow_matching_multi_gpu.TrainingWorkspace
 
 exp_name: "train_se3_flow_matching"
 n_obs_steps: &n_obs_steps 3
@@ -23,7 +23,7 @@ policy:
   scaling_factor: 3.0
   gripper_loc_bounds: ${gripper_loc_bounds}
   workspace_bounds: null
-  crop_workspace: True
+  crop_workspace: False
   max_pcd_points: null
   quaternion_format: 'xyzw' 
   diffusion_timesteps: 50
@@ -57,7 +57,7 @@ training:
   device: "cuda:0"
   seed: 21
   debug: False
-  resume: False
+  resume: True
   # optimization
   lr_scheduler: cosine
   lr_warmup_steps: 500

@@ -174,7 +174,7 @@ class SE3FlowMatching(BaseImagePolicy):
         # unnormalize position
         trajectory = self.unnormalize_pos(trajectory)
 
-        return trajectory, gripper_open
+        return trajectory
        
     def forward(
         self,

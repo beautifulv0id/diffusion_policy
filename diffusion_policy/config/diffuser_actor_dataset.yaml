@@ -8,6 +8,8 @@ variations:
   - 1
   - 3
 
+image_size: [256, 256]
+
 task_desc: ${eval:'${tasks}[0] if len(${tasks}) == 1 else "multi_task"'}
 
 gripper_loc_bounds: 
@@ -25,7 +27,7 @@ use_lowdim_pcd: False
 
 dataset:
   _target_: diffusion_policy.dataset.rlbench_dataset.RLBenchDataset
-  root: ${oc.env:DIFFUSION_POLICY_ROOT}/data/peract.zarr
+  root: ${oc.env:DIFFUSION_POLICY_ROOT}/data/diffuser_actor.zarr
   n_episodes: ${num_episodes}
   cameras: ${cameras}
   n_obs_steps: ${n_obs_steps}

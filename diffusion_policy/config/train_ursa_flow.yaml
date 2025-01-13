@@ -4,7 +4,7 @@ defaults:
   - rlbench_image
 
 name: train_ursa_flow
-_target_: diffusion_policy.workspace.train_ursa_flow.TrainingWorkspace
+_target_: diffusion_policy.workspace.base_flow_matching.TrainingWorkspace
 
 exp_name: "train_ursa_flow"
 n_obs_steps: &n_obs_steps 3
@@ -61,7 +61,7 @@ training:
   device: "cuda:0"
   seed: 21
   debug: False
-  resume: False
+  resume: True
   # optimization
   lr_scheduler: cosine
   lr_warmup_steps: 500

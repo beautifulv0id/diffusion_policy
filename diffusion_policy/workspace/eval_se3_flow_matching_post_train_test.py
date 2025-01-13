@@ -25,7 +25,7 @@ import random
 import wandb
 import tqdm
 import numpy as np
-from diffusion_policy.workspace.base_workspace import BaseWorkspace
+from diffusion_policy.workspace.diffusion_workspace import BaseWorkspace
 from diffusion_policy.common.checkpoint_util import TopKCheckpointManager
 from diffusion_policy.common.json_logger import JsonLogger
 from diffusion_policy.common.pytorch_util import dict_apply, optimizer_to
