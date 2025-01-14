@@ -48,5 +48,7 @@ class TrajectoryCriterion:
             log_dict[f'{task}/{prefix}position_mse_error'] = task_pos_error
             log_dict[f'{task}/{prefix}rotation_mse_error'] = task_rot_error
 
+        log_dict[f'{prefix}position_mse_error'] = pos_error.mean()
+        log_dict[f'{prefix}rotation_mse_error'] = rot_error.mean()
 
         return log_dict
