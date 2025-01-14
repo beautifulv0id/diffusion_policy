@@ -8,7 +8,7 @@
 #SBATCH --output=../data/logs/%A_action_flow/train_%a.out
 #SBATCH -J action_flow
 
-training_script=train_action_flow.py
+config_name=train_action_flow
 tasks="[open_drawer]"
 variations=$(seq -s, 0 199)
 variations="[${variations}]"
@@ -31,7 +31,7 @@ args="$args $kwargs"
 HYDRA_FULL_ERROR=1
 HYDRA_RUN_DIR_FILE=${DIFFUSION_POLICY_ROOT}/data/logs/${SLURM_ARRAY_JOB_ID}_${job_name}/hydra_run_dir.txt
 cd ${DIFFUSION_POLICY_ROOT}/slurm_scripts/
-. run.sh $training_script \
+. run.sh $config_name \
             $SLURM_ARRAY_TASK_ID \
             $HYDRA_RUN_DIR_FILE \
             $args \

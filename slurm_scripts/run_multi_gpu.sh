@@ -30,10 +30,11 @@ fi
 hydra_run_dir=$(cat $HYDRA_RUN_DIR_FILE)
 . ~/miniconda3/etc/profile.d/conda.sh
 conda activate /home/stud_herrmann/miniforge3/envs/se3diffuser
+num_gpus=$(python3 helper/count_cuda_devices.py)
 
 echo "Running training script"
 cd $DIFFUSION_POLICY_ROOT/
-num_gpus=$(nvidia-smi --query-gpu=count --format=csv,noheader,nounits)
-CUDA_LAUNCH_BLOCKING=1 torchrun --nproc_per_node $num_gpus train.py --config-name $config_name hydra.run.dir=$hydra_run_dir $args
+echo CUDA_LAUNCH_BLOCKING=1 torchrun --nproc_per_node=$num_gpus train.py --config-name $config_name hydra.run.dir=$hydra_run_dir $args
+CUDA_LAUNCH_BLOCKING=1 torchrun --master_port=$RANDOM --nproc_per_node=$num_gpus train.py --config-name $config_name hydra.run.dir=$hydra_run_dir $args
 
 

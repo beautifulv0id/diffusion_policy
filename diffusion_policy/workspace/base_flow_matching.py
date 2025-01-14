@@ -152,8 +152,6 @@ class TrainingWorkspace(BaseWorkspace):
         if self.ema_model is not None:
             self.ema_model.to(device)
         optimizer_to(self.optimizer, device)
-        # if normalizer is not None:
-        #     normalizer_to(normalizer, device, dtype)
 
         # save batch for sampling
         train_sampling_batch = None
@@ -227,8 +225,8 @@ class TrainingWorkspace(BaseWorkspace):
 
                     # ========= eval for this epoch ==========
                     policy = self.model
-                    # if cfg.training.use_ema:
-                    #     policy = self.ema_model
+                    if cfg.training.use_ema:
+                        policy = self.ema_model
                     policy.eval()
 
                     # run validation

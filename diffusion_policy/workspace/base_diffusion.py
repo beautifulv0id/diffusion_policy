@@ -223,8 +223,8 @@ class TrainingWorkspace(BaseWorkspace):
 
                     # ========= eval for this epoch ==========
                     policy = self.model
-                    # if cfg.training.use_ema:
-                    #     policy = self.ema_model
+                    if cfg.training.use_ema:
+                        policy = self.ema_model
                     policy.eval()
 
                     # run validation

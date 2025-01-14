@@ -105,7 +105,7 @@ training:
   gradient_accumulate_every: 1
   # EMA destroys performance when used with BatchNorm
   # replace BatchNorm with GroupNorm.
-  use_ema: False
+  use_ema: True
   # training loop control
   # in epochs
   model_evaluation_every: 50

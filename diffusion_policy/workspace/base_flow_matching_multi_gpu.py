@@ -171,8 +171,6 @@ class TrainingWorkspace(BaseWorkspace):
         if self.ema_model is not None:
             self.ema_model.to(device)
         optimizer_to(self.optimizer, device)
-        # if normalizer is not None:
-        #     normalizer_to(normalizer, device, dtype)
 
         # save batch for sampling
         train_sampling_batch = None
@@ -255,8 +253,8 @@ class TrainingWorkspace(BaseWorkspace):
 
                     # ========= eval for this epoch ==========
                     policy = self.model
-                    # if cfg.training.use_ema:
-                    #     policy = self.ema_model
+                    if cfg.training.use_ema:
+                        policy = self.ema_model
                     policy.eval()
 
                     # run validation
@@ -297,7 +295,7 @@ class TrainingWorkspace(BaseWorkspace):
                                         leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
                                 for batch_idx, batch in enumerate(tepoch):
                                     batch = dict_apply(batch, lambda x: x.to(device, dtype, non_blocking=True) if isinstance(x, torch.Tensor) else x)
-                                    pred_act, pred_act_gr = self.model(
+                                    pred_act = self.model(
                                         gt_trajectory=None,
                                         rgb_obs=batch['obs'].get('rgb', None),
                                         pcd_obs=batch['obs']['pcd'],
@@ -307,7 +305,7 @@ class TrainingWorkspace(BaseWorkspace):
                                         feature_obs=batch['obs'].get('clip_features', None)
                                     )
                                     # log all
-                                    evaluation_log = criterion.compute_metrics(pred_act, pred_act_gr, batch, validation=True)
+                                    evaluation_log = criterion.compute_metrics(pred_act, batch, validation=True)
                                     
                                     # gather per-task metrics
                                     for key, val in evaluation_log.items():
@@ -328,18 +326,18 @@ class TrainingWorkspace(BaseWorkspace):
                     if ((self.epoch + 1) % cfg.training.sample_every) == 0 and dist.get_rank() == 0:
                         with torch.no_grad():
                             # sample trajectory from training set, and evaluate difference
-                            train_sampling_batch = dict_apply(train_sampling_batch, lambda x: x.to(device, dtype, non_blocking=True) if isinstance(x, torch.Tensor) else x)
+                            batch = dict_apply(train_sampling_batch, lambda x: x.to(device, dtype, non_blocking=True) if isinstance(x, torch.Tensor) else x)
 
-                            pred_act, pred_act_gr = policy(
+                            pred_act = policy(
                                 gt_trajectory=None,
-                                rgb_obs=train_sampling_batch['obs'].get('rgb', None),
-                                pcd_obs=train_sampling_batch['obs']['pcd'],
-                                instruction=train_sampling_batch['obs'].get('instruction', None),
-                                curr_gripper=train_sampling_batch['obs']['curr_gripper'],
+                                rgb_obs=batch['obs'].get('rgb', None),
+                                pcd_obs=batch['obs']['pcd'],
+                                instruction=batch['obs'].get('instruction', None),
+                                curr_gripper=batch['obs']['curr_gripper'],
                                 run_inference=True,
-                                feature_obs=train_sampling_batch['obs'].get('clip_features', None)
+                                feature_obs=batch['obs'].get('clip_features', None)
                             )
-                            eval_log = criterion.compute_metrics(pred_act, pred_act_gr, train_sampling_batch)
+                            eval_log = criterion.compute_metrics(pred_act, batch)
                             # log all
                             step_log.update(eval_log)
 
