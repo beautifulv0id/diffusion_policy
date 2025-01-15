@@ -21,11 +21,11 @@ instruction_dir=/docker_data_dir/rlbench_instructions/instructions.pkl
 args="tasks=${tasks}\
     variations=${variations}\
     optimizer.lr=4e-4\
-    dataset.cache_size=1000\
+    dataset.cache_size=2000\
     dataset.root=$data_dir\
-    instructions=instruction_dir\
-    dataloader.batch_size=32\
-    val_dataloader.batch_size=32\
+    instructions=$instruction_dir\
+    dataloader.batch_size=8\
+    val_dataloader.batch_size=8\
     training.model_evaluation_every=10"
 
 kwargs=${@:1}
