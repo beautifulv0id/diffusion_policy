@@ -18,7 +18,7 @@ policy:
   _target_: diffusion_policy.policy.se3_flow_matching.SE3FlowMatching
   embedding_dim: ${embedding_dim}
   backbone: "clip"
-  n_points_out: 1000
+  n_points_out: 2000
   feature_res: ${dataset.feature_res}
   scaling_factor: 3.0
   gripper_loc_bounds: ${gripper_loc_bounds}
@@ -61,7 +61,7 @@ training:
   # optimization
   lr_scheduler: cosine
   lr_warmup_steps: 500
-  num_epochs: 5000
+  num_epochs: 9001
   gradient_accumulate_every: 1
   # EMA destroys performance when used with BatchNorm
   # replace BatchNorm with GroupNorm.

@@ -56,7 +56,7 @@ class SE3FlowMatching(BaseImagePolicy):
             nhist=nhist,
             dim_pcd_features=self.feature_pcd_encoder.out_dim
         )
-        decoder = URSATransformer(d_model=embedding_dim, nhead=8, num_layers=4, dropout=0.2, distance_scale=0.0)
+        decoder = URSATransformer(d_model=embedding_dim, nhead=8, num_layers=4, dropout=0.2)
         self.model = SE3GraspVectorField(
             encoder=encoder, 
             decoder=decoder, 

@@ -1,5 +1,5 @@
 datatype: image
-instructions: ${oc.env:DIFFUSION_POLICY_ROOT}/data/rlbench_instructions/instructions.pkl
+instructions: ${oc.env:DIFFUSION_POLICY_DATA_ROOT}/data/rlbench_instructions/instructions.pkl
 tasks:
   - open_drawer
   - sweep_to_dustpan_of_size
@@ -27,7 +27,7 @@ use_lowdim_pcd: False
 
 dataset:
   _target_: diffusion_policy.dataset.rlbench_dataset.RLBenchDataset
-  root: ${oc.env:DIFFUSION_POLICY_ROOT}/data/diffuser_actor.zarr
+  root: ${oc.env:DIFFUSION_POLICY_DATA_ROOT}/data/diffuser_actor.zarr
   n_episodes: ${num_episodes}
   cameras: ${cameras}
   n_obs_steps: ${n_obs_steps}
