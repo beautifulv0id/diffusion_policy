@@ -19,9 +19,10 @@
 # turn_tap
 
 
-tasks=sweep_to_dustpan_of_size
+#tasks=sweep_to_dustpan_of_size,turn_tap
+tasks=sweep_to_dustpan_of_size,turn_tap,stack_cups,stack_blocks,slide_block_to_color_target,reach_and_drag,put_money_in_safe,put_item_in_drawer,put_groceries_in_cupboard,push_buttons,place_wine_at_rack_location,place_shape_in_shape_sorter,place_cups,open_drawer,meat_off_grill,light_bulb_in,insert_onto_square_peg,close_jar
 
-save_path=${DIFFUSION_POLICY_ROOT}/data/peract
+save_path=/media/funk/INTENSO/300_RL_BENCH/data/peract
 
 mkdir -p $save_path
 mkdir -p $save_path/train
@@ -31,7 +32,7 @@ mkdir -p $save_path/test
 echo 'Starting download of training tasks'
 for task in $(echo $tasks | tr ',' '\n'); do
     echo 'Downloading task: ' $task
-    rclone copy remote,shared_with_me:rlbench/train/${task}.zip ${save_path}/train/
+    rclone copy --drive-shared-with-me remote:rlbench/train/${task}.zip ${save_path}/train/
     unzip ${save_path}/train/${task}.zip -d ${save_path}/train/
     rm ${save_path}/train/${task}.zip
 done
@@ -39,7 +40,7 @@ done
 echo 'Starting download of validation tasks'
 for task in $(echo $tasks | tr ',' '\n'); do
     echo 'Downloading task: ' $task
-    rclone copy remote,shared_with_me:rlbench/val/${task}.zip ${save_path}/val/
+    rclone copy --drive-shared-with-me remote:rlbench/val/${task}.zip ${save_path}/val/
     unzip ${save_path}/val/${task}.zip -d ${save_path}/val/
     rm ${save_path}/val/${task}.zip
 done
@@ -47,7 +48,7 @@ done
 echo 'Starting download of test tasks'
 for task in $(echo $tasks | tr ',' '\n'); do
     echo 'Downloading task: ' $task
-    rclone copy remote,shared_with_me:rlbench/test/${task}.zip ${save_path}/test/
+    rclone copy --drive-shared-with-me remote:rlbench/test/${task}.zip ${save_path}/test/
     unzip ${save_path}/test/${task}.zip -d ${save_path}/test/
     rm ${save_path}/test/${task}.zip
 done

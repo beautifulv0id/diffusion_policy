@@ -326,13 +326,13 @@ def test_dataset():
     from diffusion_policy.model.common.workspace_cropping import crop_to_workspace
 
     dataset = RLBenchDataset(
-        dataset_path=os.path.join(os.environ['DIFFUSION_POLICY_ROOT'], 'data/rlbench.zarr'),
+        dataset_path=os.path.join(os.environ['DIFFUSION_POLICY_DATA_ROOT'], 'data/rlbench.zarr'),
         cameras=['left_shoulder', 'right_shoulder', 'wrist', 'front'],
         task_name='open_drawer',
         use_rgb=True,
         use_pcd=True,
         use_mask=False,
-        use_lowdim_pcd=True,
+        use_lowdim_pcd=False,
         use_features=False,
         n_obs_steps=3,
         n_episodes=-1,
@@ -351,28 +351,66 @@ def test_dataset():
 
     data_loader = DataLoader(dataset, batch_size=2, shuffle=False)
     
-    batch = next(iter(data_loader))
+    # batch = next(iter(data_loader))
+    #
+    # from diffusion_policy.common.rlbench_util import create_obs_state_plot
+    # from torchvision.utils import make_grid
+    #
+    # imgs = create_obs_state_plot(obs=batch['obs'], lowdim=False)
+    # img = make_grid(torch.from_numpy(imgs).float() / 255)
+    # plt.imshow(plt.imshow(np.transpose(np.transpose(img),(1,0,2))))
+    # plt.show()
+    #
+    #
+    # print(batch['obs']['pcd'].shape)
+    # pcd, rgb = extract_rgb_pcd(batch)
+    # # plot(pcd, rgb)
 
-    print(batch['obs']['pcd'].shape)
-    pcd, rgb = extract_rgb_pcd(batch)
-    # plot(pcd, rgb)
+    iter_data_loader = iter(data_loader)
 
-    batch = next(iter(data_loader))
-    pcd = batch['obs']['pcd']
-    rgb = batch['obs']['rgb']
+    for ii in range(30):
+        for iii in range(10):
+            batch = next(iter_data_loader)
+        pcd = batch['obs']['pcd']
+        rgb = batch['obs']['rgb']
 
-    b, v, c, h, w = rgb.shape
-    pcd = pcd.reshape(b*v, c, h, w)
-    rgb = rgb.reshape(b*v, c, h, w)
+        def compute_normals(pcd, camera_view):
+            import open3d as o3d
+            pcd_o3d = o3d.geometry.PointCloud()
+            pcd_o3d.points = o3d.utility.Vector3dVector(pcd)
+            normals = -(pcd - camera_view[None, :])
+            init_normals = normals / (np.linalg.norm(normals, axis=-1)[..., None] + 1e-10)
+            pcd_o3d.normals = o3d.utility.Vector3dVector(init_normals)
 
-    rgb = F.interpolate(rgb, (64, 64), mode='bilinear', align_corners=False)
-    pcd = F.interpolate(pcd, (64, 64), mode='nearest')
+            pcd_o3d.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
 
-    batch['obs']['rgb'] = rgb.reshape(b, v, c, 64, 64)
-    batch['obs']['pcd'] = pcd.reshape(b, v, c, 64, 64)
+            ## Align to Camera View
+            normals = np.asarray(pcd_o3d.normals)
+            # Compute the dot product between normals and view vectors
+            dot_products = np.einsum('ij,ij->i', normals, init_normals)
+            normals[dot_products < 0] *= -1
 
-    pcd, rgb = extract_rgb_pcd(batch)
-    plot(pcd, rgb)
+            return normals
+
+
+
+        b, v, c, h, w = rgb.shape
+        pcd = pcd.reshape(b*v, c, h, w)
+        rgb = rgb.reshape(b*v, c, h, w)
+
+        normals = compute_normals(torch.permute(pcd,(0,2,3,1)).reshape(8,-1,3)[0,...], np.zeros(3))#.reshape(h, w, 3)
+
+        interpolation_size = 64
+
+        rgb = F.interpolate(rgb, (interpolation_size, interpolation_size), mode='bilinear', align_corners=False)
+        pcd = F.interpolate(pcd, (interpolation_size, interpolation_size), mode='nearest')
+
+        batch['obs']['rgb'] = rgb.reshape(b, v, c, interpolation_size, interpolation_size)
+        batch['obs']['pcd'] = pcd.reshape(b, v, c, interpolation_size, interpolation_size)
+
+        pcd, rgb = extract_rgb_pcd(batch)
+        plot(pcd, rgb)
+        plt.show()
 
 
     npts = pcd.shape[1]
@@ -383,6 +421,7 @@ def test_dataset():
     print("Number of points: ", cropped_pcd.shape[1])
     print("Factor of reduction: ", cropped_pcd.shape[1] / pcd.shape[1])
     plot(cropped_pcd, cropped_rgb)
+    plt.show()
 
 
     npts = pcd.shape[0]

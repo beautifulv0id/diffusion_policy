@@ -54,6 +54,7 @@ class TrainingWorkspace(BaseWorkspace):
 
         # this evaluates the arguments!
         train_config = OmegaConf.create(OmegaConf.to_yaml(train_config, resolve=True))
+        train_config.task.dataset.dataset_path = '/media/funk/INTENSO/300_RL_BENCH/data/felix_data/data/rlbench.zarr'
 
         eval_cfg = copy.deepcopy(cfg)
         cfg = train_config
@@ -107,16 +108,16 @@ class TrainingWorkspace(BaseWorkspace):
         all_checkpoints = np.array(all_checkpoints)[sorted_indices]
         checkpoint_epoch = checkpoint_epoch[sorted_indices]
 
-        if ('epochs_to_eval' in eval_cfg):
-            # only evaluate the specified epochs
-            checkpoints_to_eval = []
-            checkpoint_epoch_to_eval = []
-            for j in range(len(all_checkpoints)):
-                if checkpoint_epoch[j] in eval_cfg.epochs_to_eval:
-                    checkpoints_to_eval.append(all_checkpoints[j])
-                    checkpoint_epoch_to_eval.append(checkpoint_epoch[j])
-            all_checkpoints = checkpoints_to_eval
-            checkpoint_epoch = checkpoint_epoch_to_eval
+        # if ('epochs_to_eval' in eval_cfg):
+        #     # only evaluate the specified epochs
+        #     checkpoints_to_eval = []
+        #     checkpoint_epoch_to_eval = []
+        #     for j in range(len(all_checkpoints)):
+        #         if checkpoint_epoch[j] in eval_cfg.epochs_to_eval:
+        #             checkpoints_to_eval.append(all_checkpoints[j])
+        #             checkpoint_epoch_to_eval.append(checkpoint_epoch[j])
+        #     all_checkpoints = checkpoints_to_eval
+        #     checkpoint_epoch = checkpoint_epoch_to_eval
 
         log_path = os.path.join(self.output_dir, 'eval_logs.json.txt')
         if wandb_run is None:
@@ -132,7 +133,7 @@ class TrainingWorkspace(BaseWorkspace):
                 if j>0 and checkpoint_epoch[j]==checkpoint_epoch[j-1]:
                     # skip if there are multiple checkpoints for the same epoch
                     continue
-                for jj in range(3):
+                for jj in range(5):
                     # load the current checkpoint
                     print ("Loading checkpoint: ", all_checkpoints[j])
                     # self.load_checkpoint(path=filepath + '/' + all_checkpoints[j])
