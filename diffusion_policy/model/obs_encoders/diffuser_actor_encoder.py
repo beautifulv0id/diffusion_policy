@@ -1,4 +1,4 @@
-import dgl.geometry as dgl_geo
+import pytorch3d.ops.sample_farthest_points as fps
 import einops
 import torch
 from torch import nn
@@ -306,31 +306,11 @@ class DiffuserActorEncoder(ModuleAttrMixin):
         # outputs of analogous shape, with smaller Np
         npts, bs, ch = context_features.shape
 
+        tgt_pts = npts // self.fps_subsampling_factor
+
         # Sample points with FPS
-        sampled_inds = dgl_geo.farthest_point_sampler(
-            einops.rearrange(
-                context_features,
-                "npts b c -> b npts c"
-            ).to(torch.float64),
-            max(npts // self.fps_subsampling_factor, 1), 0
-        ).long()
-
-        # Sample features
-        expanded_sampled_inds = sampled_inds.unsqueeze(-1).expand(-1, -1, ch)
-        sampled_context_features = torch.gather(
-            context_features,
-            0,
-            einops.rearrange(expanded_sampled_inds, "b npts c -> npts b c")
-        )
-
-        # Sample positional embeddings
-        _, _, ch = context_pos.shape
-        expanded_sampled_inds = (
-            sampled_inds.unsqueeze(-1).expand(-1, -1, ch)
-        )
-        sampled_context_pcd = torch.gather(
-            context_pos, 1, expanded_sampled_inds
-        )
+        sampled_context_features, out_indices = fps(context_features, K=tgt_pts)
+        sampled_context_pcd = torch.gather(context_pos, 1, out_indices.unsqueeze(-1).expand(-1, -1, context_pos.shape[-1]))
         return sampled_context_features, sampled_context_pcd
 
     def vision_language_attention(self, feats, instr_feats):

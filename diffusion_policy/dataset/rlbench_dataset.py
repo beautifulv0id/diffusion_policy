@@ -419,24 +419,9 @@ def test_dataset():
     # Farthest point sampling
     tgt_pts = 1000
     ch = pcd.shape[-1]
-    sampled_inds = dgl_geo.farthest_point_sampler(
-            cropped_pcd,
-        tgt_pts, 0
-    ).long()
-
     # Sample features
-    expanded_sampled_inds = sampled_inds.unsqueeze(-1).expand(-1, -1, ch)
-    cropped_pcd = torch.gather(
-        cropped_pcd,
-        1,
-        expanded_sampled_inds
-    ).numpy()
-    
-    cropped_rgb = torch.gather(
-        cropped_rgb,
-        1,
-        expanded_sampled_inds
-    ).numpy()   
+    cropped_pcd, out_indices = fps(cropped_pcd, K=tgt_pts)
+    cropped_rgb = torch.gather(cropped_rgb, 1, out_indices.unsqueeze(-1).expand(-1, -1, cropped_rgb.shape[-1]))
 
     plot(cropped_pcd, cropped_rgb)
     plt.show()
@@ -482,7 +467,7 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
     import einops
     from diffusion_policy.common.rlbench_util import get_workspace_bounds
-    import dgl.geometry as dgl_geo
+    import pytorch3d.ops.sample_farthest_points as fps
 
     plt.switch_backend('tkagg')
 
