@@ -34,6 +34,14 @@ class SE3GraspPointCloudSuperEncoder(ModuleAttrMixin):
             cross_attention1=True, cross_attention2=False
         )
 
+        # Attention from action to language
+        self.al_attention = ParallelAttention(
+            num_layers=num_vis_ins_attn_layers,
+            d_model=dim_features, n_heads=nheads,
+            self_attention1=False, self_attention2=False,
+            cross_attention1=True, cross_attention2=False
+        )
+
         ## Time Encoder ##
         self.time_encoder = nn.Sequential(
             PositionalEncoding(n_positions=dim_features, max_len=n_steps_inf),
@@ -55,12 +63,6 @@ class SE3GraspPointCloudSuperEncoder(ModuleAttrMixin):
                 nn.GELU()
             )
         
-        self.act_inst_merger = nn.Sequential(
-                nn.Linear(2 * dim_features, dim_features),
-                nn.LayerNorm(dim_features),
-                nn.GELU()
-            )
-
     def forward(self, x):
         obs_points, obs_features = self.encode_obs(x['obs'])
         act_points, act_features = self.encode_act(x['act'])
@@ -76,13 +78,23 @@ class SE3GraspPointCloudSuperEncoder(ModuleAttrMixin):
         return self.instruction_encoder(instruction)
 
     def vision_language_attention(self, feats, instr_feats):
-        feats, _ = self.vl_attention[0](
+        feats, _ = self.vl_attention(
             seq1=feats, seq1_key_padding_mask=None,
             seq2=instr_feats, seq2_key_padding_mask=None,
             seq1_pos=None, seq2_pos=None,
             seq1_sem_pos=None, seq2_sem_pos=None
         )
         return feats
+
+    def action_language_attention(self, feats, instr_feats):
+        feats, _ = self.al_attention(
+            seq1=feats, seq1_key_padding_mask=None,
+            seq2=instr_feats, seq2_key_padding_mask=None,
+            seq1_pos=None, seq2_pos=None,
+            seq1_sem_pos=None, seq2_sem_pos=None
+        )
+        return feats
+
         
     def encode_obs(self, obs):
         pcd = obs['pcd']
@@ -114,8 +126,10 @@ class SE3GraspPointCloudSuperEncoder(ModuleAttrMixin):
         if instruction is not None:
             instr_features = self.encode_instruction(instruction)
             obs_features = self.vision_language_attention(obs_features, instr_features)
+        else:
+            instr_features = None
 
-        return obs_points, obs_features
+        return obs_points, obs_features, instr_features
 
     def encode_act(self, act):
         act_points = {'centers': act[..., :3, -1], 'vectors': act[..., :3, :3]}
@@ -137,10 +151,6 @@ class SE3GraspPointCloudSuperEncoder(ModuleAttrMixin):
         act_time_f = torch.cat((act_f, time_emb.repeat(1, act_f.shape[1],1)), dim=-1)
         return self.act_merger(act_time_f)
     
-    def act_combine_instruction(self, act_f, instr_f):
-        act_instr_f = torch.cat((act_f, instr_f.repeat(1, act_f.shape[1],1)), dim=-1)
-        return self.act_inst_merger(act_instr_f)
-
 class SE3GraspFPSEncoder(SE3GraspPointCloudSuperEncoder):
     def __init__(self, dim_features=128, depth=3, nheads=4, n_steps_inf=50, n_points_out=100, nhist=3, dim_pcd_features=64):
         super(SE3GraspFPSEncoder, self).__init__(dim_features, depth, nheads, n_steps_inf, n_points_out, nhist, dim_pcd_features)
@@ -149,14 +159,14 @@ class SE3GraspFPSEncoder(SE3GraspPointCloudSuperEncoder):
         self.linear = nn.Linear(input_dim, output_dim)
 
     def encode_obs(self, obs):
-        obs_pcd_x, obs_pcd_f = super().encode_obs(obs)
+        obs_pcd_x, obs_pcd_f, inst_f = super().encode_obs(obs)
         pcd, obs_f = obs['pcd'], obs['pcd_features']
         batch = pcd.shape[0]
         device = pcd.device
         vectors = torch.zeros((3,3))[None,None,:,:].repeat(batch, pcd.shape[1], 1, 1).to(device)
         obs_x = {'centers': pcd, 'vectors': vectors}
         obs_f = self.linear(obs_f)
-        return obs_x, obs_f, obs_pcd_x, obs_pcd_f
+        return obs_x, obs_f, obs_pcd_x, obs_pcd_f, inst_f
 
 
 if __name__=='__main__':

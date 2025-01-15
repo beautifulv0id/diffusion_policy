@@ -25,18 +25,19 @@ class SE3GraspVectorFieldSelfAttn(ModuleAttrMixin):
         return self.out_fn(out)
 
     def encode_obs(self, x):
-        obs_x, obs_f, obs_pcd_x, obs_pcd_f = self.encoder.encode_obs(x)
-        return obs_x, obs_f, obs_pcd_x, obs_pcd_f
+        obs_x, obs_f, obs_pcd_x, obs_pcd_f, inst_f = self.encoder.encode_obs(x)
+        return obs_x, obs_f, obs_pcd_x, obs_pcd_f, inst_f
 
     def encode_act(self, x):
         act_x, act_f = self.encoder.encode_act(x)
         return act_x, act_f
 
-    def set_context(self, obs_x, obs_f, obs_fps_x, obs_fps_f):
+    def set_context(self, obs_x, obs_f, obs_fps_x, obs_fps_f, inst_f=None):
         self.obs_x = obs_x
         self.obs_f = obs_f
         self.obs_fps_x = obs_fps_x
         self.obs_fps_f = obs_fps_f
+        self.inst_f = inst_f
 
     def forward_act(self, x):
         act_x, act_f = self.encoder.encode_act(x['act'])
@@ -46,6 +47,8 @@ class SE3GraspVectorFieldSelfAttn(ModuleAttrMixin):
         obs_f = self.encoder.obs_combine_time(self.obs_f, time_emb)
         obs_fps_f = self.encoder.obs_combine_time(self.obs_fps_f, time_emb)
         act_f = self.encoder.act_combine_time(act_f, time_emb)
+        if self.inst_f is not None:
+            act_f = self.encoder.action_language_attention(act_f, self.inst_f)
 
         out = self.decoder(tgt = act_f, cross_memory = obs_f, self_memory = obs_fps_f, 
                            query_geometric_args = act_x, cross_geometric_args = self.obs_x, 

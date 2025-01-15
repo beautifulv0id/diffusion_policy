@@ -14,10 +14,10 @@ from diffusion_policy.common.so3_util import normal_so3
 from diffusion_policy.dataset.rlbench_utils import Resize
 from rlbench.backend.const import LOW_DIM_PICKLE
 
-def create_sample_indices(split : zarr.hierarchy.Group, taskvar, n_episodes, n_obs):
+def create_sample_indices(split , taskvar, n_episodes, n_obs):
     indices = []
     for (task, var) in taskvar:
-        taskvar_group = split[task][var]
+        taskvar_group = split[task][str(var)]
         for i, demo_group in enumerate(taskvar_group.values()):
             trajectory_length = demo_group['state_action']['proprioception'].shape[0]
             for action_idx in range(1, trajectory_length):
@@ -65,7 +65,7 @@ def collate_samples(datum, instructions, use_pc, use_rgb, use_mask, apply_camera
             sample['obs']['clip_features']['res1'] = np.stack([cameras[camera]['clip_features']['res1'][obs_idxs[-1]] for camera in apply_cameras])
             sample['obs']['clip_features']['res2'] = np.stack([cameras[camera]['clip_features']['res2'][obs_idxs[-1]] for camera in apply_cameras])
 
-    curr_gripper = state_action['proprioception'][obs_idxs]
+    curr_gripper = state_action['proprioception'][:][obs_idxs]
     sample['obs']['curr_gripper'] = curr_gripper
     sample['obs']['low_dim_state'] = curr_gripper[:,7:8]
 
@@ -80,7 +80,7 @@ def collate_samples(datum, instructions, use_pc, use_rgb, use_mask, apply_camera
     else:
         instr = torch.zeros((1, 53, 512))
 
-    sample['obs']['instr'] = instr
+    sample['obs']['instruction'] = instr
     sample['obs']['task'] = task
 
     return sample

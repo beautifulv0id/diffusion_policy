@@ -170,6 +170,7 @@ class TrainingWorkspace(BaseWorkspace):
 
         if self.ema_model is not None:
             self.ema_model.to(device)
+
         optimizer_to(self.optimizer, device)
 
         # save batch for sampling
@@ -219,7 +220,7 @@ class TrainingWorkspace(BaseWorkspace):
 
                             # update ema
                             if cfg.training.use_ema:
-                                ema.step(self.model)
+                                ema.step(self.model.module)
 
                             # logging
                             raw_loss_cpu = raw_loss.item()
@@ -269,7 +270,7 @@ class TrainingWorkspace(BaseWorkspace):
                                     if val_sampling_batch is None:
                                         val_sampling_batch = batch
 
-                                    loss = self.model(
+                                    loss = policy(
                                         gt_trajectory=batch['action']['gt_trajectory'],
                                         rgb_obs=batch['obs'].get('rgb', None),
                                         pcd_obs=batch['obs']['pcd'],
@@ -295,7 +296,7 @@ class TrainingWorkspace(BaseWorkspace):
                                         leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
                                 for batch_idx, batch in enumerate(tepoch):
                                     batch = dict_apply(batch, lambda x: x.to(device, dtype, non_blocking=True) if isinstance(x, torch.Tensor) else x)
-                                    pred_act = self.model(
+                                    pred_act = policy(
                                         gt_trajectory=None,
                                         rgb_obs=batch['obs'].get('rgb', None),
                                         pcd_obs=batch['obs']['pcd'],

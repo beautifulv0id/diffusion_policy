@@ -49,14 +49,14 @@ class SE3FlowMatching(BaseImagePolicy):
         )
         encoder = SE3GraspPointCloudSuperEncoder(
             dim_features=embedding_dim,
-            depth=3,
+            depth=6,
             nheads=8,
             n_steps_inf=50,
             n_points_out=n_points_out,
             nhist=nhist,
             dim_pcd_features=self.feature_pcd_encoder.out_dim
         )
-        decoder = URSATransformer(d_model=embedding_dim, nhead=8, num_layers=4, distance_scale=0.0)
+        decoder = URSATransformer(d_model=embedding_dim, nhead=8, num_layers=4, dropout=0.2, distance_scale=0.0)
         self.model = SE3GraspVectorField(
             encoder=encoder, 
             decoder=decoder, 
@@ -258,9 +258,10 @@ class SE3FlowMatching(BaseImagePolicy):
         d_act, openess = self.model.forward_act(input_data)
 
         # Compute loss
-        loss = F.mse_loss(d_act, target, reduction='none')
-        loss = reduce(loss, 'b ... -> b (...)', 'mean')
-        loss = loss.mean()
+        loss = (
+                30 * F.l1_loss(d_act[...,:3], target[...,:3], reduction='mean')
+                + 10 * F.l1_loss(d_act[..., 3:6], target[..., 3:6], reduction='mean')
+        )
         if torch.numel(gt_openess) > 0:
             loss += F.binary_cross_entropy(openess, gt_openess)
         return loss

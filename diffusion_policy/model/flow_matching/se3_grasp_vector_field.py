@@ -25,17 +25,17 @@ class SE3GraspVectorField(ModuleAttrMixin):
         return self.out_fn(out)
 
     def encode_obs(self, x):
-        obs_x, obs_f = self.encoder.encode_obs(x)
-        return obs_x, obs_f
+        obs_x, obs_f, inst_f = self.encoder.encode_obs(x)
+        return obs_x, obs_f, inst_f
 
     def encode_act(self, x):
         act_x, act_f = self.encoder.encode_act(x)
         return act_x, act_f
 
-    def set_context(self, obs_x, obs_f, instruction=None):
+    def set_context(self, obs_x, obs_f, inst_f=None):
         self.obs_x = obs_x
         self.obs_f = obs_f
-        self.instruction = instruction
+        self.inst_f = inst_f
 
     def forward_act(self, x):
         act_x, act_f = self.encoder.encode_act(x['act'])
@@ -43,8 +43,8 @@ class SE3GraspVectorField(ModuleAttrMixin):
         act_x['time'] = time_emb
 
         obs_f, act_f = self.encoder.combine_time(self.obs_f, act_f, time_emb)
-        if self.instruction is not None:
-            act_f = self.encoder.act_combine_instruction(act_f, self.instruction)
+        if self.inst_f is not None:
+            act_f = self.encoder.action_language_attention(act_f, self.inst_f)
 
         geo = {'query':act_x, 'key':self.obs_x}
         out = self.decoder(tgt = act_f, memory = obs_f, geometric_args = geo)

@@ -16,7 +16,7 @@ class FeaturePCDEncoder(ModuleAttrMixin):
                  feature_res="res2"):
         super().__init__()
 
-        assert feature_res in ["res1", "res2"]
+        assert feature_res in ["res1", "res2", "res3"]
 
         # 3D relative positional embeddings
         # Frozen backbone

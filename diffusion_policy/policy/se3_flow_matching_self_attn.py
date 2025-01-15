@@ -49,7 +49,7 @@ class SE3FlowMatchingSelfAttn(BaseImagePolicy):
         )
         encoder = SE3GraspFPSEncoder(
             dim_features=embedding_dim,
-            depth=3,
+            depth=6,
             nheads=8,
             n_steps_inf=50,
             n_points_out=n_points_out,
@@ -152,7 +152,6 @@ class SE3FlowMatchingSelfAttn(BaseImagePolicy):
 
     def sample(self, obs):
         B = obs["pcd"].shape[0]
-
         self.model.set_context(*self.model.encode_obs(obs))
         # Iterative denoising
         with torch.no_grad():
@@ -167,13 +166,22 @@ class SE3FlowMatchingSelfAttn(BaseImagePolicy):
 
         trajectory = self.vec_to_pose(at)
 
-        return trajectory, gripper_open
+
+        if self._relative:
+            trajectory = self.convert2abs(trajectory)
+        # Back to quaternion
+        trajectory = self.unconvert_rot(trajectory, res=gripper_open > 0.5)
+        # unnormalize position
+        trajectory = self.unnormalize_pos(trajectory)
+
+        return trajectory
        
     def forward(
         self,
         gt_trajectory,
         rgb_obs,
         pcd_obs,
+        instruction,
         curr_gripper,
         run_inference=False,
         feature_obs=None
@@ -221,7 +229,8 @@ class SE3FlowMatchingSelfAttn(BaseImagePolicy):
         obs = {
             'pcd': pcd_obs,
             'current_gripper': curr_gripper,
-            'pcd_features': feature_obs
+            'pcd_features': feature_obs,
+            'instruction': instruction
         }
 
         if run_inference:
@@ -245,39 +254,29 @@ class SE3FlowMatchingSelfAttn(BaseImagePolicy):
 
         # Predict the noise residual
         at_pose = self.vec_to_pose(at)
-        input_data = {'obs': obs, 'act': at_pose, 'time': time}
+        input_data = {'act': at_pose, 'time': time}
         d_act, openess = self.model.forward_act(input_data)
 
         # Compute loss
-        loss = F.mse_loss(d_act, target, reduction='none')
-        loss = reduce(loss, 'b ... -> b (...)', 'mean')
-        loss = loss.mean()
+        loss = (
+                30 * F.l1_loss(d_act[...,:3], target[...,:3], reduction='mean')
+                + 10 * F.l1_loss(d_act[..., 3:6], target[..., 3:6], reduction='mean')
+        )
         if torch.numel(gt_openess) > 0:
             loss += F.binary_cross_entropy(openess, gt_openess)
         return loss
     
     def predict_action(self, obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        trajectory, gripper_open = self.forward(
+        return self.forward(
             gt_trajectory=None,
             rgb_obs=obs_dict.get('rgb', None),
             pcd_obs=obs_dict['pcd'],
             curr_gripper=obs_dict['curr_gripper'],
+            instruction=obs_dict.get('instruction', None),
             run_inference=True,
             feature_obs=obs_dict.get('clip_features', None)
         )
     
-        if self._relative:
-            trajectory = self.convert2abs(trajectory)
-        # Back to quaternion
-        trajectory = self.unconvert_rot(trajectory, res=gripper_open > 0.5)
-        # unnormalize position
-        trajectory = self.unnormalize_pos(trajectory)
-
-        output = dict()
-        output['trajectory'] = trajectory
-        output['gripper_openess'] = gripper_open
-
-        return output
 
     
     def compute_loss(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
@@ -285,6 +284,7 @@ class SE3FlowMatchingSelfAttn(BaseImagePolicy):
             gt_trajectory=batch['action']['gt_trajectory'],
             rgb_obs=batch['obs'].get('rgb', None),
             pcd_obs=batch['obs']['pcd'],
+            instruction=batch['obs'].get('instruction', None),
             curr_gripper=batch['obs']['curr_gripper'],
             run_inference=False,
             feature_obs=batch['obs'].get('clip_features', None)
