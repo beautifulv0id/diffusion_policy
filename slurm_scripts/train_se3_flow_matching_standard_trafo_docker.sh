@@ -14,7 +14,7 @@ tasks="[open_drawer]"
 variations=$(seq -s, 0 199)
 variations="[${variations}]"
 variations="[0]"
-job_name=train_se3_flow_matching_standard_trafo
+job_name=se3_flow_matching
 data_dir=/docker_data_dir/diffuser_actor.zarr
 instruction_dir=/docker_data_dir/rlbench_instructions/instructions.pkl
 
