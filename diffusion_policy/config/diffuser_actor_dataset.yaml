@@ -35,7 +35,7 @@ dataset:
   rot_noise_scale: 0.0
   pos_noise_scale: 0.0
   use_precomputed_features: False
-  feature_res: "res2"
+  feature_res: "res3"
 
 env_runner:
   _target_: diffusion_policy.env_runner.rlbench_runner.RLBenchRunner
