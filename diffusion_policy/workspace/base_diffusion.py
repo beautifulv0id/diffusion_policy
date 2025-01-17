@@ -239,7 +239,7 @@ class TrainingWorkspace(BaseWorkspace):
                                     if val_sampling_batch is None:
                                         val_sampling_batch = batch
 
-                                    loss = self.model.compute_loss(batch)
+                                    loss = policy.compute_loss(batch)
                                     val_losses.append(loss)
                                     if (cfg.training.max_val_steps is not None) \
                                             and batch_idx >= (cfg.training.max_val_steps - 1):
@@ -256,7 +256,7 @@ class TrainingWorkspace(BaseWorkspace):
                                         leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
                                 for batch_idx, batch in enumerate(tepoch):
                                     batch = dict_apply(batch, lambda x: x.to(device, dtype, non_blocking=True) if isinstance(x, torch.Tensor) else x)
-                                    pred_act = self.model(
+                                    pred_act = policy(
                                         gt_trajectory=None,
                                         rgb_obs=batch['obs'].get('rgb', None),
                                         pcd_obs=batch['obs']['pcd'],
