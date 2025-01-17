@@ -2,11 +2,8 @@ datatype: image
 instructions: ${oc.env:DIFFUSION_POLICY_ROOT}/data/rlbench_instructions/instructions.pkl
 tasks:
   - open_drawer
-  - sweep_to_dustpan_of_size
 variations: 
   - 0
-  - 1
-  - 3
 
 image_size: [256, 256]
 

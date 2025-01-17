@@ -35,7 +35,7 @@ policy:
 dataloader:
   batch_size: 8
   num_workers: 0
-  shuffle: False
+  shuffle: True
   pin_memory: False
   persistent_workers: False
 
