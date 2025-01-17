@@ -3,7 +3,7 @@ Usage:
 Training:
 python train.py --config-name=train_diffusion_lowdim_workspace
 """
-
+import copy
 import sys
 # use line-buffering for both stdout and stderr
 sys.stdout = open(sys.stdout.fileno(), mode='w', buffering=1)
@@ -45,10 +45,13 @@ OmegaConf.register_new_resolver("eval", eval, replace=True)
 def main(cfg: OmegaConf):
     # resolve immediately so all the ${now:} resolvers
     # will use the same time.
+    cfg_unresolved = copy.deepcopy(cfg)
     OmegaConf.resolve(cfg)
     initialize_distributed(cfg.training.seed)
     cls = hydra.utils.get_class(cfg._target_)
-    workspace: BaseWorkspace = cls(cfg)
+    # Idea: pass also the unresolved config as this later makes the evaluation across different devices significantly more convenient
+    # since all the paths are passed as env variables if done correctly!
+    workspace: BaseWorkspace = cls(cfg, cfg_unresolved=cfg_unresolved)
     workspace.run()
 
 if __name__ == "__main__":

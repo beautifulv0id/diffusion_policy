@@ -36,12 +36,16 @@ OmegaConf.register_new_resolver("eval", eval, replace=True)
 class TrainingWorkspace(BaseWorkspace):
     include_keys = ['global_step', 'epoch']
 
-    def __init__(self, cfg: OmegaConf, output_dir=None):
+    def __init__(self, cfg: OmegaConf, output_dir=None, cfg_unresolved=None):
         super().__init__(cfg, output_dir=output_dir)
 
         # dump current config to yaml file:
-        with open(self.output_dir + "/config_raw.yaml", "w") as f:
-            OmegaConf.save(cfg, f)
+        if not os.path.exists(self.output_dir + "/config_raw.yaml"):
+            with open(self.output_dir + "/config_raw.yaml", "w") as f:
+                if cfg_unresolved is not None:
+                    OmegaConf.save(cfg_unresolved, f)
+                else:
+                    OmegaConf.save(cfg, f)
 
         # set seed
         seed = cfg.training.seed
