@@ -1,0 +1,41 @@
+# These parameters specify the evaluation
+name: evaluate_model
+_target_: diffusion_policy.workspace.eval_policy_post_train.TrainingWorkspace
+model_to_eval_path: "/media/funk/INTENSO/300_RL_BENCH/new_dataset_trains/16_01_trains/09.31.43_train_se3_flow_matching_sing_task_standard_trafo"
+checkpoint: "epoch=8999.ckpt"
+evaluation_folder_name: ${now:%Y.%m.%d-%H.%M.%S}_${name}
+use_ema_model: False
+eval_data_dir: "/media/funk/INTENSO/300_RL_BENCH/data/peract/test/" # TODO - change to relative paths
+eval_instruction_dir: "/media/funk/INTENSO/300_RL_BENCH/3D_attn_felix/data/rlbench_instructions/instructions.pkl" # TODO - change to relative paths
+tasks: ["open_drawer"]
+variations: [0] #[-1] # -1 means all variations - should be passed as tuple!
+headless: 1
+max_tries: 10
+max_steps: 5 #25
+num_episodes: 5 #100
+collision_checking: 0
+dense_interpolation: 1
+interpolation_length: 2
+verbose: 1
+
+logging:
+  project: point_attention_debug_eval
+  resume: True
+  mode: online
+  name: ${now:%Y.%m.%d-%H.%M.%S}_${name}
+  id: null
+  group: null
+  tags: ["${name}"]
+
+multi_run:
+  run_dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+  wandb_name_base: ${now:%Y.%m.%d-%H.%M.%S}_${name}
+
+hydra:
+  job:
+    override_dirname: ${name}
+  run:
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+  sweep:
+    dir: data/outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}
+    subdir: ${hydra.job.num}

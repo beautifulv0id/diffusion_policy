@@ -91,6 +91,12 @@ def load_instructions(
         return data
     return None
 
+def round_floats(o):
+    if isinstance(o, float): return round(o, 2)
+    if isinstance(o, dict): return {k: round_floats(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)): return [round_floats(x) for x in o]
+    return o
+
 def get_max_episode_lengths():
     path = os.path.join(os.environ["DIFFUSION_POLICY_ROOT"], "diffusion_policy/tasks/peract_episodes.json")
     file = json.load(open(path, "r"))

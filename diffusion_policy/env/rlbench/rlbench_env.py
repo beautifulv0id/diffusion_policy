@@ -587,4 +587,312 @@ class RLBenchEnv:
             valid = True
 
         self.env.shutdown()
-        return success_rate, demo_valid, demo_success_rates   
+        return success_rate, demo_valid, demo_success_rates
+
+
+    def evaluate_task_on_multiple_variations(
+        self,
+        task_str: str,
+        max_steps: int,
+        num_variations: int,  # -1 means all variations
+        num_demos: int,
+        actioner: Actioner,
+        max_tries: int = 1,
+        verbose: bool = False,
+        dense_interpolation=False,
+        interpolation_length=100,
+        num_history=1,
+    ):
+        # TODO: eventually: self.launch?!
+        # self.env.launch()
+        self.launch()
+        task_type = task_file_to_task_class(task_str)
+        task = self.env.get_task(task_type)
+        task_variations = task.variation_count()
+
+        if num_variations > 0:
+            task_variations = np.minimum(num_variations, task_variations)
+            task_variations = range(task_variations)
+        else:
+            task_variations = glob.glob(os.path.join(self.data_path, task_str, "variation*"))
+            task_variations = [int(n.split('/')[-1].replace('variation', '')) for n in task_variations]
+
+        var_success_rates = {}
+        var_num_valid_demos = {}
+
+        for variation in task_variations:
+            task.set_variation(variation)
+            success_rate, valid, num_valid_demos = (
+                self._evaluate_task_on_one_variation(
+                    task_str=task_str,
+                    task=task,
+                    max_steps=max_steps,
+                    variation=variation,
+                    num_demos=num_demos // len(task_variations) + 1,
+                    actioner=actioner,
+                    max_tries=max_tries,
+                    verbose=verbose,
+                    dense_interpolation=dense_interpolation,
+                    interpolation_length=interpolation_length,
+                    num_history=num_history
+                )
+            )
+            if valid:
+                var_success_rates[variation] = success_rate
+                var_num_valid_demos[variation] = num_valid_demos
+
+        self.env.shutdown()
+
+        var_success_rates["mean"] = (
+            sum(var_success_rates.values()) /
+            sum(var_num_valid_demos.values())
+        )
+
+        return var_success_rates
+
+
+    @torch.no_grad()
+    def _evaluate_task_on_one_variation(
+        self,
+        task_str: str,
+        task: TaskEnvironment,
+        max_steps: int,
+        variation: int,
+        num_demos: int,
+        actioner: Actioner,
+        max_tries: int = 1,
+        verbose: bool = False,
+        dense_interpolation=False,
+        interpolation_length=50,
+        num_history=0,
+    ):
+        device = actioner.device
+
+        success_rate = 0
+        num_valid_demos = 0
+        total_reward = 0
+
+        for demo_id in range(num_demos):
+            if verbose:
+                print()
+                print(f"Starting demo {demo_id}")
+
+            try:
+                demo = self.get_demo(task_str, variation, episode_index=demo_id)[0]
+                num_valid_demos += 1
+            except:
+                continue
+
+            rgbs = torch.Tensor([]).to(device)
+            pcds = torch.Tensor([]).to(device)
+            grippers = torch.Tensor([]).to(device)
+
+            # descriptions, obs = task.reset()
+            descriptions, obs = task.reset_to_demo(demo)
+
+            actioner.load_episode(task_str, variation)
+
+            move = Mover(task, max_tries=max_tries)
+            reward = 0.0
+            max_reward = 0.0
+
+            for step_id in range(max_steps):
+
+                # Fetch the current observation, and predict one action
+                print (obs)
+                rgb, pcd, gripper = self.get_rgb_pcd_gripper_from_obs(obs)
+                rgb = rgb.to(device)
+                pcd = pcd.to(device)
+                gripper = gripper.to(device)
+
+                rgbs = torch.cat([rgbs, rgb.unsqueeze(1)], dim=1)
+                pcds = torch.cat([pcds, pcd.unsqueeze(1)], dim=1)
+                grippers = torch.cat([grippers, gripper.unsqueeze(1)], dim=1)
+
+                # Prepare proprioception history
+                rgbs_input = rgbs[:, -1:][:, :, :, :3]
+                pcds_input = pcds[:, -1:]
+                if num_history < 1:
+                    gripper_input = grippers[:, -1]
+                else:
+                    gripper_input = grippers[:, -num_history:]
+                    npad = num_history - gripper_input.shape[1]
+                    gripper_input = F.pad(
+                        gripper_input, (0, 0, npad, 0), mode='replicate'
+                    )
+
+                print (rgbs_input.shape, pcds_input.shape, gripper_input.shape)
+
+                output = actioner.predict(
+                    rgbs_input,
+                    pcds_input,
+                    gripper_input,
+                    interpolation_length=interpolation_length
+                )
+
+
+
+                if verbose:
+                    print(f"Step {step_id}")
+
+                terminate = True
+
+                # Update the observation based on the predicted action
+                try:
+                    # Execute entire predicted trajectory step by step
+                    if output.get("trajectory", None) is not None:
+                        trajectory = output["trajectory"][-1].cpu().numpy()
+                        trajectory[:, -1] = trajectory[:, -1].round()
+
+                        # execute
+                        for action in tqdm(trajectory):
+                            #try:
+                            #    collision_checking = self._collision_checking(task_str, step_id)
+                            #    obs, reward, terminate, _ = move(action_np, collision_checking=collision_checking)
+                            #except:
+                            #    terminate = True
+                            #    pass
+                            collision_checking = self._collision_checking(task_str, step_id)
+                            obs, reward, terminate, _ = move(action, collision_checking=collision_checking)
+
+                    # Or plan to reach next predicted keypoint
+                    else:
+                        print("Plan with RRT")
+                        action = output["action"]
+                        action[..., -1] = torch.round(action[..., -1])
+                        action = action[-1].detach().cpu().numpy()
+
+                        collision_checking = self._collision_checking(task_str, step_id)
+                        obs, reward, terminate, _ = move(action, collision_checking=collision_checking)
+
+                    max_reward = max(max_reward, reward)
+
+                    if reward == 1:
+                        success_rate += 1
+                        break
+
+                    if terminate:
+                        print("The episode has terminated!")
+
+                except (IKError, ConfigurationPathError, InvalidActionError) as e:
+                    print(task_str, demo, step_id, success_rate, e)
+                    reward = 0
+                    #break
+
+            total_reward += max_reward
+            if reward == 0:
+                step_id += 1
+
+            print(
+                task_str,
+                "Variation",
+                variation,
+                "Demo",
+                demo_id,
+                "Reward",
+                f"{reward:.2f}",
+                "max_reward",
+                f"{max_reward:.2f}",
+                f"SR: {success_rate}/{demo_id+1}",
+                f"SR: {total_reward:.2f}/{demo_id+1}",
+                "# valid demos", num_valid_demos,
+            )
+
+        # Compensate for failed demos
+        if num_valid_demos == 0:
+            assert success_rate == 0
+            valid = False
+        else:
+            valid = True
+
+        return success_rate, valid, num_valid_demos
+
+    def get_rgb_pcd_gripper_from_obs(self, obs):
+        """
+        Return rgb, pcd, and gripper from a given observation
+        :param obs: an Observation from the env
+        :return: rgb, pcd, gripper
+        """
+        state_dict, gripper = self.get_obs_action(obs)
+        state = transform(state_dict, augmentation=False)
+        state = einops.rearrange(
+            state,
+            "(m n ch) h w -> n m ch h w",
+            ch=3,
+            n=len(self.apply_cameras),
+            m=2
+        )
+        rgb = state[:, 0].unsqueeze(0)  # 1, N, C, H, W
+        pcd = state[:, 1].unsqueeze(0)  # 1, N, C, H, W
+        gripper = gripper.unsqueeze(0)  # 1, D
+
+        attns = torch.Tensor([])
+        for cam in self.apply_cameras:
+            u, v = obs_to_attn(obs, cam)
+            attn = torch.zeros(1, 1, 1, self.image_size[0], self.image_size[1])
+            if not (u < 0 or u > self.image_size[1] - 1 or v < 0 or v > self.image_size[0] - 1):
+                attn[0, 0, 0, v, u] = 1
+            attns = torch.cat([attns, attn], 1)
+        rgb = torch.cat([rgb, attns], 2)
+
+        return rgb, pcd, gripper
+
+    def get_obs_action(self, obs):
+        """
+        Fetch the desired state and action based on the provided demo.
+            :param obs: incoming obs
+            :return: required observation and action list
+        """
+
+        # fetch state
+        state_dict = {"rgb": [], "depth": [], "pc": []}
+        for cam in self.apply_cameras:
+            if self.apply_rgb:
+                rgb = getattr(obs, "{}_rgb".format(cam))
+                state_dict["rgb"] += [rgb]
+
+            if self.apply_depth:
+                depth = getattr(obs, "{}_depth".format(cam))
+                state_dict["depth"] += [depth]
+
+            if self.apply_pc:
+                pc = getattr(obs, "{}_point_cloud".format(cam))
+                state_dict["pc"] += [pc]
+
+        # fetch action
+        action = np.concatenate([obs.gripper_pose, [obs.gripper_open]])
+        return state_dict, torch.from_numpy(action).float()
+
+def transform(obs_dict, scale_size=(0.75, 1.25), augmentation=False):
+    apply_depth = len(obs_dict.get("depth", [])) > 0
+    apply_pc = len(obs_dict["pc"]) > 0
+    num_cams = len(obs_dict["rgb"])
+
+    obs_rgb = []
+    obs_depth = []
+    obs_pc = []
+    for i in range(num_cams):
+        rgb = torch.tensor(obs_dict["rgb"][i]).float().permute(2, 0, 1)
+        depth = (
+            torch.tensor(obs_dict["depth"][i]).float().permute(2, 0, 1)
+            if apply_depth
+            else None
+        )
+        pc = (
+            torch.tensor(obs_dict["pc"][i]).float().permute(2, 0, 1) if apply_pc else None
+        )
+
+        if augmentation:
+            raise NotImplementedError()  # Deprecated
+
+        # normalise to [-1, 1]
+        rgb = rgb / 255.0
+        rgb = 2 * (rgb - 0.5)
+
+        obs_rgb += [rgb.float()]
+        if depth is not None:
+            obs_depth += [depth.float()]
+        if pc is not None:
+            obs_pc += [pc.float()]
+    obs = obs_rgb + obs_depth + obs_pc
+    return torch.cat(obs, dim=0)

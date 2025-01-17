@@ -140,9 +140,8 @@ class Actioner:
 
     def load_episode(self, task_str, variation):
         self._task_str = task_str
-        # TODO: bring back
-        # instructions = list(self._instructions[task_str][variation])
-        # self._instr = random.choice(instructions).unsqueeze(0)
+        instructions = list(self._instructions[task_str][variation])
+        self._instr = random.choice(instructions).unsqueeze(0)
         self._task_id = torch.tensor(TASK_TO_ID[task_str]).unsqueeze(0)
         self._actions = {}
 
@@ -177,17 +176,51 @@ class Actioner:
 
         return action_ls, trajectory_ls, trajectory_mask_ls
 
-    def predict(self, obs):
+    # OLD PREDICT FCT - make new predict fct for better compatibility!!
+    # def predict(self, obs):
+    #     """
+    #     Args:
+    #         obs: dict
+    #     Returns:
+    #         action: torch.Tensor
+    #     """
+
+    def predict(self, rgbs, pcds, gripper,
+                interpolation_length=None):
         """
         Args:
-            obs: dict
+            rgbs: (bs, num_hist, num_cameras, 3, H, W)
+            pcds: (bs, num_hist, num_cameras, 3, H, W)
+            gripper: (B, nhist, output_dim)
+            interpolation_length: an integer
+
         Returns:
-            action: torch.Tensor
+            {"action": torch.Tensor, "trajectory": torch.Tensor}
         """
+
+        curr_device = self.device
+        self._instr = self._instr.to(curr_device)
+        self._task_id = self._task_id.to(curr_device)
+
+        obs_dict = dict()
+        print ("Inside Actioner")
+        print (rgbs.shape, pcds.shape, gripper.shape)
+        obs_dict['rgb'] = rgbs[0,...] # a bit hacky but there is one dimension too much here,...
+        obs_dict['pcd'] = pcds[0,...]
+        obs_dict['curr_gripper'] = gripper
+        obs_dict['instruction'] = self._instr
+
         # self._task_id = self._task_id.to(self.device)
-        trajectory = self._policy.predict_action(obs)["trajectory"]
-        rlbench_action = trajectory[0].detach().cpu().numpy()
-        return { "rlbench_action": rlbench_action}
+        trajectory = self._policy.predict_action(obs_dict)
+        print ("trajectory")
+        print (trajectory.shape)
+        rlbench_action = trajectory[0]
+
+        output = {"action": None, "trajectory": None}
+        output["action"] = rlbench_action
+
+        # return { "rlbench_action": rlbench_action}
+        return output
 
     @property
     def device(self):
