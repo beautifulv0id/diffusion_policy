@@ -174,6 +174,7 @@ class SE3FlowMatching(BaseImagePolicy):
         rgb_obs,
         pcd_obs,
         curr_gripper,
+        instruction=None, # note: not used
         run_inference=False,
         feature_obs=None
     ):
