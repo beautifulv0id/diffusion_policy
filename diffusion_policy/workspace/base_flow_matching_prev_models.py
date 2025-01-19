@@ -261,7 +261,7 @@ class TrainingWorkspace(BaseWorkspace):
                             with tqdm.tqdm(val_dataloader, desc=f"Validation epoch {self.epoch}",
                                         leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
                                 for batch_idx, batch in enumerate(tepoch):
-                                    batch = dict_apply(batch, lambda x: x.to(device, dtype, non_blocking=True) if isinstance(x, torch.Tensor) else x)
+                                    batch = dict_apply(batch, lambda x: x.to(device, dtype, non_blocking=False) if isinstance(x, torch.Tensor) else x)
                                     pred_act = self.model(
                                         gt_trajectory=None,
                                         rgb_obs=batch['obs'].get('rgb', None),
@@ -291,7 +291,7 @@ class TrainingWorkspace(BaseWorkspace):
                     if ((self.epoch+1) % cfg.training.sample_every) == 0:
                         with torch.no_grad():
                             # sample trajectory from training set, and evaluate difference
-                            batch = dict_apply(train_sampling_batch, lambda x: x.to(device, dtype, non_blocking=True) if isinstance(x, torch.Tensor) else x)
+                            batch = dict_apply(train_sampling_batch, lambda x: x.to(device, dtype, non_blocking=False) if isinstance(x, torch.Tensor) else x)
 
                             pred_act = policy(
                                 gt_trajectory=None,
