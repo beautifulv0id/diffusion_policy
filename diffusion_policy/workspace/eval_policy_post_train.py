@@ -79,6 +79,7 @@ class TrainingWorkspace(BaseWorkspace):
 
         # configure model
         self.model = hydra.utils.instantiate(cfg.policy)
+        self.ema_model = copy.deepcopy(self.model)
 
     def rollout(self, wandb_run=None, post_train=False):
         cfg = copy.deepcopy(self.cfg)
