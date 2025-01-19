@@ -255,56 +255,56 @@ class TrainingWorkspace(BaseWorkspace):
                                 step_log['val_loss'] = val_loss
 
 
-                    if ((self.epoch + 1) % cfg.training.model_evaluation_every) == 0:
-                        with torch.no_grad():
-                            values = {}
-                            with tqdm.tqdm(val_dataloader, desc=f"Validation epoch {self.epoch}",
-                                        leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
-                                for batch_idx, batch in enumerate(tepoch):
-                                    batch = dict_apply(batch, lambda x: x.to(device, dtype, non_blocking=False) if isinstance(x, torch.Tensor) else x)
-                                    pred_act = self.model(
-                                        gt_trajectory=None,
-                                        rgb_obs=batch['obs'].get('rgb', None),
-                                        pcd_obs=batch['obs']['pcd'],
-                                        instruction=batch['obs'].get('instruction', None),
-                                        curr_gripper=batch['obs']['curr_gripper'],
-                                        run_inference=True,
-                                        feature_obs=batch['obs'].get('clip_features', None)
-                                    )
-                                    # log all
-                                    evaluation_log = criterion.compute_metrics(pred_act[0], batch, validation=True)
-                                    
-                                    # gather per-task metrics
-                                    for key, val in evaluation_log.items():
-                                        if key not in values:
-                                            values[key] = torch.Tensor([]).to(device)
-                                        values[key] = torch.cat([values[key], val.unsqueeze(0)])
-
-                                    if (cfg.training.max_val_steps is not None) \
-                                            and batch_idx >= (cfg.training.max_val_steps - 1):
-                                        break
-                            
-                            values = {k: v.mean().item() for k, v in values.items()}
-                            step_log.update(values)
-
-                    # sample on a training batch
-                    if ((self.epoch+1) % cfg.training.sample_every) == 0:
-                        with torch.no_grad():
-                            # sample trajectory from training set, and evaluate difference
-                            batch = dict_apply(train_sampling_batch, lambda x: x.to(device, dtype, non_blocking=False) if isinstance(x, torch.Tensor) else x)
-
-                            pred_act = policy(
-                                gt_trajectory=None,
-                                rgb_obs=batch['obs'].get('rgb', None),
-                                pcd_obs=batch['obs']['pcd'],
-                                instruction=batch['obs'].get('instruction', None),
-                                curr_gripper=batch['obs']['curr_gripper'],
-                                run_inference=True,
-                                feature_obs=batch['obs'].get('clip_features', None)
-                            )
-                            eval_log = criterion.compute_metrics(pred_act[0], batch)
-                            # log all
-                            step_log.update(eval_log)
+                    # if ((self.epoch + 1) % cfg.training.model_evaluation_every) == 0:
+                    #     with torch.no_grad():
+                    #         values = {}
+                    #         with tqdm.tqdm(val_dataloader, desc=f"Validation epoch {self.epoch}",
+                    #                     leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
+                    #             for batch_idx, batch in enumerate(tepoch):
+                    #                 batch = dict_apply(batch, lambda x: x.to(device, dtype, non_blocking=False) if isinstance(x, torch.Tensor) else x)
+                    #                 pred_act = self.model(
+                    #                     gt_trajectory=None,
+                    #                     rgb_obs=batch['obs'].get('rgb', None),
+                    #                     pcd_obs=batch['obs']['pcd'],
+                    #                     instruction=batch['obs'].get('instruction', None),
+                    #                     curr_gripper=batch['obs']['curr_gripper'],
+                    #                     run_inference=True,
+                    #                     feature_obs=batch['obs'].get('clip_features', None)
+                    #                 )
+                    #                 # log all
+                    #                 evaluation_log = criterion.compute_metrics(pred_act[0], batch, validation=True)
+                    #
+                    #                 # gather per-task metrics
+                    #                 for key, val in evaluation_log.items():
+                    #                     if key not in values:
+                    #                         values[key] = torch.Tensor([]).to(device)
+                    #                     values[key] = torch.cat([values[key], val.unsqueeze(0)])
+                    #
+                    #                 if (cfg.training.max_val_steps is not None) \
+                    #                         and batch_idx >= (cfg.training.max_val_steps - 1):
+                    #                     break
+                    #
+                    #         values = {k: v.mean().item() for k, v in values.items()}
+                    #         step_log.update(values)
+                    #
+                    # # sample on a training batch
+                    # if ((self.epoch+1) % cfg.training.sample_every) == 0:
+                    #     with torch.no_grad():
+                    #         # sample trajectory from training set, and evaluate difference
+                    #         batch = dict_apply(train_sampling_batch, lambda x: x.to(device, dtype, non_blocking=False) if isinstance(x, torch.Tensor) else x)
+                    #
+                    #         pred_act = policy(
+                    #             gt_trajectory=None,
+                    #             rgb_obs=batch['obs'].get('rgb', None),
+                    #             pcd_obs=batch['obs']['pcd'],
+                    #             instruction=batch['obs'].get('instruction', None),
+                    #             curr_gripper=batch['obs']['curr_gripper'],
+                    #             run_inference=True,
+                    #             feature_obs=batch['obs'].get('clip_features', None)
+                    #         )
+                    #         eval_log = criterion.compute_metrics(pred_act[0], batch)
+                    #         # log all
+                    #         step_log.update(eval_log)
 
 
                     # checkpoint
