@@ -309,7 +309,8 @@ class DiffuserActorEncoder(ModuleAttrMixin):
         tgt_pts = npts // self.fps_subsampling_factor
 
         # Sample points with FPS
-        sampled_context_features, out_indices = fps(context_features, K=tgt_pts)
+        sampled_context_features, out_indices = fps(context_features.transpose(0,1), K=tgt_pts)
+        sampled_context_features = sampled_context_features.transpose(0,1)
         sampled_context_pcd = torch.gather(context_pos, 1, out_indices.unsqueeze(-1).expand(-1, -1, context_pos.shape[-1]))
         return sampled_context_features, sampled_context_pcd
 
