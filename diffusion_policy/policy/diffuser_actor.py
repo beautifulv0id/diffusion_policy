@@ -242,12 +242,30 @@ class DiffuserActor(BaseImagePolicy):
         cond_mask = cond_mask.bool()
 
         # Sample
-        return self.conditional_sample(
+        trajectory =  self.conditional_sample(
             cond_data,
             cond_mask,
             fixed_inputs,
             need_attn_weights=need_attn_weights
         )
+
+        if self._relative:
+            trajectory = self.convert2world(trajectory)
+
+        # Back to quaternion
+        trajectory = self.unconvert_rot(trajectory)
+
+        if self._relative:
+            trajectory = self.convert2world(trajectory)
+
+        # unnormalize position
+        trajectory = self.unnormalize_pos(trajectory)
+        # Convert gripper status to probaility
+        if trajectory.shape[-1] > 7:
+            trajectory[..., 7] = trajectory[..., 7].sigmoid()
+
+        return trajectory
+
 
     def normalize_pos(self, x):
         x = x.clone()
@@ -442,7 +460,7 @@ class DiffuserActor(BaseImagePolicy):
     
     def predict_action(self, obs_dict: Dict[str, torch.Tensor], need_attn_weights=False) -> Dict[str, torch.Tensor]:
         trajectory_mask = torch.zeros(1, self.nhorizon, device=obs_dict['pcd'].device)
-        trajectory = self.forward(
+        return self.forward(
             gt_trajectory=None,
             trajectory_mask=trajectory_mask,
             rgb_obs=obs_dict.get('rgb', None),
@@ -454,27 +472,6 @@ class DiffuserActor(BaseImagePolicy):
             feature_obs=None,
             need_attn_weights=need_attn_weights,
         )
-
-        # Normalize quaternion
-        if self._rotation_parametrization != '6D':
-            trajectory[:, :, 3:7] = normalise_quat(trajectory[:, :, 3:7])
-        
-        # Back to quaternion
-        trajectory = self.unconvert_rot(trajectory)
-
-        if self._relative:
-            trajectory = self.convert2world(trajectory)
-
-        # unnormalize position
-        trajectory = self.unnormalize_pos(trajectory)
-        # Convert gripper status to probaility
-        if trajectory.shape[-1] > 7:
-            trajectory[..., 7] = trajectory[..., 7].sigmoid()
-
-        output = dict()
-        output['trajectory'] = trajectory
-
-        return output
     
     
     def compute_loss(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:

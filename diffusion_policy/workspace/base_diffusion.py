@@ -256,15 +256,7 @@ class TrainingWorkspace(BaseWorkspace):
                                         leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
                                 for batch_idx, batch in enumerate(tepoch):
                                     batch = dict_apply(batch, lambda x: x.to(device, dtype, non_blocking=True) if isinstance(x, torch.Tensor) else x)
-                                    pred_act = policy(
-                                        gt_trajectory=None,
-                                        rgb_obs=batch['obs'].get('rgb', None),
-                                        pcd_obs=batch['obs']['pcd'],
-                                        instruction=batch['obs'].get('instruction', None),
-                                        curr_gripper=batch['obs']['curr_gripper'],
-                                        run_inference=True,
-                                        feature_obs=batch['obs'].get('clip_features', None)
-                                    )
+                                    pred_act = policy.predict_action(batch)
                                     # log all
                                     evaluation_log = criterion.compute_metrics(pred_act, batch, validation=True)
                                     
