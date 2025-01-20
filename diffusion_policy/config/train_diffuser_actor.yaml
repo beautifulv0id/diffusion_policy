@@ -19,6 +19,7 @@ policy:
   _target_: diffusion_policy.policy.diffuser_actor.DiffuserActor
   backbone: "clip"
   image_size: ${image_size}
+  feature_res: ${feature_res}
   embedding_dim: ${embedding_dim}
   num_vis_ins_attn_layers: 2
   use_instruction: false
