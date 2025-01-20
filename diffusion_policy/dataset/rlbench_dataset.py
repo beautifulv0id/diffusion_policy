@@ -18,7 +18,7 @@ def create_sample_indices(split , taskvar, n_episodes, n_obs):
     indices = []
     for (task, var) in taskvar:
         taskvar_group = split[task][str(var)]
-        for i, demo_group in enumerate(taskvar_group.values()):
+        for i, demo_group in enumerate(taskvar_group.group_values()):
             trajectory_length = demo_group['state_action']['proprioception'].shape[0]
             for action_idx in range(1, trajectory_length):
                 obs_idxs = []
