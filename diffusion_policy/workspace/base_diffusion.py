@@ -256,7 +256,7 @@ class TrainingWorkspace(BaseWorkspace):
                                         leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
                                 for batch_idx, batch in enumerate(tepoch):
                                     batch = dict_apply(batch, lambda x: x.to(device, dtype, non_blocking=True) if isinstance(x, torch.Tensor) else x)
-                                    pred_act = policy.predict_action(batch)
+                                    pred_act = policy.predict_action(batch['obs'])
                                     # log all
                                     evaluation_log = criterion.compute_metrics(pred_act, batch, validation=True)
                                     
@@ -279,15 +279,7 @@ class TrainingWorkspace(BaseWorkspace):
                             # sample trajectory from training set, and evaluate difference
                             batch = dict_apply(train_sampling_batch, lambda x: x.to(device, dtype, non_blocking=True) if isinstance(x, torch.Tensor) else x)
 
-                            pred_act = policy(
-                                gt_trajectory=None,
-                                rgb_obs=batch['obs'].get('rgb', None),
-                                pcd_obs=batch['obs']['pcd'],
-                                instruction=batch['obs'].get('instruction', None),
-                                curr_gripper=batch['obs']['curr_gripper'],
-                                run_inference=True,
-                                feature_obs=batch['obs'].get('clip_features', None)
-                            )
+                            pred_act = policy.predict_action(batch['obs'])
                             eval_log = criterion.compute_metrics(pred_act, batch)
                             # log all
                             step_log.update(eval_log)
