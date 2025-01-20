@@ -1,5 +1,3 @@
-import time
-
 if __name__ == "__main__":
     import multiprocessing
     import matplotlib
@@ -17,6 +15,7 @@ import os
 import math
 import hydra
 import torch
+from omegaconf import OmegaConf
 import pathlib
 from torch.utils.data import DataLoader
 import copy
@@ -94,9 +93,6 @@ class TrainingWorkspace(BaseWorkspace):
         train_dataloader = DataLoader(dataset, **cfg.dataloader, sampler=DistributedSampler(dataset), generator=g, seed_worker=seed_worker)
         val_dataset = dataset.get_validation_dataset()
         val_dataloader = DataLoader(val_dataset, **cfg.val_dataloader, sampler=DistributedSampler(val_dataset), generator=g, seed_worker=seed_worker)
-        std = torch.Tensor([2.0, 2.0, 2.0, math.pi, math.pi, math.pi])[None, ...]
-        mean = torch.Tensor([0, 0, 0, 0, 0, 0])[None, ...]
-        self.model.flow.set_mean_std(mean, std)
 
         # configure lr scheduler
         lr_scheduler = get_scheduler(
