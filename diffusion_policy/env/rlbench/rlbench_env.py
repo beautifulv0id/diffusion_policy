@@ -680,6 +680,13 @@ class RLBenchEnv:
             try:
                 demo = self.get_demo(task_str, variation, episode_index=demo_id)[0]
                 num_valid_demos += 1
+                gt_obs = []
+                gt_keyframe_actions = []
+                for f in _keypoint_discovery(demo):
+                    obs = demo[f]
+                    gt_obs.append(obs)
+                    action = np.concatenate([obs.gripper_pose, [obs.gripper_open]])
+                    gt_keyframe_actions.append(action)
             except:
                 continue
 
@@ -701,6 +708,7 @@ class RLBenchEnv:
                 # Fetch the current observation, and predict one action
                 print (obs)
                 rgb, pcd, gripper = self.get_rgb_pcd_gripper_from_obs(obs)
+                # rgb = rgb / 2 + 0.5  # in [0, 1]
                 rgb = rgb.to(device)
                 pcd = pcd.to(device)
                 gripper = gripper.to(device)
@@ -729,7 +737,17 @@ class RLBenchEnv:
                     gripper_input,
                     interpolation_length=interpolation_length
                 )
+                print (len(gt_keyframe_actions))
+                print(output["action"])
+                print(output["action"].shape)
 
+                if (step_id<len(gt_keyframe_actions)):
+                    gt_action_torch = torch.tensor(gt_keyframe_actions[step_id]).to(device)
+                    print (gt_action_torch)
+                #     # output["action"][0,...] = gt_action_torch
+                #     # output["action"][0,:3] = gt_action_torch[:3]
+                #     output["action"][0,1] = gt_action_torch[1]
+                # print (output["action"])
 
 
                 if verbose:
@@ -887,7 +905,7 @@ def transform(obs_dict, scale_size=(0.75, 1.25), augmentation=False):
 
         # normalise to [-1, 1]
         rgb = rgb / 255.0
-        rgb = 2 * (rgb - 0.5)
+        # rgb = 2 * (rgb - 0.5)
 
         obs_rgb += [rgb.float()]
         if depth is not None:

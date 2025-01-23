@@ -16,6 +16,7 @@ mode: train
 
 policy:
   _target_: diffusion_policy.policy.se3_flow_matching.SE3FlowMatching
+#  _target_: diffusion_policy.policy.se3_flow_matching_dl_fixed3.SE3FlowMatching
   embedding_dim: ${embedding_dim}
   backbone: "clip"
   n_points_out: 2000

@@ -212,6 +212,11 @@ class Actioner:
 
         # self._task_id = self._task_id.to(self.device)
         trajectory = self._policy.predict_action(obs_dict)
+
+        # TODO: this is solely valid for other models, for the lang conditioned ones, remove this,...
+        print (trajectory['trajectory'].shape, trajectory['gripper_openess'].shape)
+        trajectory = torch.cat((trajectory['trajectory'][...,:7], trajectory['gripper_openess']), dim=-1)
+
         print ("trajectory")
         print (trajectory.shape)
         rlbench_action = trajectory[0]

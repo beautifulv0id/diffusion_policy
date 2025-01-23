@@ -1,11 +1,14 @@
 # These parameters specify the evaluation
 name: evaluate_model
 _target_: diffusion_policy.workspace.eval_policy_post_train.TrainingWorkspace
-model_to_eval_path: "/media/funk/INTENSO/300_RL_BENCH/new_dataset_trains/16_01_trains/09.31.43_train_se3_flow_matching_sing_task_standard_trafo"
+#model_to_eval_path: "/media/funk/INTENSO/300_RL_BENCH/new_dataset_trains/16_01_trains/23.31.54_train_se3_flow_matching_self_attn_open_drawer"
+model_to_eval_path: "/media/funk/INTENSO/300_RL_BENCH/new_dataset_trains_from_20_1/20_1/21.14.16_train_se3_flow_matching_standard_trafo"
+#checkpoint: "epoch=7999.ckpt"
 checkpoint: "epoch=8999.ckpt"
 evaluation_folder_name: ${now:%Y.%m.%d-%H.%M.%S}_${name}
 use_ema_model: False
-eval_data_dir: "/media/funk/INTENSO/300_RL_BENCH/data/peract/test/" # TODO - change to relative paths
+#eval_data_dir: "/media/funk/INTENSO/300_RL_BENCH/data/peract/test/" # TODO - change to relative paths
+eval_data_dir: "/media/funk/INTENSO/300_RL_BENCH/data/peract/train/" # TODO - change to relative paths
 eval_instruction_dir: "/media/funk/INTENSO/300_RL_BENCH/3D_attn_felix/data/rlbench_instructions/instructions.pkl" # TODO - change to relative paths
 tasks: ["open_drawer"]
 variations: [0] #[-1] # -1 means all variations - should be passed as tuple!
